@@ -459,10 +459,10 @@ impl PokemonName {
                 ability: Abilities::ADAPTABILITY,
                 base_stats: (83, 90, 105, 150, 96, 101),
             }),
-            (PokemonName::FLOETTE, Items::FLOETTITE) => Some(MegaEvolveData {
+            (PokemonName::FLOETTEETERNAL, Items::FLOETTITE) => Some(MegaEvolveData {
                 id: PokemonName::FLOETTEMEGA,
                 types: (PokemonType::FAIRY, PokemonType::TYPELESS),
-                ability: Abilities::NONE,
+                ability: Abilities::FAIRYAURA,
                 base_stats: (74, 85, 87, 155, 148, 102),
             }),
             (PokemonName::VICTREEBEL, Items::VICTREEBELITE) => Some(MegaEvolveData {

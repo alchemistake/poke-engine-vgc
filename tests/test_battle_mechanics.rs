@@ -1363,6 +1363,28 @@ fn test_knockoff_cannot_remove_ogerpon_mask_and_does_not_give_boost() {
     assert_eq!(expected_instructions, vec_of_instructions);
 }
 
+#[cfg(feature = "gen9")]
+#[test]
+fn test_cannot_knockoff_mega_stone() {
+    let mut state = State::default();
+    state.side_one.get_active().item = Items::VENUSAURITE;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::SPLASH,
+        Choices::KNOCKOFF,
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![Instruction::Damage(DamageInstruction {
+            side_ref: SideReference::SideOne,
+            damage_amount: 51,
+        })],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
 #[cfg(feature = "gen8")]
 #[test]
 fn test_knockoff_boosts_damage_but_cannot_remove_if_sub_is_hit() {
@@ -13819,6 +13841,24 @@ fn test_trick_fails_versus_arceus_with_plate() {
     state.side_one.get_active().item = Items::SILVERPOWDER;
     state.side_two.get_active().item = Items::SKYPLATE;
     state.side_two.get_active().id = PokemonName::ARCEUSFLYING;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::TRICK,
+        Choices::SPLASH,
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_trick_fails_versus_mega_stone() {
+    let mut state = State::default();
+    state.side_two.get_active().item = Items::VENUSAURITE;
 
     let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
         &mut state,

@@ -453,6 +453,76 @@ impl Pokemon {
                 self.id == PokemonName::OGERPONWELLSPRING
                     || self.id == PokemonName::OGERPONWELLSPRINGTERA
             }
+            Items::VENUSAURITE
+            | Items::CHARIZARDITEX
+            | Items::CHARIZARDITEY
+            | Items::BLASTOISINITE
+            | Items::BEEDRILLITE
+            | Items::PIDGEOTITE
+            | Items::ALAKAZITE
+            | Items::SLOWBRONITE
+            | Items::GENGARITE
+            | Items::KANGASKHANITE
+            | Items::PINSIRITE
+            | Items::GYARADOSITE
+            | Items::AERODACTYLITE
+            | Items::MEWTWONITEX
+            | Items::MEWTWONITEY
+            | Items::AMPHAROSITE
+            | Items::STEELIXITE
+            | Items::SCIZORITE
+            | Items::HERACRONITE
+            | Items::HOUNDOOMINITE
+            | Items::TYRANITARITE
+            | Items::SCEPTILITE
+            | Items::BLAZIKENITE
+            | Items::SWAMPERTITE
+            | Items::GARDEVOIRITE
+            | Items::SABLENITE
+            | Items::MAWILITE
+            | Items::AGGRONITE
+            | Items::MEDICHAMITE
+            | Items::MANECTITE
+            | Items::SHARPEDONITE
+            | Items::CAMERUPTITE
+            | Items::ALTARIANITE
+            | Items::BANETTITE
+            | Items::ABSOLITE
+            | Items::GLALITITE
+            | Items::SALAMENCITE
+            | Items::METAGROSSITE
+            | Items::LATIASITE
+            | Items::LATIOSITE
+            | Items::LOPUNNITE
+            | Items::GARCHOMPITE
+            | Items::LUCARIONITE
+            | Items::ABOMASITE
+            | Items::GALLADITE
+            | Items::AUDINITE
+            | Items::DIANCITE
+            | Items::DRAGONINITE
+            | Items::CLEFABLITE
+            | Items::MEGANIUMITE
+            | Items::FERALIGITE
+            | Items::EMBOARITE
+            | Items::CHESNAUGHTITE
+            | Items::DELPHOXITE
+            | Items::GRENINJITE
+            | Items::CRABOMINITE
+            | Items::GOLURKITE
+            | Items::SCOVILLAINITE
+            | Items::GLIMMORANITE
+            | Items::FLOETTITE
+            | Items::VICTREEBELITE
+            | Items::STARMINITE
+            | Items::HAWLUCHANITE
+            | Items::SKARMORITE
+            | Items::MEOWSTICITE
+            | Items::FROSLASSITE
+            | Items::EXCADRITE
+            | Items::DRAMPANITE
+            | Items::CHIMECHITE
+            | Items::CHANDELURITE => true,
             _ => false,
         }
     }

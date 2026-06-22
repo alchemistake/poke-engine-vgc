@@ -63,6 +63,10 @@ pub const MAX_SLEEP_TURNS: i8 = 4;
 ))]
 pub const MAX_SLEEP_TURNS: i8 = 3;
 
+pub const THAW_CHANCE: f32 = 0.20;
+
+pub const FULLY_PARALYZED_CHANCE: f32 = 0.25;
+
 #[cfg(any(feature = "gen7", feature = "gen8", feature = "gen9"))]
 pub const HIT_SELF_IN_CONFUSION_CHANCE: f32 = 1.0 / 3.0;
 
@@ -80,6 +84,24 @@ pub const CONSECUTIVE_PROTECT_CHANCE: f32 = 1.0 / 3.0;
 
 #[cfg(any(feature = "gen4"))]
 pub const CONSECUTIVE_PROTECT_CHANCE: f32 = 1.0 / 2.0;
+
+#[cfg(any(feature = "gen4", feature = "gen5", feature = "gen6"))]
+pub const PARALYSIS_SPEED_MULTIPLIER: f32 = 0.25;
+
+#[cfg(any(feature = "gen7", feature = "gen8", feature = "gen9"))]
+pub const PARALYSIS_SPEED_MULTIPLIER: f32 = 0.5;
+
+#[cfg(any(feature = "gen4", feature = "gen5", feature = "gen6"))]
+pub const BURN_RESIDUAL_DAMAGE_PCT: f32 = 0.125;
+
+#[cfg(any(feature = "gen7", feature = "gen8", feature = "gen9"))]
+pub const BURN_RESIDUAL_DAMAGE_PCT: f32 = 0.0625;
+
+#[cfg(any(feature = "gen4", feature = "gen5"))]
+pub const PARTIALLY_TRAPPED_DAMAGE_PCT: f32 = 0.0625;
+
+#[cfg(any(feature = "gen6", feature = "gen7", feature = "gen8", feature = "gen9"))]
+pub const PARTIALLY_TRAPPED_DAMAGE_PCT: f32 = 0.125;
 
 pub const SIDE_CONDITION_DURATION: i8 = 5;
 pub const TAILWIND_DURATION: i8 = 4;
@@ -1485,7 +1507,7 @@ fn move_has_no_effect(state: &State, choice: &Choice, attacking_side_ref: &SideR
     let (_attacking_side, defending_side) = state.get_both_sides_immutable(attacking_side_ref);
     let defender = defending_side.get_active_immutable();
 
-    #[cfg(any(feature = "gen6", feature = "gen7", feature = "gen8", feature = "gen9"))]
+    #[cfg(not(any(feature = "gen4", feature = "gen5")))]
     if choice.flags.powder
         && choice.target == MoveTarget::Opponent
         && defender.has_type(&PokemonType::GRASS)
@@ -1702,18 +1724,18 @@ fn generate_instructions_from_existing_status_conditions(
         PokemonStatus::PARALYZE => {
             // Fully-Paralyzed Branch
             let mut fully_paralyzed_instruction = incoming_instructions.clone();
-            fully_paralyzed_instruction.update_percentage(0.25);
+            fully_paralyzed_instruction.update_percentage(FULLY_PARALYZED_CHANCE);
             final_instructions.push(fully_paralyzed_instruction);
 
             // Non-Paralyzed Branch
-            incoming_instructions.update_percentage(0.75);
+            incoming_instructions.update_percentage(1.0 - FULLY_PARALYZED_CHANCE);
         }
         PokemonStatus::FREEZE => {
             let mut still_frozen_instruction = incoming_instructions.clone();
-            still_frozen_instruction.update_percentage(0.80);
+            still_frozen_instruction.update_percentage(1.0 - THAW_CHANCE);
             final_instructions.push(still_frozen_instruction);
 
-            incoming_instructions.update_percentage(0.20);
+            incoming_instructions.update_percentage(THAW_CHANCE);
             attacker_active.status = PokemonStatus::NONE;
             incoming_instructions
                 .instruction_list
@@ -2012,13 +2034,7 @@ pub fn generate_instructions_from_move(
 
         // this value is incremented when an encored move has been used
         // the value being 2 means we are currently using the 3rd move so we can remove it
-        #[cfg(any(
-            feature = "gen5",
-            feature = "gen6",
-            feature = "gen7",
-            feature = "gen8",
-            feature = "gen9"
-        ))]
+        #[cfg(not(feature = "gen4"))]
         if side.volatile_status_durations.encore == 2 {
             incoming_instructions
                 .instruction_list
@@ -2054,13 +2070,7 @@ pub fn generate_instructions_from_move(
         }
     }
 
-    #[cfg(any(
-        feature = "gen5",
-        feature = "gen6",
-        feature = "gen7",
-        feature = "gen8",
-        feature = "gen9"
-    ))]
+    #[cfg(not(feature = "gen4"))]
     if side
         .volatile_statuses
         .contains(&PokemonVolatileStatus::TAUNT)
@@ -2475,16 +2485,9 @@ fn get_effective_speed(state: &State, side_reference: &SideReference) -> i16 {
         _ => {}
     }
 
-    #[cfg(any(feature = "gen4", feature = "gen5", feature = "gen6"))]
     if active_pkmn.status == PokemonStatus::PARALYZE && active_pkmn.ability != Abilities::QUICKFEET
     {
-        boosted_speed *= 0.25;
-    }
-
-    #[cfg(any(feature = "gen7", feature = "gen8", feature = "gen9"))]
-    if active_pkmn.status == PokemonStatus::PARALYZE && active_pkmn.ability != Abilities::QUICKFEET
-    {
-        boosted_speed *= 0.50;
+        boosted_speed *= PARALYSIS_SPEED_MULTIPLIER;
     }
 
     boosted_speed as i16
@@ -2990,7 +2993,7 @@ fn add_end_of_turn_instructions(
 
                 let wish_heal_instruction = Instruction::Heal(HealInstruction {
                     side_ref: *side_ref,
-                    heal_amount: heal_amount,
+                    heal_amount,
                 });
                 incoming_instructions
                     .instruction_list
@@ -3016,11 +3019,7 @@ fn add_end_of_turn_instructions(
 
         match active_pkmn.status {
             PokemonStatus::BURN => {
-                #[cfg(any(feature = "gen4", feature = "gen5", feature = "gen6"))]
-                let mut damage_factor = 0.125;
-
-                #[cfg(any(feature = "gen7", feature = "gen8", feature = "gen9",))]
-                let mut damage_factor = 0.0625;
+                let mut damage_factor = BURN_RESIDUAL_DAMAGE_PCT;
 
                 if active_pkmn.ability == Abilities::HEATPROOF {
                     damage_factor /= 2.0;
@@ -3034,7 +3033,7 @@ fn add_end_of_turn_instructions(
                 );
                 let burn_damage_instruction = Instruction::Damage(DamageInstruction {
                     side_ref: *side_ref,
-                    damage_amount: damage_amount,
+                    damage_amount,
                 });
                 active_pkmn.hp -= damage_amount;
                 incoming_instructions
@@ -3049,7 +3048,7 @@ fn add_end_of_turn_instructions(
 
                 let poison_damage_instruction = Instruction::Damage(DamageInstruction {
                     side_ref: *side_ref,
-                    damage_amount: damage_amount,
+                    damage_amount,
                 });
                 active_pkmn.hp -= damage_amount;
                 incoming_instructions
@@ -3412,13 +3411,10 @@ fn add_end_of_turn_instructions(
             .contains(&PokemonVolatileStatus::PARTIALLYTRAPPED)
         {
             let active_pkmn = side.get_active();
-
-            #[cfg(any(feature = "gen4", feature = "gen5"))]
-            let damage_amount = cmp::min((active_pkmn.maxhp as f32 / 16.0) as i16, active_pkmn.hp);
-
-            #[cfg(any(feature = "gen6", feature = "gen7", feature = "gen8", feature = "gen9"))]
-            let damage_amount = cmp::min((active_pkmn.maxhp as f32 / 8.0) as i16, active_pkmn.hp);
-
+            let damage_amount = cmp::min(
+                (active_pkmn.maxhp as f32 * PARTIALLY_TRAPPED_DAMAGE_PCT) as i16,
+                active_pkmn.hp,
+            );
             incoming_instructions
                 .instruction_list
                 .push(Instruction::Damage(DamageInstruction {

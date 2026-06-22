@@ -4,8 +4,8 @@ use poke_engine::choices::{Choices, MoveCategory, MOVES};
 use poke_engine::engine::abilities::{Abilities, WEATHER_ABILITY_TURNS};
 use poke_engine::engine::damage_calc::CRIT_MULTIPLIER;
 use poke_engine::engine::generate_instructions::{
-    generate_instructions_from_move_pair, BASE_CRIT_CHANCE, CONSECUTIVE_PROTECT_CHANCE,
-    MAX_SLEEP_TURNS,
+    generate_instructions_from_move_pair, BASE_CRIT_CHANCE, BURN_RESIDUAL_DAMAGE_PCT,
+    CONSECUTIVE_PROTECT_CHANCE, MAX_SLEEP_TURNS,
 };
 use poke_engine::engine::items::Items;
 use poke_engine::engine::state::{MoveChoice, PokemonVolatileStatus, Terrain, Weather};
@@ -21732,6 +21732,8 @@ fn test_flamebody() {
         Choices::SPLASH,
     );
 
+    let expected_burn_damage =
+        ((state.side_one.get_active().maxhp as f32) * BURN_RESIDUAL_DAMAGE_PCT) as i16;
     let expected_instructions = vec![
         StateInstructions {
             percentage: 70.0,
@@ -21755,7 +21757,7 @@ fn test_flamebody() {
                 }),
                 Instruction::Damage(DamageInstruction {
                     side_ref: SideReference::SideOne,
-                    damage_amount: 6,
+                    damage_amount: expected_burn_damage,
                 }),
             ],
         },
@@ -21774,6 +21776,8 @@ fn test_spicyspray() {
         Choices::SPLASH,
     );
 
+    let expected_burn_damage =
+        ((state.side_one.get_active().maxhp as f32) * BURN_RESIDUAL_DAMAGE_PCT) as i16;
     let expected_instructions = vec![StateInstructions {
         percentage: 100.0,
         instruction_list: vec![
@@ -21789,7 +21793,7 @@ fn test_spicyspray() {
             }),
             Instruction::Damage(DamageInstruction {
                 side_ref: SideReference::SideOne,
-                damage_amount: 6,
+                damage_amount: expected_burn_damage,
             }),
         ],
     }];

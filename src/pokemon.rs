@@ -1447,6 +1447,17 @@ define_enum_with_from_str! {
         DRAMPAMEGA,
         CHIMECHOMEGA,
         CHANDELUREMEGA,
+        STARAPTORMEGA,
+        SCOLIPEDEMEGA,
+        SCRAFTYMEGA,
+        EELEKTROSSMEGA,
+        PYROARMEGA,
+        MALAMARMEGA,
+        BARBARACLEMEGA,
+        DRAGALGEMEGA,
+        FALINKSMEGA,
+        RAICHUMEGAX,
+        RAICHUMEGAY,
     },
     default = NONE
 }

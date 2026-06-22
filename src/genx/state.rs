@@ -540,6 +540,7 @@ impl Pokemon {
         }
         if self.has_type(&PokemonType::FLYING)
             || self.ability == Abilities::LEVITATE
+            || self.ability == Abilities::EELEVATE
             || self.item == Items::AIRBALLOON
         {
             return false;

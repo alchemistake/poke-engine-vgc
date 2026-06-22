@@ -351,6 +351,8 @@ define_enum_with_from_str! {
         DRAGONIZE,
         SPICYSPRAY,
         PIERCINGDRILL,
+        EELEVATE,
+        FIREMANE,
     },
     default = NONE
 }
@@ -385,6 +387,7 @@ fn mold_breaker_ignores(ability: &Abilities) -> bool {
         | Abilities::KEENEYE
         | Abilities::LEAFGUARD
         | Abilities::LEVITATE
+        | Abilities::EELEVATE
         | Abilities::LIGHTNINGROD
         | Abilities::LIMBER
         | Abilities::MAGMAARMOR
@@ -765,7 +768,7 @@ pub fn ability_after_damage_hit(
                 );
             }
         }
-        Abilities::BEASTBOOST => {
+        Abilities::BEASTBOOST | Abilities::EELEVATE => {
             if damage_dealt > 0 && defending_side.get_active_immutable().hp == 0 {
                 let highest_stat = &attacking_side.calculate_highest_stat();
                 apply_boost_instruction(
@@ -2031,6 +2034,11 @@ pub fn ability_modify_attack_being_used(
                 attacker_choice.base_power *= 1.3;
             }
         }
+        Abilities::FIREMANE => {
+            if attacker_choice.move_type == PokemonType::FIRE {
+                attacker_choice.base_power *= 1.5;
+            }
+        }
         Abilities::STENCH => {
             let mut already_flinches = false;
             if let Some(secondaries) = &mut attacker_choice.secondaries {
@@ -2511,7 +2519,7 @@ pub fn ability_modify_attack_against(
                 attacker_choice.base_power *= 1.33;
             }
         }
-        Abilities::LEVITATE => {
+        Abilities::LEVITATE | Abilities::EELEVATE => {
             if attacker_choice.move_type == PokemonType::GROUND
                 && attacker_choice.target == MoveTarget::Opponent
                 && attacker_choice.move_id != Choices::THOUSANDARROWS

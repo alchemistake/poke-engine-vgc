@@ -253,6 +253,17 @@ define_enum_with_from_str! {
         DRAMPANITE,
         CHIMECHITE,
         CHANDELURITE,
+        STARAPTITE,
+        SCOLIPITE,
+        SCRAFTINITE,
+        EELEKTROSSITE,
+        PYROARITE,
+        MALAMARITE,
+        BARBARACITE,
+        DRAGALGITE,
+        FALINKSITE,
+        RAICHUNITEX,
+        RAICHUNITEY,
     },
     default = UNKNOWNITEM
 }

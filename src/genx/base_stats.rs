@@ -525,6 +525,72 @@ impl PokemonName {
                 ability: Abilities::INFILTRATOR,
                 base_stats: (60, 75, 110, 175, 110, 90),
             }),
+            (PokemonName::STARAPTOR, Items::STARAPTITE) => Some(MegaEvolveData {
+                id: PokemonName::STARAPTORMEGA,
+                types: (PokemonType::FIGHTING, PokemonType::FLYING),
+                ability: Abilities::CONTRARY,
+                base_stats: (85, 140, 100, 60, 90, 110),
+            }),
+            (PokemonName::SCOLIPEDE, Items::SCOLIPITE) => Some(MegaEvolveData {
+                id: PokemonName::SCOLIPEDEMEGA,
+                types: (PokemonType::BUG, PokemonType::POISON),
+                ability: Abilities::SHELLARMOR,
+                base_stats: (60, 140, 149, 75, 99, 62),
+            }),
+            (PokemonName::SCRAFTY, Items::SCRAFTINITE) => Some(MegaEvolveData {
+                id: PokemonName::SCRAFTYMEGA,
+                types: (PokemonType::DARK, PokemonType::FIGHTING),
+                ability: Abilities::INTIMIDATE,
+                base_stats: (65, 130, 135, 55, 135, 68),
+            }),
+            (PokemonName::EELEKTROSS, Items::EELEKTROSSITE) => Some(MegaEvolveData {
+                id: PokemonName::EELEKTROSSMEGA,
+                types: (PokemonType::ELECTRIC, PokemonType::TYPELESS),
+                ability: Abilities::EELEVATE,
+                base_stats: (85, 145, 80, 135, 90, 80),
+            }),
+            (PokemonName::PYROAR, Items::PYROARITE) => Some(MegaEvolveData {
+                id: PokemonName::PYROARMEGA,
+                types: (PokemonType::FIRE, PokemonType::NORMAL),
+                ability: Abilities::FIREMANE,
+                base_stats: (86, 88, 92, 129, 86, 126),
+            }),
+            (PokemonName::MALAMAR, Items::MALAMARITE) => Some(MegaEvolveData {
+                id: PokemonName::MALAMARMEGA,
+                types: (PokemonType::DARK, PokemonType::PSYCHIC),
+                ability: Abilities::CONTRARY,
+                base_stats: (86, 102, 88, 98, 120, 88),
+            }),
+            (PokemonName::BARBARACLE, Items::BARBARACITE) => Some(MegaEvolveData {
+                id: PokemonName::BARBARACLEMEGA,
+                types: (PokemonType::ROCK, PokemonType::FIGHTING),
+                ability: Abilities::TOUGHCLAWS,
+                base_stats: (72, 140, 130, 64, 106, 88),
+            }),
+            (PokemonName::DRAGALGE, Items::DRAGALGITE) => Some(MegaEvolveData {
+                id: PokemonName::DRAGALGEMEGA,
+                types: (PokemonType::POISON, PokemonType::DRAGON),
+                ability: Abilities::REGENERATOR,
+                base_stats: (65, 85, 105, 132, 163, 44),
+            }),
+            (PokemonName::FALINKS, Items::FALINKSITE) => Some(MegaEvolveData {
+                id: PokemonName::FALINKSMEGA,
+                types: (PokemonType::FIGHTING, PokemonType::TYPELESS),
+                ability: Abilities::DEFIANT,
+                base_stats: (65, 135, 135, 70, 65, 100),
+            }),
+            (PokemonName::RAICHU, Items::RAICHUNITEX) => Some(MegaEvolveData {
+                id: PokemonName::RAICHUMEGAX,
+                types: (PokemonType::ELECTRIC, PokemonType::TYPELESS),
+                ability: Abilities::ELECTRICSURGE,
+                base_stats: (60, 135, 95, 90, 95, 110),
+            }),
+            (PokemonName::RAICHU, Items::RAICHUNITEY) => Some(MegaEvolveData {
+                id: PokemonName::RAICHUMEGAY,
+                types: (PokemonType::ELECTRIC, PokemonType::TYPELESS),
+                ability: Abilities::NOGUARD,
+                base_stats: (60, 100, 55, 160, 80, 130),
+            }),
             _ => None,
         }
     }

@@ -250,7 +250,7 @@ pub fn modify_choice(
                 attacker_choice.base_power *= 1.5;
             }
         }
-        #[cfg(any(feature = "gen3", feature = "gen4"))]
+        #[cfg(feature = "gen4")]
         Choices::EXPLOSION | Choices::SELFDESTRUCT => {
             attacker_choice.base_power *= 2.0;
         }
@@ -507,7 +507,7 @@ pub fn modify_choice(
             }
         }
 
-        #[cfg(any(feature = "gen3", feature = "gen4"))]
+        #[cfg(feature = "gen4")]
         Choices::PAYBACK => {
             if !attacker_choice.first_move {
                 attacker_choice.base_power *= 2.0;
@@ -828,7 +828,7 @@ pub fn choice_after_damage_hit(
     }
 }
 
-#[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5", feature = "gen6"))]
+#[cfg(any(feature = "gen4", feature = "gen5", feature = "gen6"))]
 fn destinybond_before_move(
     attacking_side: &mut Side,
     attacking_side_ref: &SideReference,

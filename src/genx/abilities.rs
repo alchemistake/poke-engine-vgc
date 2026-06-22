@@ -21,7 +21,7 @@ use crate::state::{
 };
 use std::cmp;
 
-#[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5"))]
+#[cfg(any(feature = "gen4", feature = "gen5"))]
 pub const WEATHER_ABILITY_TURNS: i8 = -1;
 
 #[cfg(any(feature = "gen6", feature = "gen7", feature = "gen8", feature = "gen9"))]
@@ -937,10 +937,6 @@ pub fn ability_after_damage_hit(
         }
         Abilities::ROUGHSKIN | Abilities::IRONBARBS => {
             if damage_dealt > 0 && choice.flags.contact {
-                #[cfg(feature = "gen3")]
-                let damage_dealt = cmp::min(attacking_pkmn.maxhp / 16, attacking_pkmn.hp);
-
-                #[cfg(not(feature = "gen3"))]
                 let damage_dealt = cmp::min(attacking_pkmn.maxhp / 8, attacking_pkmn.hp);
 
                 instructions
@@ -2417,28 +2413,6 @@ pub fn ability_modify_attack_against(
                 attacker_choice.base_power /= 1.5;
             }
         }
-        #[cfg(feature = "gen3")]
-        Abilities::EFFECTSPORE => {
-            if attacker_choice.flags.contact {
-                attacker_choice.add_or_create_secondaries(Secondary {
-                    chance: 3.30,
-                    target: MoveTarget::User,
-                    effect: Effect::Status(PokemonStatus::POISON),
-                });
-                attacker_choice.add_or_create_secondaries(Secondary {
-                    chance: 3.30,
-                    target: MoveTarget::User,
-                    effect: Effect::Status(PokemonStatus::PARALYZE),
-                });
-                attacker_choice.add_or_create_secondaries(Secondary {
-                    chance: 3.30,
-                    target: MoveTarget::User,
-                    effect: Effect::Status(PokemonStatus::SLEEP),
-                });
-            }
-        }
-
-        #[cfg(not(feature = "gen3"))]
         Abilities::EFFECTSPORE => {
             if attacker_choice.flags.contact {
                 attacker_choice.add_or_create_secondaries(Secondary {
@@ -2780,14 +2754,7 @@ pub fn ability_modify_attack_against(
             }
         }
         Abilities::VOLTABSORB => {
-            #[cfg(feature = "gen3")]
-            let activate = attacker_choice.move_type == PokemonType::ELECTRIC
-                && attacker_choice.category != MoveCategory::Status;
-
-            #[cfg(not(feature = "gen3"))]
-            let activate = attacker_choice.move_type == PokemonType::ELECTRIC;
-
-            if activate {
+            if attacker_choice.move_type == PokemonType::ELECTRIC {
                 attacker_choice.remove_all_effects();
                 attacker_choice.accuracy = 100.0;
                 attacker_choice.base_power = 0.0;

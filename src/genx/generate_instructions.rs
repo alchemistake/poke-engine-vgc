@@ -45,13 +45,13 @@ use std::cmp;
 #[cfg(feature = "terastallization")]
 use crate::choices::MultiAccuracyMove;
 
-#[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5", feature = "gen6"))]
+#[cfg(any(feature = "gen4", feature = "gen5", feature = "gen6"))]
 pub const BASE_CRIT_CHANCE: f32 = 1.0 / 16.0;
 
 #[cfg(any(feature = "gen7", feature = "gen8", feature = "gen9"))]
 pub const BASE_CRIT_CHANCE: f32 = 1.0 / 24.0;
 
-#[cfg(any(feature = "gen3", feature = "gen4"))]
+#[cfg(any(feature = "gen4"))]
 pub const MAX_SLEEP_TURNS: i8 = 4;
 
 #[cfg(any(
@@ -66,7 +66,7 @@ pub const MAX_SLEEP_TURNS: i8 = 3;
 #[cfg(any(feature = "gen7", feature = "gen8", feature = "gen9"))]
 pub const HIT_SELF_IN_CONFUSION_CHANCE: f32 = 1.0 / 3.0;
 
-#[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5", feature = "gen6"))]
+#[cfg(any(feature = "gen4", feature = "gen5", feature = "gen6"))]
 pub const HIT_SELF_IN_CONFUSION_CHANCE: f32 = 1.0 / 2.0;
 
 #[cfg(any(
@@ -78,7 +78,7 @@ pub const HIT_SELF_IN_CONFUSION_CHANCE: f32 = 1.0 / 2.0;
 ))]
 pub const CONSECUTIVE_PROTECT_CHANCE: f32 = 1.0 / 3.0;
 
-#[cfg(any(feature = "gen3", feature = "gen4"))]
+#[cfg(any(feature = "gen4"))]
 pub const CONSECUTIVE_PROTECT_CHANCE: f32 = 1.0 / 2.0;
 
 pub const SIDE_CONDITION_DURATION: i8 = 5;
@@ -330,13 +330,7 @@ fn generate_instructions_from_switch(
         #[cfg(any(feature = "gen8", feature = "gen9"))]
         let mut healing_wish_consumed = false;
 
-        #[cfg(any(
-            feature = "gen3",
-            feature = "gen4",
-            feature = "gen5",
-            feature = "gen6",
-            feature = "gen7"
-        ))]
+        #[cfg(any(feature = "gen4", feature = "gen5", feature = "gen6", feature = "gen7"))]
         let mut healing_wish_consumed = true;
 
         let switched_in_pkmn = side.get_active();
@@ -749,7 +743,7 @@ pub fn immune_to_status(
                     || target_pkmn.ability == Abilities::LIMBER
             }
 
-            #[cfg(any(feature = "gen4", feature = "gen5", feature = "gen3"))]
+            #[cfg(any(feature = "gen4", feature = "gen5"))]
             PokemonStatus::PARALYZE => target_pkmn.ability == Abilities::LIMBER,
 
             PokemonStatus::POISON | PokemonStatus::TOXIC => {
@@ -2481,7 +2475,7 @@ fn get_effective_speed(state: &State, side_reference: &SideReference) -> i16 {
         _ => {}
     }
 
-    #[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5", feature = "gen6"))]
+    #[cfg(any(feature = "gen4", feature = "gen5", feature = "gen6"))]
     if active_pkmn.status == PokemonStatus::PARALYZE && active_pkmn.ability != Abilities::QUICKFEET
     {
         boosted_speed *= 0.25;
@@ -3022,7 +3016,7 @@ fn add_end_of_turn_instructions(
 
         match active_pkmn.status {
             PokemonStatus::BURN => {
-                #[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5", feature = "gen6"))]
+                #[cfg(any(feature = "gen4", feature = "gen5", feature = "gen6"))]
                 let mut damage_factor = 0.125;
 
                 #[cfg(any(feature = "gen7", feature = "gen8", feature = "gen9",))]
@@ -3419,7 +3413,7 @@ fn add_end_of_turn_instructions(
         {
             let active_pkmn = side.get_active();
 
-            #[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5"))]
+            #[cfg(any(feature = "gen4", feature = "gen5"))]
             let damage_amount = cmp::min((active_pkmn.maxhp as f32 / 16.0) as i16, active_pkmn.hp);
 
             #[cfg(any(feature = "gen6", feature = "gen7", feature = "gen8", feature = "gen9"))]
@@ -4414,7 +4408,7 @@ mod tests {
         #[cfg(any(feature = "gen6", feature = "gen7", feature = "gen8", feature = "gen9"))]
         let expected_instructions = vec![StateInstructions::default()];
 
-        #[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5"))]
+        #[cfg(any(feature = "gen4", feature = "gen5"))]
         let expected_instructions = vec![StateInstructions {
             percentage: 100.0,
             instruction_list: vec![Instruction::ChangeStatus(ChangeStatusInstruction {
@@ -9152,7 +9146,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5", feature = "gen6"))]
+    #[cfg(any(feature = "gen4", feature = "gen5", feature = "gen6"))]
     fn test_earlier_gen_speed_cutting_by_75_percent() {
         let mut state = State::default();
         state.side_one.get_active().status = PokemonStatus::PARALYZE;
@@ -10086,7 +10080,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5", feature = "gen6"))]
+    #[cfg(any(feature = "gen4", feature = "gen5", feature = "gen6"))]
     fn test_early_generation_burn_one_eigth() {
         let mut state = State::default();
         state.side_one.get_active().status = PokemonStatus::BURN;
@@ -10417,7 +10411,7 @@ mod tests {
             &SideReference::SideOne,
         );
 
-        #[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5"))]
+        #[cfg(any(feature = "gen4", feature = "gen5"))]
         let expected_instructions = StateInstructions {
             percentage: 100.0,
             instruction_list: vec![Instruction::Damage(DamageInstruction {

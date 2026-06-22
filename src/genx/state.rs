@@ -451,6 +451,7 @@ impl Pokemon {
         encored: bool,
         taunted: bool,
         can_tera: bool,
+        side_can_mega: bool,
     ) {
         let mut iter = self.moves.into_iter();
         while let Some(p) = iter.next() {
@@ -481,7 +482,7 @@ impl Pokemon {
                 if can_tera {
                     vec.push(MoveChoice::MoveTera(iter.pokemon_move_index));
                 }
-                if self.can_mega_evolve() {
+                if side_can_mega && self.can_mega_evolve() {
                     vec.push(MoveChoice::MoveMega(iter.pokemon_move_index));
                 }
             }
@@ -985,6 +986,15 @@ impl Side {
         true
     }
 
+    pub fn can_use_mega(&self) -> bool {
+        for p in self.pokemon.into_iter() {
+            if p.mega_evolved {
+                return false;
+            }
+        }
+        true
+    }
+
     pub fn add_switches(&self, vec: &mut Vec<MoveChoice>) {
         let mut iter = self.pokemon.into_iter();
         while let Some(p) = iter.next() {
@@ -1084,6 +1094,7 @@ impl State {
                 encored,
                 taunted,
                 self.side_one.can_use_tera(),
+                self.side_one.can_use_mega(),
             );
         }
 
@@ -1110,6 +1121,7 @@ impl State {
                 encored,
                 taunted,
                 self.side_two.can_use_tera(),
+                self.side_two.can_use_mega(),
             );
         }
 
@@ -1198,6 +1210,7 @@ impl State {
                 encored,
                 taunted,
                 self.side_one.can_use_tera(),
+                self.side_one.can_use_mega(),
             );
             if !self.side_one.trapped(side_two_active) {
                 self.side_one.add_switches(&mut side_one_options);
@@ -1227,6 +1240,7 @@ impl State {
                 encored,
                 taunted,
                 self.side_two.can_use_tera(),
+                self.side_two.can_use_mega(),
             );
             if !self.side_two.trapped(side_one_active) {
                 self.side_two.add_switches(&mut side_two_options);

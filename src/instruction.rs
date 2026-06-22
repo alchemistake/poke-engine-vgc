@@ -90,6 +90,7 @@ pub enum Instruction {
     ToggleSideOneForceSwitch,
     ToggleSideTwoForceSwitch,
     ToggleTerastallized(ToggleTerastallizedInstruction),
+    ToggleMegaEvolved(ToggleMegaEvolvedInstruction),
 }
 
 impl fmt::Debug for Instruction {
@@ -289,6 +290,9 @@ impl fmt::Debug for Instruction {
             }
             Instruction::ToggleTerastallized(s) => {
                 write!(f, "ToggleTerastallized {:?}", s.side_ref)
+            }
+            Instruction::ToggleMegaEvolved(s) => {
+                write!(f, "ToggleMegaEvolved {:?}", s.side_ref)
             }
             Instruction::SetLastUsedMove(s) => {
                 write!(
@@ -555,6 +559,11 @@ pub struct ToggleTrickRoomInstruction {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ToggleTerastallizedInstruction {
+    pub side_ref: SideReference,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct ToggleMegaEvolvedInstruction {
     pub side_ref: SideReference,
 }
 

@@ -21,8 +21,8 @@ use poke_engine::instruction::{
     EnableMoveInstruction, FormeChangeInstruction, HealInstruction, Instruction,
     RemoveVolatileStatusInstruction, SetFutureSightInstruction, SetLastUsedMoveInstruction,
     SetSecondMoveSwitchOutMoveInstruction, SetSleepTurnsInstruction, StateInstructions,
-    SwitchInstruction, ToggleBatonPassingInstruction, ToggleShedTailingInstruction,
-    ToggleTrickRoomInstruction,
+    SwitchInstruction, ToggleBatonPassingInstruction, ToggleMegaEvolvedInstruction,
+    ToggleShedTailingInstruction, ToggleTrickRoomInstruction,
 };
 use poke_engine::pokemon::PokemonName;
 use poke_engine::state::{
@@ -18306,6 +18306,9 @@ fn test_basic_mega_evolving() {
                 side_ref: SideReference::SideOne,
                 ability_change: Abilities::THICKFAT as i16 - Abilities::CHLOROPHYLL as i16,
             }),
+            Instruction::ToggleMegaEvolved(ToggleMegaEvolvedInstruction {
+                side_ref: SideReference::SideOne,
+            }),
         ],
     }];
     assert_eq!(expected_instructions, vec_of_instructions);
@@ -18379,6 +18382,9 @@ fn test_mega_evolving_using_pursuit_into_switch() {
                 side_ref: SideReference::SideOne,
                 ability_change: Abilities::THICKFAT as i16 - Abilities::CHLOROPHYLL as i16,
             }),
+            Instruction::ToggleMegaEvolved(ToggleMegaEvolvedInstruction {
+                side_ref: SideReference::SideOne,
+            }),
             Instruction::Damage(DamageInstruction {
                 side_ref: SideReference::SideTwo,
                 damage_amount: 100,
@@ -18449,6 +18455,9 @@ fn test_mega_evolving_with_ability_activate() {
             Instruction::ChangeBaseAbility(ChangeAbilityInstruction {
                 side_ref: SideReference::SideOne,
                 ability_change: Abilities::INTIMIDATE as i16 - Abilities::LIGHTNINGROD as i16,
+            }),
+            Instruction::ToggleMegaEvolved(ToggleMegaEvolvedInstruction {
+                side_ref: SideReference::SideOne,
             }),
             Instruction::Boost(BoostInstruction {
                 side_ref: SideReference::SideTwo,

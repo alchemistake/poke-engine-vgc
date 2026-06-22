@@ -99,6 +99,17 @@ impl PokemonName {
             PokemonName::DRAMPAMEGA => (78, 85, 110, 160, 114, 36),
             PokemonName::CHIMECHOMEGA => (75, 50, 110, 135, 120, 65),
             PokemonName::CHANDELUREMEGA => (60, 75, 110, 175, 110, 90),
+            PokemonName::STARAPTORMEGA => (85, 140, 100, 60, 90, 110),
+            PokemonName::SCOLIPEDEMEGA => (60, 140, 149, 75, 99, 62),
+            PokemonName::SCRAFTYMEGA => (65, 130, 135, 55, 135, 68),
+            PokemonName::EELEKTROSSMEGA => (85, 145, 80, 135, 90, 80),
+            PokemonName::PYROARMEGA => (86, 88, 92, 129, 86, 126),
+            PokemonName::MALAMARMEGA => (86, 102, 88, 98, 120, 88),
+            PokemonName::BARBARACLEMEGA => (72, 140, 130, 64, 106, 88),
+            PokemonName::DRAGALGEMEGA => (65, 85, 105, 132, 163, 44),
+            PokemonName::FALINKSMEGA => (65, 135, 135, 70, 65, 100),
+            PokemonName::RAICHUMEGAX => (60, 135, 95, 90, 95, 110),
+            PokemonName::RAICHUMEGAY => (60, 100, 55, 160, 80, 130),
             _ => panic!("Base stats not implemented for {}", self),
         }
     }

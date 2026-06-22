@@ -8,6 +8,12 @@ use crate::pokemon::PokemonName;
 use std::ops::{Index, IndexMut};
 use std::str::FromStr;
 
+#[cfg(not(feature = "champions"))]
+const DEFAULT_EVS: (u8, u8, u8, u8, u8, u8) = (85, 85, 85, 85, 85, 85);
+
+#[cfg(feature = "champions")]
+const DEFAULT_EVS: (u8, u8, u8, u8, u8, u8) = (11, 11, 11, 11, 11, 11);
+
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum SideReference {
     SideOne,
@@ -882,7 +888,7 @@ impl Default for Pokemon {
             base_ability: Abilities::NONE,
             item: Items::NONE,
             nature: PokemonNature::SERIOUS,
-            evs: (85, 85, 85, 85, 85, 85),
+            evs: DEFAULT_EVS,
             attack: 100,
             defense: 100,
             special_attack: 100,
@@ -1001,7 +1007,7 @@ impl Pokemon {
                 ev_iter.next().unwrap().parse::<u8>().unwrap(),
             )
         } else {
-            (85, 85, 85, 85, 85, 85)
+            DEFAULT_EVS
         };
         Pokemon {
             id: PokemonName::from_str(split[0]).unwrap(),

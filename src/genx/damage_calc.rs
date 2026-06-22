@@ -566,6 +566,13 @@ pub fn calculate_damage(
     let (attacking_side, defending_side) = state.get_both_sides_immutable(attacking_side);
     let attacker = attacking_side.get_active_immutable();
     let defender = defending_side.get_active_immutable();
+
+    let effective_weather = if attacker.ability == Abilities::MEGASOL {
+        Weather::SUN
+    } else {
+        state.get_weather()
+    };
+
     let (attacking_stat, defending_stat, crit_attacking_stat, crit_defending_stat) =
         get_attacking_and_defending_stats(
             attacker,
@@ -583,7 +590,7 @@ pub fn calculate_damage(
         defending_side,
         defender,
         defending_stat,
-        &state.weather.weather_type,
+        &effective_weather,
         &state.terrain.terrain_type,
         choice,
     );
@@ -608,7 +615,7 @@ pub fn calculate_damage(
         defending_side,
         defender,
         crit_defending_stat,
-        &state.weather.weather_type,
+        &effective_weather,
         &state.terrain.terrain_type,
         choice,
     );

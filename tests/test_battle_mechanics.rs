@@ -5915,6 +5915,27 @@ fn test_weatherball_in_sun() {
 }
 
 #[test]
+fn test_weatherball_with_megasol() {
+    let mut state = State::default();
+    state.side_one.get_active().ability = Abilities::MEGASOL;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::WEATHERBALL,
+        Choices::SPLASH,
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![Instruction::Damage(DamageInstruction {
+            side_ref: SideReference::SideTwo,
+            damage_amount: 100,
+        })],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
 #[cfg(any(feature = "gen9"))]
 fn test_terrainpulse_gen9() {
     let mut state = State::default();

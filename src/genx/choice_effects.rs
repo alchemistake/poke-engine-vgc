@@ -256,19 +256,26 @@ pub fn modify_choice(
         }
 
         Choices::MORNINGSUN | Choices::MOONLIGHT | Choices::SYNTHESIS => {
-            match state.weather.weather_type {
-                Weather::SUN => {
-                    attacker_choice.heal = Some(Heal {
-                        target: MoveTarget::User,
-                        amount: 0.667,
-                    })
-                }
-                Weather::NONE => {}
-                _ => {
-                    attacker_choice.heal = Some(Heal {
-                        target: MoveTarget::User,
-                        amount: 0.25,
-                    })
+            if attacking_side.get_active_immutable().ability == Abilities::MEGASOL {
+                attacker_choice.heal = Some(Heal {
+                    target: MoveTarget::User,
+                    amount: 0.667,
+                })
+            } else {
+                match state.weather.weather_type {
+                    Weather::SUN => {
+                        attacker_choice.heal = Some(Heal {
+                            target: MoveTarget::User,
+                            amount: 0.667,
+                        })
+                    }
+                    Weather::NONE => {}
+                    _ => {
+                        attacker_choice.heal = Some(Heal {
+                            target: MoveTarget::User,
+                            amount: 0.25,
+                        })
+                    }
                 }
             }
         }
@@ -409,25 +416,32 @@ pub fn modify_choice(
                 attacker_choice.accuracy = 100.0;
             }
         }
-        Choices::WEATHERBALL => match state.weather.weather_type {
-            Weather::SUN | Weather::HARSHSUN => {
+        Choices::WEATHERBALL => {
+            if attacking_side.get_active_immutable().ability == Abilities::MEGASOL {
                 attacker_choice.base_power = 100.0;
                 attacker_choice.move_type = PokemonType::FIRE;
+            } else {
+                match state.weather.weather_type {
+                    Weather::SUN | Weather::HARSHSUN => {
+                        attacker_choice.base_power = 100.0;
+                        attacker_choice.move_type = PokemonType::FIRE;
+                    }
+                    Weather::RAIN | Weather::HEAVYRAIN => {
+                        attacker_choice.base_power = 100.0;
+                        attacker_choice.move_type = PokemonType::WATER;
+                    }
+                    Weather::SAND => {
+                        attacker_choice.base_power = 100.0;
+                        attacker_choice.move_type = PokemonType::ROCK;
+                    }
+                    Weather::HAIL | Weather::SNOW => {
+                        attacker_choice.base_power = 100.0;
+                        attacker_choice.move_type = PokemonType::ICE;
+                    }
+                    Weather::NONE => {}
+                }
             }
-            Weather::RAIN | Weather::HEAVYRAIN => {
-                attacker_choice.base_power = 100.0;
-                attacker_choice.move_type = PokemonType::WATER;
-            }
-            Weather::SAND => {
-                attacker_choice.base_power = 100.0;
-                attacker_choice.move_type = PokemonType::ROCK;
-            }
-            Weather::HAIL | Weather::SNOW => {
-                attacker_choice.base_power = 100.0;
-                attacker_choice.move_type = PokemonType::ICE;
-            }
-            Weather::NONE => {}
-        },
+        }
         Choices::SOLARBEAM | Choices::SOLARBLADE => {
             if state.weather_is_active(&Weather::SUN) || state.weather_is_active(&Weather::HARSHSUN)
             {

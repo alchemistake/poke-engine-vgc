@@ -1238,6 +1238,23 @@ impl State {
         }
     }
 
+    pub fn get_weather(&self) -> Weather {
+        if self.weather.turns_remaining == 0 {
+            return Weather::NONE;
+        }
+        let s1_active = self.side_one.get_active_immutable();
+        let s2_active = self.side_two.get_active_immutable();
+        if s1_active.ability == Abilities::AIRLOCK
+            || s1_active.ability == Abilities::CLOUDNINE
+            || s2_active.ability == Abilities::AIRLOCK
+            || s2_active.ability == Abilities::CLOUDNINE
+        {
+            Weather::NONE
+        } else {
+            self.weather.weather_type
+        }
+    }
+
     pub fn weather_is_active(&self, weather: &Weather) -> bool {
         let s1_active = self.side_one.get_active_immutable();
         let s2_active = self.side_two.get_active_immutable();

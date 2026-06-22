@@ -2159,9 +2159,17 @@ pub fn ability_modify_attack_being_used(
                 attacker_choice.base_power *= 1.2;
             }
         }
+        #[cfg(not(feature = "champions"))]
         Abilities::UNSEENFIST => {
             if attacker_choice.flags.contact {
                 attacker_choice.flags.protect = false
+            }
+        }
+        #[cfg(feature = "champions")]
+        Abilities::UNSEENFIST | Abilities::PIERCINGDRILL => {
+            if attacker_choice.flags.contact {
+                attacker_choice.flags.protect = false;
+                attacker_choice.base_power *= 0.25;
             }
         }
         Abilities::HUSTLE => {

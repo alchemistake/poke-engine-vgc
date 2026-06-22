@@ -19873,6 +19873,7 @@ fn test_orichalcum_boost() {
 }
 
 #[test]
+#[cfg(not(feature = "champions"))]
 fn test_unseenfist() {
     let mut state = State::default();
     state.side_one.get_active().ability = Abilities::UNSEENFIST;
@@ -19893,6 +19894,43 @@ fn test_unseenfist() {
             Instruction::Damage(DamageInstruction {
                 side_ref: SideReference::SideTwo,
                 damage_amount: 48,
+            }),
+            Instruction::RemoveVolatileStatus(RemoveVolatileStatusInstruction {
+                side_ref: SideReference::SideTwo,
+                volatile_status: PokemonVolatileStatus::PROTECT,
+            }),
+            Instruction::ChangeSideCondition(ChangeSideConditionInstruction {
+                side_ref: SideReference::SideTwo,
+                side_condition: PokemonSideCondition::Protect,
+                amount: 1,
+            }),
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+#[cfg(feature = "champions")]
+fn test_unseenfist() {
+    let mut state = State::default();
+    state.side_one.get_active().ability = Abilities::UNSEENFIST;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::TACKLE,
+        Choices::PROTECT,
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::ApplyVolatileStatus(ApplyVolatileStatusInstruction {
+                side_ref: SideReference::SideTwo,
+                volatile_status: PokemonVolatileStatus::PROTECT,
+            }),
+            Instruction::Damage(DamageInstruction {
+                side_ref: SideReference::SideTwo,
+                damage_amount: 13,
             }),
             Instruction::RemoveVolatileStatus(RemoveVolatileStatusInstruction {
                 side_ref: SideReference::SideTwo,

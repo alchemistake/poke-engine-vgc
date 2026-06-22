@@ -1838,6 +1838,11 @@ impl State {
                 active.ability =
                     Abilities::from(active.ability as i16 + instruction.ability_change);
             }
+            Instruction::ChangeBaseAbility(instruction) => {
+                let active = self.get_side(&instruction.side_ref).get_active();
+                active.base_ability =
+                    Abilities::from(active.base_ability as i16 + instruction.ability_change);
+            }
             Instruction::Heal(instruction) => {
                 self.heal(&instruction.side_ref, instruction.heal_amount)
             }
@@ -2026,6 +2031,11 @@ impl State {
                 let active = self.get_side(&instruction.side_ref).get_active();
                 active.ability =
                     Abilities::from(active.ability as i16 - instruction.ability_change);
+            }
+            Instruction::ChangeBaseAbility(instruction) => {
+                let active = self.get_side(&instruction.side_ref).get_active();
+                active.base_ability =
+                    Abilities::from(active.base_ability as i16 - instruction.ability_change);
             }
             Instruction::EnableMove(instruction) => {
                 self.disable_move(&instruction.side_ref, &instruction.move_index)

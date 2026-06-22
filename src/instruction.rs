@@ -57,6 +57,7 @@ pub enum Instruction {
     DecrementTerrainTurnsRemaining,
     ChangeType(ChangeType),
     ChangeAbility(ChangeAbilityInstruction),
+    ChangeBaseAbility(ChangeAbilityInstruction),
     ChangeItem(ChangeItemInstruction),
     ChangeAttack(ChangeStatInstruction),
     ChangeDefense(ChangeStatInstruction),
@@ -180,6 +181,13 @@ impl fmt::Debug for Instruction {
             }
             Instruction::ChangeAbility(c) => {
                 write!(f, "ChangeAbility {:?}: {:?}", c.side_ref, c.ability_change)
+            }
+            Instruction::ChangeBaseAbility(c) => {
+                write!(
+                    f,
+                    "ChangeBaseAbility {:?}: {:?}",
+                    c.side_ref, c.ability_change
+                )
             }
             Instruction::ChangeItem(c) => {
                 write!(

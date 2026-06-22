@@ -18229,6 +18229,7 @@ fn test_basic_mega_evolving() {
     state.side_one.get_active().id = PokemonName::VENUSAUR;
     state.side_one.get_active().item = Items::VENUSAURITE;
     state.side_one.get_active().ability = Abilities::CHLOROPHYLL;
+    state.side_one.get_active().base_ability = Abilities::CHLOROPHYLL;
     state.side_one.get_active().types = (PokemonType::GRASS, PokemonType::POISON);
 
     // initial stats for a lvl 100 venusaur with evenly split evs and neutral nature
@@ -18280,6 +18281,10 @@ fn test_basic_mega_evolving() {
                 side_ref: SideReference::SideOne,
                 ability_change: Abilities::THICKFAT as i16 - Abilities::CHLOROPHYLL as i16,
             }),
+            Instruction::ChangeBaseAbility(ChangeAbilityInstruction {
+                side_ref: SideReference::SideOne,
+                ability_change: Abilities::THICKFAT as i16 - Abilities::CHLOROPHYLL as i16,
+            }),
         ],
     }];
     assert_eq!(expected_instructions, vec_of_instructions);
@@ -18291,6 +18296,7 @@ fn test_mega_evolving_using_pursuit_into_switch() {
     state.side_one.get_active().id = PokemonName::VENUSAUR;
     state.side_one.get_active().item = Items::VENUSAURITE;
     state.side_one.get_active().ability = Abilities::CHLOROPHYLL;
+    state.side_one.get_active().base_ability = Abilities::CHLOROPHYLL;
     state.side_one.get_active().types = (PokemonType::GRASS, PokemonType::POISON);
 
     // initial stats for a lvl 100 venusaur with evenly split evs and neutral nature
@@ -18348,6 +18354,10 @@ fn test_mega_evolving_using_pursuit_into_switch() {
                 side_ref: SideReference::SideOne,
                 ability_change: Abilities::THICKFAT as i16 - Abilities::CHLOROPHYLL as i16,
             }),
+            Instruction::ChangeBaseAbility(ChangeAbilityInstruction {
+                side_ref: SideReference::SideOne,
+                ability_change: Abilities::THICKFAT as i16 - Abilities::CHLOROPHYLL as i16,
+            }),
             Instruction::Damage(DamageInstruction {
                 side_ref: SideReference::SideTwo,
                 damage_amount: 100,
@@ -18363,6 +18373,7 @@ fn test_mega_evolving_with_ability_activate() {
     state.side_one.get_active().id = PokemonName::MANECTRIC;
     state.side_one.get_active().item = Items::MANECTITE;
     state.side_one.get_active().ability = Abilities::LIGHTNINGROD;
+    state.side_one.get_active().base_ability = Abilities::LIGHTNINGROD;
     state.side_one.get_active().types = (PokemonType::ELECTRIC, PokemonType::TYPELESS);
 
     // initial stats for a lvl 100 venusaur with evenly split evs and neutral nature
@@ -18411,6 +18422,10 @@ fn test_mega_evolving_with_ability_activate() {
                 amount: 60,
             }),
             Instruction::ChangeAbility(ChangeAbilityInstruction {
+                side_ref: SideReference::SideOne,
+                ability_change: Abilities::INTIMIDATE as i16 - Abilities::LIGHTNINGROD as i16,
+            }),
+            Instruction::ChangeBaseAbility(ChangeAbilityInstruction {
                 side_ref: SideReference::SideOne,
                 ability_change: Abilities::INTIMIDATE as i16 - Abilities::LIGHTNINGROD as i16,
             }),

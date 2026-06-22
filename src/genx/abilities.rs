@@ -2106,6 +2106,12 @@ pub fn ability_modify_attack_being_used(
                 attacker_choice.base_power *= 1.3;
             }
         }
+        Abilities::DRAGONIZE => {
+            if attacker_choice.move_type == PokemonType::NORMAL {
+                attacker_choice.move_type = PokemonType::DRAGON;
+                attacker_choice.base_power *= 1.2;
+            }
+        }
         Abilities::DEFEATIST => {
             if attacking_pkmn.hp <= attacking_pkmn.maxhp / 2 {
                 attacker_choice.base_power *= 0.5;

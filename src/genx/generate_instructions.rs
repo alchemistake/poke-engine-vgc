@@ -166,7 +166,6 @@ fn generate_instructions_from_switch(
     incoming_instructions: &mut StateInstructions,
 ) {
     let should_last_used_move = state.use_last_used_move;
-    state.apply_instructions(&incoming_instructions.instruction_list);
 
     let (side, opposite_side) = state.get_both_sides(&switching_side_ref);
     if side.force_switch {
@@ -477,8 +476,6 @@ fn generate_instructions_from_switch(
 
     ability_on_switch_in(state, &switching_side_ref, incoming_instructions);
     item_on_switch_in(state, &switching_side_ref, incoming_instructions);
-
-    state.reverse_instructions(&incoming_instructions.instruction_list);
 }
 
 fn generate_instructions_from_increment_side_condition(
@@ -1199,12 +1196,14 @@ fn get_instructions_from_drag(
 
     for pkmn_id in defending_side_alive_reserve_indices {
         let mut cloned_instructions = incoming_instructions.clone();
+        state.apply_instructions(&cloned_instructions.instruction_list);
         generate_instructions_from_switch(
             state,
             pkmn_id,
             attacking_side_reference.get_other_side(),
             &mut cloned_instructions,
         );
+        state.reverse_instructions(&cloned_instructions.instruction_list);
         cloned_instructions.update_percentage(1.0 / num_alive_reserve as f32);
         frozen_instructions.push(cloned_instructions);
     }
@@ -1953,17 +1952,6 @@ pub fn generate_instructions_from_move(
             &attacking_side,
             &mut incoming_instructions,
         );
-    }
-
-    if choice.category == MoveCategory::Switch {
-        generate_instructions_from_switch(
-            state,
-            choice.switch_id,
-            attacking_side,
-            &mut incoming_instructions,
-        );
-        final_instructions.push(incoming_instructions);
-        return;
     }
 
     let attacker_side = state.get_side(&attacking_side);
@@ -3797,6 +3785,37 @@ fn handle_both_moves(
     }
 }
 
+fn run_mega_evolutions(
+    state: &mut State,
+    s1_mega: bool,
+    s2_mega: bool,
+    incoming_instructions: &mut StateInstructions,
+) {
+    match (s1_mega, s2_mega) {
+        (true, true) => {
+            let s1_speed = get_effective_speed(state, &SideReference::SideOne);
+            let s2_speed = get_effective_speed(state, &SideReference::SideTwo);
+
+            // technically missing a branch if s1_speed == s2_speed,
+            // but practically this is rare enough for me to not care
+            if s1_speed > s2_speed {
+                mega_evolve(state, SideReference::SideOne, incoming_instructions);
+                mega_evolve(state, SideReference::SideTwo, incoming_instructions);
+            } else {
+                mega_evolve(state, SideReference::SideTwo, incoming_instructions);
+                mega_evolve(state, SideReference::SideOne, incoming_instructions);
+            }
+        }
+        (true, false) => {
+            mega_evolve(state, SideReference::SideOne, incoming_instructions);
+        }
+        (false, true) => {
+            mega_evolve(state, SideReference::SideTwo, incoming_instructions);
+        }
+        (false, false) => {}
+    }
+}
+
 fn mega_evolve(state: &mut State, side_ref: SideReference, instructions: &mut StateInstructions) {
     let side = state.get_side(&side_ref);
     let active_pkmn = side.get_active();
@@ -3923,10 +3942,65 @@ pub fn generate_instructions_from_move_pair(
     let mut state_instructions_vec: Vec<StateInstructions> = Vec::with_capacity(4);
     let mut incoming_instructions: StateInstructions = StateInstructions::default();
 
-    // Run terastallization / Mega evolutions
-    // Note: only create/apply instructions, don't apply changes
-    // generate_instructions_from_move() assumes instructions have not been applied
-    // technically, switches should happen _before_ this, but this is fine for now
+    // short-circuit if pursuit hitting a switching target
+    // pursuit screws up some assumptions so it's just easier to separate the logic if we detect
+    // that pursuit is being used against a switching target
+    //
+    // normally, the order of operations is:
+    //     run switches -> run megas/teras -> run moves
+    // however, if pursuit is used against a switching opponent, the order of operations becomes:
+    //    run megas/teras -> run pursuit -> run switches
+    if side_one_choice.move_id == Choices::PURSUIT
+        && side_two_choice.category == MoveCategory::Switch
+    {
+        get_instructions_from_pursuit_hitting_switching_target(
+            state,
+            SideReference::SideOne,
+            SideReference::SideTwo,
+            &mut side_one_choice,
+            &mut side_two_choice,
+            incoming_instructions,
+            &mut state_instructions_vec,
+            s1_mega,
+            s1_tera,
+            branch_on_damage,
+        );
+        return state_instructions_vec;
+    } else if side_two_choice.move_id == Choices::PURSUIT
+        && side_one_choice.category == MoveCategory::Switch
+    {
+        get_instructions_from_pursuit_hitting_switching_target(
+            state,
+            SideReference::SideTwo,
+            SideReference::SideOne,
+            &mut side_two_choice,
+            &mut side_one_choice,
+            incoming_instructions,
+            &mut state_instructions_vec,
+            s2_mega,
+            s2_tera,
+            branch_on_damage,
+        );
+        return state_instructions_vec;
+    }
+
+    // run switches
+    if let MoveChoice::Switch(switch_id) = side_one_move {
+        generate_instructions_from_switch(
+            state,
+            *switch_id,
+            SideReference::SideOne,
+            &mut incoming_instructions,
+        );
+    }
+    if let MoveChoice::Switch(switch_id) = side_two_move {
+        generate_instructions_from_switch(
+            state,
+            *switch_id,
+            SideReference::SideTwo,
+            &mut incoming_instructions,
+        );
+    }
     if s1_tera {
         state.side_one.get_active().terastallized = true;
         incoming_instructions
@@ -3947,12 +4021,8 @@ pub fn generate_instructions_from_move_pair(
                 },
             ));
     }
-    if s1_mega {
-        mega_evolve(state, SideReference::SideOne, &mut incoming_instructions);
-    }
-    if s2_mega {
-        mega_evolve(state, SideReference::SideTwo, &mut incoming_instructions);
-    }
+
+    run_mega_evolutions(state, s1_mega, s2_mega, &mut incoming_instructions);
 
     modify_choice_priority(&state, &SideReference::SideOne, &mut side_one_choice);
     modify_choice_priority(&state, &SideReference::SideTwo, &mut side_two_choice);
@@ -4066,6 +4136,79 @@ pub fn generate_instructions_from_move_pair(
         }
     }
     state_instructions_vec
+}
+
+fn get_instructions_from_pursuit_hitting_switching_target(
+    state: &mut State,
+    pursuiting_side_ref: SideReference,
+    switching_side_ref: SideReference,
+    pursuit_choice: &mut Choice,
+    switching_choice: &mut Choice,
+    mut incoming_instructions: StateInstructions,
+    state_instructions_vec: &mut Vec<StateInstructions>,
+    pursuiting_side_mega: bool,
+    pursuiting_side_tera: bool,
+    branch_on_damage: bool,
+) {
+    // pursuiting side mega / tera
+    if pursuiting_side_mega {
+        mega_evolve(state, pursuiting_side_ref, &mut incoming_instructions);
+    }
+    if pursuiting_side_tera {
+        state
+            .get_side(&pursuiting_side_ref)
+            .get_active()
+            .terastallized = true;
+        incoming_instructions
+            .instruction_list
+            .push(Instruction::ToggleTerastallized(
+                ToggleTerastallizedInstruction {
+                    side_ref: SideReference::SideOne,
+                },
+            ));
+    }
+
+    // reverse instructions because mega/tera might've added some
+    state.reverse_instructions(&incoming_instructions.instruction_list);
+
+    // pursuiting move
+    generate_instructions_from_move(
+        state,
+        pursuit_choice,
+        switching_choice,
+        pursuiting_side_ref,
+        incoming_instructions,
+        state_instructions_vec,
+        branch_on_damage,
+    );
+    after_move_finish(state, state_instructions_vec);
+
+    // loop through branches from pursuiting move, and apply the switching move on each of them
+    let mut i = 0;
+    let vec_len = state_instructions_vec.len();
+    switching_choice.first_move = false;
+    while i < vec_len {
+        let mut state_instruction = state_instructions_vec.remove(0);
+        state.apply_instructions(&state_instruction.instruction_list);
+        if state.get_side(&switching_side_ref).get_active().hp > 0 {
+            generate_instructions_from_switch(
+                state,
+                switching_choice.switch_id,
+                switching_side_ref,
+                &mut state_instruction,
+            );
+        }
+        state.reverse_instructions(&state_instruction.instruction_list);
+        after_move_finish(state, state_instructions_vec);
+        state_instructions_vec.push(state_instruction);
+        i += 1;
+    }
+
+    for state_instruction in state_instructions_vec.iter_mut() {
+        state.apply_instructions(&state_instruction.instruction_list);
+        add_end_of_turn_instructions(state, state_instruction, &SideReference::SideOne);
+        state.reverse_instructions(&state_instruction.instruction_list);
+    }
 }
 
 pub fn calculate_damage_rolls(

@@ -15183,7 +15183,7 @@ fn test_toxic_into_shedinja() {
 }
 
 #[test]
-fn test_pursuit() {
+fn test_pursuit_into_switch() {
     let mut state = State::default();
     state.side_one.get_active().moves.m0 = Move {
         id: Choices::PURSUIT,
@@ -15211,6 +15211,103 @@ fn test_pursuit() {
                 next_index: PokemonIndex::P1,
             }),
         ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_pursuit_into_switch_has_residuals_trigger_properly() {
+    let mut state = State::default();
+    state.weather.weather_type = Weather::SAND;
+    state.weather.turns_remaining = 5;
+    state.side_one.get_active().moves.m0 = Move {
+        id: Choices::PURSUIT,
+        disabled: false,
+        pp: 35,
+        choice: MOVES.get(&Choices::PURSUIT).unwrap().to_owned(),
+    };
+
+    let vec_of_instructions = generate_instructions_with_state_assertion(
+        &mut state,
+        &MoveChoice::Move(PokemonMoveIndex::M0),
+        &MoveChoice::Switch(PokemonIndex::P1),
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::Damage(DamageInstruction {
+                side_ref: SideReference::SideTwo,
+                damage_amount: 63,
+            }),
+            Instruction::Switch(SwitchInstruction {
+                side_ref: SideReference::SideTwo,
+                previous_index: PokemonIndex::P0,
+                next_index: PokemonIndex::P1,
+            }),
+            Instruction::DecrementWeatherTurnsRemaining,
+            Instruction::Damage(DamageInstruction {
+                side_ref: SideReference::SideOne,
+                damage_amount: 6,
+            }),
+            Instruction::Damage(DamageInstruction {
+                side_ref: SideReference::SideTwo,
+                damage_amount: 6,
+            }),
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_pursuit_knocking_out_switching_target_does_not_let_them_switch() {
+    let mut state = State::default();
+    state.side_two.get_active().hp = 1;
+    state.side_one.get_active().moves.m0 = Move {
+        id: Choices::PURSUIT,
+        disabled: false,
+        pp: 35,
+        choice: MOVES.get(&Choices::PURSUIT).unwrap().to_owned(),
+    };
+
+    let vec_of_instructions = generate_instructions_with_state_assertion(
+        &mut state,
+        &MoveChoice::Move(PokemonMoveIndex::M0),
+        &MoveChoice::Switch(PokemonIndex::P1),
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![Instruction::Damage(DamageInstruction {
+            side_ref: SideReference::SideTwo,
+            damage_amount: 1,
+        })],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_pursuit_into_non_switch() {
+    let mut state = State::default();
+    state.side_one.get_active().moves.m0 = Move {
+        id: Choices::PURSUIT,
+        disabled: false,
+        pp: 35,
+        choice: MOVES.get(&Choices::PURSUIT).unwrap().to_owned(),
+    };
+
+    let vec_of_instructions = generate_instructions_with_state_assertion(
+        &mut state,
+        &MoveChoice::Move(PokemonMoveIndex::M0),
+        &MoveChoice::Move(PokemonMoveIndex::M0),
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![Instruction::Damage(DamageInstruction {
+            side_ref: SideReference::SideTwo,
+            damage_amount: 32,
+        })],
     }];
     assert_eq!(expected_instructions, vec_of_instructions);
 }
@@ -18182,6 +18279,78 @@ fn test_basic_mega_evolving() {
             Instruction::ChangeAbility(ChangeAbilityInstruction {
                 side_ref: SideReference::SideOne,
                 ability_change: Abilities::THICKFAT as i16 - Abilities::CHLOROPHYLL as i16,
+            }),
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+fn test_mega_evolving_using_pursuit_into_switch() {
+    let mut state = State::default();
+    state.side_one.get_active().id = PokemonName::VENUSAUR;
+    state.side_one.get_active().item = Items::VENUSAURITE;
+    state.side_one.get_active().ability = Abilities::CHLOROPHYLL;
+    state.side_one.get_active().types = (PokemonType::GRASS, PokemonType::POISON);
+
+    // initial stats for a lvl 100 venusaur with evenly split evs and neutral nature
+    // expected stats after mega-evolving:
+    // HP: 322 (+0)
+    // Atk: 257 (+36)
+    // Def: 303 (+80)
+    // SpA: 301 (+44)
+    // SpD: 297 (+40)
+    // Spe: 217 (+0)
+    state.side_one.get_active().hp = 322;
+    state.side_one.get_active().maxhp = 322;
+    state.side_one.get_active().attack = 221;
+    state.side_one.get_active().defense = 223;
+    state.side_one.get_active().special_attack = 257;
+    state.side_one.get_active().special_defense = 257;
+    state.side_one.get_active().speed = 217;
+
+    state.side_one.get_active().moves.m0 = Move {
+        id: Choices::PURSUIT,
+        disabled: false,
+        pp: 12,
+        choice: MOVES.get(&Choices::PURSUIT).unwrap().to_owned(),
+    };
+    let vec_of_instructions = generate_instructions_with_state_assertion(
+        &mut state,
+        &MoveChoice::MoveMega(PokemonMoveIndex::M0),
+        &MoveChoice::Switch(PokemonIndex::P1),
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::FormeChange(FormeChangeInstruction {
+                side_ref: SideReference::SideOne,
+                name_change: PokemonName::VENUSAURMEGA as i16 - PokemonName::VENUSAUR as i16,
+            }),
+            Instruction::ChangeAttack(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 36,
+            }),
+            Instruction::ChangeDefense(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 80,
+            }),
+            Instruction::ChangeSpecialAttack(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 44,
+            }),
+            Instruction::ChangeSpecialDefense(ChangeStatInstruction {
+                side_ref: SideReference::SideOne,
+                amount: 40,
+            }),
+            Instruction::ChangeAbility(ChangeAbilityInstruction {
+                side_ref: SideReference::SideOne,
+                ability_change: Abilities::THICKFAT as i16 - Abilities::CHLOROPHYLL as i16,
+            }),
+            Instruction::Damage(DamageInstruction {
+                side_ref: SideReference::SideTwo,
+                damage_amount: 100,
             }),
         ],
     }];

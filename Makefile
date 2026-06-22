@@ -44,6 +44,9 @@ gen8:
 gen9:
 	cargo build --release --features gen9 --no-default-features
 
+champions:
+	cargo build --release --features champions --no-default-features
+
 tera:
 	cargo build --release --features gen9,terastallization --no-default-features
 
@@ -51,6 +54,7 @@ pytest:
 	. venv/bin/activate && pytest --rootdir=poke-engine-py/python poke-engine-py/python/tests
 
 test: pytest
+	cargo test --no-default-features --features "champions"
 	cargo test --no-default-features --features "terastallization"
 	cargo test --no-default-features --features "gen9"
 	cargo test --no-default-features --features "gen8"
@@ -73,6 +77,7 @@ fmt_ci:
 
 test_ci:
 	pytest --rootdir=poke-engine-py/python poke-engine-py/python/tests
+	cargo test --no-default-features --features "champions"
 	cargo test --no-default-features --features "gen9"
 	cargo test --no-default-features --features "gen8"
 	cargo test --no-default-features --features "gen7"

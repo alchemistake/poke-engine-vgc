@@ -69,7 +69,11 @@ pub const MAX_SLEEP_TURNS: i8 = 4;
 ))]
 pub const MAX_SLEEP_TURNS: i8 = 3;
 
+#[cfg(not(feature = "champions"))]
 pub const THAW_CHANCE: f32 = 0.20;
+
+#[cfg(feature = "champions")]
+pub const THAW_CHANCE: f32 = 0.25;
 
 pub const FULLY_PARALYZED_CHANCE: f32 = 0.25;
 
@@ -8750,7 +8754,7 @@ mod tests {
         let mut incoming_instructions = StateInstructions::default();
 
         let expected_instructions = StateInstructions {
-            percentage: 20.0,
+            percentage: THAW_CHANCE * 100.0,
             instruction_list: vec![Instruction::ChangeStatus(ChangeStatusInstruction {
                 side_ref: SideReference::SideOne,
                 pokemon_index: state.side_one.active_index,
@@ -8760,7 +8764,7 @@ mod tests {
         };
 
         let expected_frozen_instructions = &mut vec![StateInstructions {
-            percentage: 80.0,
+            percentage: (1.0 - THAW_CHANCE) * 100.0,
             instruction_list: vec![],
         }];
 

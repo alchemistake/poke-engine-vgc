@@ -5,7 +5,7 @@ use poke_engine::engine::abilities::{Abilities, WEATHER_ABILITY_TURNS};
 use poke_engine::engine::damage_calc::CRIT_MULTIPLIER;
 use poke_engine::engine::generate_instructions::{
     generate_instructions_from_move_pair, BASE_CRIT_CHANCE, BURN_RESIDUAL_DAMAGE_PCT,
-    CONSECUTIVE_PROTECT_CHANCE, MAX_SLEEP_TURNS,
+    CONSECUTIVE_PROTECT_CHANCE, MAX_SLEEP_TURNS, THAW_CHANCE,
 };
 use poke_engine::engine::items::Items;
 use poke_engine::engine::state::{MoveChoice, PokemonVolatileStatus, Terrain, Weather};
@@ -21425,11 +21425,11 @@ fn test_freeze_chance_to_thaw() {
 
     let expected_instructions = vec![
         StateInstructions {
-            percentage: 80.0,
+            percentage: (1.0 - THAW_CHANCE) * 100.0,
             instruction_list: vec![],
         },
         StateInstructions {
-            percentage: 20.0,
+            percentage: THAW_CHANCE * 100.0,
             instruction_list: vec![Instruction::ChangeStatus(ChangeStatusInstruction {
                 side_ref: SideReference::SideTwo,
                 pokemon_index: PokemonIndex::P0,

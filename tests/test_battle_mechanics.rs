@@ -5,7 +5,7 @@ use poke_engine::engine::abilities::{Abilities, WEATHER_ABILITY_TURNS};
 use poke_engine::engine::damage_calc::CRIT_MULTIPLIER;
 use poke_engine::engine::generate_instructions::{
     generate_instructions_from_move_pair, BASE_CRIT_CHANCE, BURN_RESIDUAL_DAMAGE_PCT,
-    CONSECUTIVE_PROTECT_CHANCE, MAX_SLEEP_TURNS, THAW_CHANCE,
+    CONSECUTIVE_PROTECT_CHANCE, FULLY_PARALYZED_CHANCE, MAX_SLEEP_TURNS, THAW_CHANCE,
 };
 use poke_engine::engine::items::Items;
 use poke_engine::engine::state::{MoveChoice, PokemonVolatileStatus, Terrain, Weather};
@@ -2763,7 +2763,7 @@ fn test_consecutive_protect_while_paralyzed() {
     state.side_one.side_conditions.protect = 1;
 
     // chance to move is chance to not be fully paralyzed (0.75) * chance to double-protect
-    let chance_to_move = 0.75 * CONSECUTIVE_PROTECT_CHANCE.powi(1);
+    let chance_to_move = (1.0 - FULLY_PARALYZED_CHANCE) * CONSECUTIVE_PROTECT_CHANCE.powi(1);
 
     let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
         &mut state,

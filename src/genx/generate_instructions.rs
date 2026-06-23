@@ -75,7 +75,11 @@ pub const THAW_CHANCE: f32 = 0.20;
 #[cfg(feature = "champions")]
 pub const THAW_CHANCE: f32 = 0.25;
 
+#[cfg(not(feature = "champions"))]
 pub const FULLY_PARALYZED_CHANCE: f32 = 0.25;
+
+#[cfg(feature = "champions")]
+pub const FULLY_PARALYZED_CHANCE: f32 = 0.125;
 
 #[cfg(any(
     feature = "gen7",
@@ -8589,12 +8593,12 @@ mod tests {
         let mut incoming_instructions = StateInstructions::default();
 
         let expected_instructions = StateInstructions {
-            percentage: 75.0,
+            percentage: (1.0 - FULLY_PARALYZED_CHANCE) * 100.0,
             instruction_list: vec![],
         };
 
         let expected_frozen_instructions = &mut vec![StateInstructions {
-            percentage: 25.0,
+            percentage: FULLY_PARALYZED_CHANCE * 100.0,
             instruction_list: vec![],
         }];
 
@@ -8973,7 +8977,7 @@ mod tests {
         })];
 
         let expected_instructions = StateInstructions {
-            percentage: 75.0,
+            percentage: (1.0 - FULLY_PARALYZED_CHANCE) * 100.0,
             instruction_list: vec![Instruction::Damage(DamageInstruction {
                 side_ref: SideReference::SideOne,
                 damage_amount: 1,
@@ -8981,7 +8985,7 @@ mod tests {
         };
 
         let expected_frozen_instructions = &mut vec![StateInstructions {
-            percentage: 25.0,
+            percentage: FULLY_PARALYZED_CHANCE * 100.0,
             instruction_list: vec![Instruction::Damage(DamageInstruction {
                 side_ref: SideReference::SideOne,
                 damage_amount: 1,

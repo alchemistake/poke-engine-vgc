@@ -469,7 +469,13 @@ pub fn modify_choice(
             }
         }
 
-        #[cfg(any(feature = "gen6", feature = "gen7", feature = "gen8", feature = "gen9"))]
+        #[cfg(any(
+            feature = "gen6",
+            feature = "gen7",
+            feature = "gen8",
+            feature = "gen9",
+            feature = "champions"
+        ))]
         Choices::KNOCKOFF => {
             // Bonus damage still applies if substitute is hit
             let defender = defending_side.get_active_immutable();
@@ -533,7 +539,8 @@ pub fn modify_choice(
             feature = "gen6",
             feature = "gen7",
             feature = "gen8",
-            feature = "gen9"
+            feature = "gen9",
+            feature = "champions"
         ))]
         Choices::PAYBACK => {
             if !attacker_choice.first_move && defender_choice.category != MoveCategory::Switch {
@@ -870,7 +877,12 @@ fn destinybond_before_move(
     }
 }
 
-#[cfg(any(feature = "gen7", feature = "gen8", feature = "gen9"))]
+#[cfg(any(
+    feature = "gen7",
+    feature = "gen8",
+    feature = "gen9",
+    feature = "champions"
+))]
 fn destinybond_before_move(
     attacking_side: &mut Side,
     attacking_side_ref: &SideReference,

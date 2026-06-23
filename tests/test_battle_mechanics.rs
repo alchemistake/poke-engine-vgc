@@ -477,7 +477,7 @@ fn test_same_speed_branch_with_residuals_for_both_sides() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_branch_when_a_roll_can_kill() {
     let mut state = State::default();
     state.side_two.get_active().hp = 50;
@@ -523,7 +523,7 @@ fn test_branch_when_a_roll_can_kill() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_branch_when_a_roll_can_kill_on_the_low_side() {
     let mut state = State::default();
     state.side_two.get_active().hp = 45;
@@ -1341,7 +1341,7 @@ fn test_knockoff_cannot_remove_arceus_plate() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_knockoff_cannot_remove_ogerpon_mask_and_does_not_give_boost() {
     let mut state = State::default();
     state.side_one.get_active().id = PokemonName::OGERPONCORNERSTONE;
@@ -1363,7 +1363,7 @@ fn test_knockoff_cannot_remove_ogerpon_mask_and_does_not_give_boost() {
     assert_eq!(expected_instructions, vec_of_instructions);
 }
 
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 #[test]
 fn test_cannot_knockoff_mega_stone() {
     let mut state = State::default();
@@ -1412,7 +1412,13 @@ fn test_knockoff_boosts_damage_but_cannot_remove_if_sub_is_hit() {
     assert_eq!(expected_instructions, vec_of_instructions);
 }
 
-#[cfg(any(feature = "gen9", feature = "gen8", feature = "gen7", feature = "gen6"))]
+#[cfg(any(
+    feature = "champions",
+    feature = "gen9",
+    feature = "gen8",
+    feature = "gen7",
+    feature = "gen6"
+))]
 #[test]
 fn test_knockoff_boosts_damage_but_cannot_remove_if_stickyhold() {
     let mut state = State::default();
@@ -1442,7 +1448,7 @@ fn test_knockoff_boosts_damage_but_cannot_remove_if_stickyhold() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_move_that_goes_through_protect() {
     let mut state = State::default();
 
@@ -1684,7 +1690,7 @@ fn test_moxie_boost() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_gen9_battlebond_boost() {
     let mut state = State::default();
     state.side_two.get_active().hp = 1;
@@ -1724,7 +1730,7 @@ fn test_gen9_battlebond_boost() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_battlebond_gen9_does_not_overboost() {
     let mut state = State::default();
     state.side_two.get_active().hp = 1;
@@ -2415,7 +2421,7 @@ fn test_banefulbunker_poisons() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_burning_bulwark_burns() {
     let mut state = State::default();
 
@@ -2457,7 +2463,7 @@ fn test_burning_bulwark_burns() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_bypassing_protect_does_not_inflict_burn_against_burning_bulwark() {
     let mut state = State::default();
 
@@ -4478,7 +4484,7 @@ fn test_suckerpunch_versus_non_attacking_move() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_suckerpunch_versus_attacking_move() {
     let mut state = State::default();
 
@@ -5589,7 +5595,7 @@ fn test_rockyhelmet_does_not_overkill() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_choiceband_locking() {
     let mut state = State::default();
     state.side_one.get_active().item = Items::CHOICEBAND;
@@ -5823,7 +5829,7 @@ fn test_locked_moves_unlock_on_switchout() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_fighting_move_with_blackbelt() {
     let mut state = State::default();
     state.side_two.get_active().hp = 300;
@@ -5847,7 +5853,7 @@ fn test_fighting_move_with_blackbelt() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_expert_belt_boost() {
     let mut state = State::default();
     state.side_two.get_active().hp = 300;
@@ -11442,7 +11448,7 @@ fn test_tera_electric_always_allows_doubleshock_with_no_typechange_volatile() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_basic_protean() {
     let mut state = State::default();
     state.side_one.get_active().types = (PokemonType::WATER, PokemonType::DARK);
@@ -11476,7 +11482,7 @@ fn test_basic_protean() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_gen9_protean_does_not_activate_when_already_typechanged() {
     let mut state = State::default();
     state.side_one.get_active().types = (PokemonType::NORMAL, PokemonType::TYPELESS);
@@ -11540,7 +11546,7 @@ fn test_gen6_gen7_gen8_protean_does_activate_when_already_typechanged() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_protean_does_not_change_type_if_already_has_type() {
     let mut state = State::default();
     state.side_one.get_active().types = (PokemonType::WATER, PokemonType::DARK);
@@ -13133,7 +13139,13 @@ fn test_cannot_use_futuresight_when_it_is_already_active() {
 }
 
 #[test]
-#[cfg(any(feature = "gen9", feature = "gen8", feature = "gen7", feature = "gen6"))] // just so that the damage is correct
+#[cfg(any(
+    feature = "champions",
+    feature = "gen9",
+    feature = "gen8",
+    feature = "gen7",
+    feature = "gen6"
+))] // just so that the damage is correct
 fn test_futuresight_activating() {
     let mut state = State::default();
     state.side_one.future_sight.0 = 1;
@@ -13161,7 +13173,13 @@ fn test_futuresight_activating() {
 }
 
 #[test]
-#[cfg(any(feature = "gen9", feature = "gen8", feature = "gen7", feature = "gen6"))] // just so that the damage is correct
+#[cfg(any(
+    feature = "champions",
+    feature = "gen9",
+    feature = "gen8",
+    feature = "gen7",
+    feature = "gen6"
+))] // just so that the damage is correct
 fn test_futuresight_activating_on_reserve_pkmn() {
     let mut state = State::default();
     state.side_one.future_sight.0 = 1;
@@ -13712,7 +13730,7 @@ fn test_solarbeam_in_sun() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_thief() {
     let mut state = State::default();
     state.side_one.get_active().item = Items::NONE;
@@ -13747,7 +13765,7 @@ fn test_thief() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_thief_does_not_steal_if_user_has_item() {
     let mut state = State::default();
     state.side_one.get_active().item = Items::LEFTOVERS;
@@ -13770,7 +13788,7 @@ fn test_thief_does_not_steal_if_user_has_item() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_thief_does_not_steal_if_opponent_has_no_item() {
     let mut state = State::default();
     state.side_one.get_active().item = Items::NONE;
@@ -13793,7 +13811,7 @@ fn test_thief_does_not_steal_if_opponent_has_no_item() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_thief_does_not_steal_if_hit_sub() {
     let mut state = State::default();
     state.side_one.get_active().item = Items::NONE;
@@ -14383,7 +14401,7 @@ fn test_mimikyu_with_disguise_formechange_on_damaging_move() {
     }];
 
     // Gen8 onwards mimikyu takes 1/8th of its health in damage when busting
-    if cfg!(feature = "gen8") || cfg!(feature = "gen9") {
+    if cfg!(feature = "gen8") || cfg!(feature = "gen9") || cfg!(feature = "champions") {
         expected_instructions[0]
             .instruction_list
             .push(Instruction::Damage(DamageInstruction {
@@ -14417,7 +14435,7 @@ fn test_mimikyu_busting_does_not_overkill() {
     }];
 
     // Gen8 onwards mimikyu takes up to 1/8th of its health in damage when busting
-    if cfg!(feature = "gen8") || cfg!(feature = "gen9") {
+    if cfg!(feature = "gen8") || cfg!(feature = "gen9") || cfg!(feature = "champions") {
         expected_instructions[0]
             .instruction_list
             .push(Instruction::Damage(DamageInstruction {
@@ -14873,7 +14891,7 @@ fn test_heatcrash_highest_base_power() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_blizzard_in_hail() {
     let mut state = State::default();
     state.weather.weather_type = Weather::HAIL;
@@ -15371,7 +15389,7 @@ fn test_poltergeist_missing() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_expert_belt_does_not_boost() {
     let mut state = State::default();
     state.side_two.get_active().hp = 300;
@@ -15538,7 +15556,7 @@ fn test_earlier_gen_souldew_50_percent_boost_on_any_special_move() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_skilllink_always_has_5_hits() {
     let mut state = State::default();
     state.side_two.get_active().item = Items::ROCKYHELMET;
@@ -15585,7 +15603,7 @@ fn test_skilllink_always_has_5_hits() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_population_bomb_with_widelens() {
     let mut state = State::default();
     state.side_one.get_active().item = Items::WIDELENS;
@@ -16240,7 +16258,12 @@ fn test_lightning_rod_versus_status_move() {
 }
 
 #[test]
-#[cfg(any(feature = "gen9", feature = "gen8", feature = "gen7"))]
+#[cfg(any(
+    feature = "champions",
+    feature = "gen9",
+    feature = "gen8",
+    feature = "gen7"
+))]
 fn test_prankster_into_dark_type() {
     let mut state = State::default();
     state.side_one.get_active().ability = Abilities::PRANKSTER;
@@ -16260,7 +16283,12 @@ fn test_prankster_into_dark_type() {
 }
 
 #[test]
-#[cfg(not(any(feature = "gen9", feature = "gen8", feature = "gen7")))]
+#[cfg(not(any(
+    feature = "champions",
+    feature = "gen9",
+    feature = "gen8",
+    feature = "gen7"
+)))]
 fn test_prankster_into_dark_type_earlier_gens() {
     let mut state = State::default();
     state.side_one.get_active().ability = Abilities::PRANKSTER;
@@ -16639,7 +16667,7 @@ fn test_magicbounce_with_side_condition_that_is_already_up() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_magicbounce_with_status() {
     let mut state = State::default();
     state.side_two.get_active().ability = Abilities::MAGICBOUNCE;
@@ -16675,7 +16703,7 @@ fn test_magicbounce_with_status() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_magicbounce_with_leechseed() {
     let mut state = State::default();
     state.side_two.get_active().ability = Abilities::MAGICBOUNCE;
@@ -17608,7 +17636,7 @@ fn test_hadronenegine_terrain_application() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_orichalcumpulse_weather_application() {
     let mut state = State::default();
     state.side_one.pokemon[PokemonIndex::P1].ability = Abilities::ORICHALCUMPULSE;
@@ -17945,7 +17973,7 @@ fn test_pre_gen9_snowwarning() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_gen9_snowwarning() {
     let mut state = State::default();
     state.side_one.pokemon[PokemonIndex::P1].ability = Abilities::SNOWWARNING;
@@ -19360,7 +19388,7 @@ fn test_steamengine() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_thermal_exchange() {
     let mut state = State::default();
     state.side_two.get_active().ability = Abilities::THERMALEXCHANGE;
@@ -20531,7 +20559,7 @@ fn test_pixilate_gen6() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_transistor() {
     let mut state = State::default();
     state.side_one.get_active().ability = Abilities::TRANSISTOR;
@@ -20716,7 +20744,7 @@ fn test_gen7_rapidspin_does_not_boost_speed() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_gen9_rapidspin_boosts_speed() {
     let mut state = State::default();
 
@@ -20744,7 +20772,7 @@ fn test_gen9_rapidspin_boosts_speed() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_weakarmor() {
     let mut state = State::default();
     state.side_two.get_active().ability = Abilities::WEAKARMOR;
@@ -20819,7 +20847,7 @@ fn test_wonderguard_against_spore() {
 }
 
 #[test]
-#[cfg(feature = "gen9")]
+#[cfg(any(feature = "gen9", feature = "champions"))]
 fn test_wonderguard_against_willowisp() {
     let mut state = State::default();
     state.side_two.get_active().ability = Abilities::WONDERGUARD;

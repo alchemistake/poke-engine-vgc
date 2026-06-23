@@ -6591,7 +6591,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
         },
     );
 
-    if cfg!(feature = "gen9") {
+    if cfg!(feature = "gen9") || cfg!(feature = "champions") {
         moves.insert(
             Choices::GLACIALLANCE,
             Choice {
@@ -6810,7 +6810,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
         },
     );
 
-    if cfg!(feature = "gen9") {
+    if cfg!(feature = "gen9") || cfg!(feature = "champions") {
         moves.insert(
             Choices::GRASSYGLIDE,
             Choice {
@@ -9906,7 +9906,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             ..Default::default()
         },
     );
-    if cfg!(feature = "gen9") {
+    if cfg!(feature = "gen9") || cfg!(feature = "champions") {
         moves.insert(
             Choices::LUSTERPURGE,
             Choice {
@@ -10753,7 +10753,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             ..Default::default()
         },
     );
-    if cfg!(feature = "gen9") {
+    if cfg!(feature = "gen9") || cfg!(feature = "champions") {
         moves.insert(
             Choices::MISTBALL,
             Choice {
@@ -11103,7 +11103,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             ..Default::default()
         },
     );
-    if cfg!(feature = "gen9") || cfg!(feature = "gen8") {
+    if cfg!(feature = "champions") || cfg!(feature = "gen9") || cfg!(feature = "gen8") {
         moves.insert(
             Choices::MULTIATTACK,
             Choice {
@@ -13235,7 +13235,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
         },
     );
 
-    if cfg!(feature = "gen9") || cfg!(feature = "gen8") {
+    if cfg!(feature = "champions") || cfg!(feature = "gen9") || cfg!(feature = "gen8") {
         moves.insert(
             Choices::RAPIDSPIN,
             Choice {
@@ -17257,7 +17257,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
         },
     );
 
-    if cfg!(feature = "gen9") || cfg!(feature = "gen8") {
+    if cfg!(feature = "champions") || cfg!(feature = "gen9") || cfg!(feature = "gen8") {
         moves.insert(
             Choices::TELEPORT,
             Choice {
@@ -18831,7 +18831,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
         },
     );
 
-    if cfg!(feature = "gen9") {
+    if cfg!(feature = "champions") || cfg!(feature = "gen9") {
         moves.insert(
             Choices::WICKEDBLOW,
             Choice {

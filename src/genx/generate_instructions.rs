@@ -48,7 +48,12 @@ use crate::choices::MultiAccuracyMove;
 #[cfg(any(feature = "gen4", feature = "gen5", feature = "gen6"))]
 pub const BASE_CRIT_CHANCE: f32 = 1.0 / 16.0;
 
-#[cfg(any(feature = "gen7", feature = "gen8", feature = "gen9"))]
+#[cfg(any(
+    feature = "gen7",
+    feature = "gen8",
+    feature = "gen9",
+    feature = "champions"
+))]
 pub const BASE_CRIT_CHANCE: f32 = 1.0 / 24.0;
 
 #[cfg(any(feature = "gen4"))]
@@ -59,7 +64,8 @@ pub const MAX_SLEEP_TURNS: i8 = 4;
     feature = "gen6",
     feature = "gen7",
     feature = "gen8",
-    feature = "gen9"
+    feature = "gen9",
+    feature = "champions"
 ))]
 pub const MAX_SLEEP_TURNS: i8 = 3;
 
@@ -67,7 +73,12 @@ pub const THAW_CHANCE: f32 = 0.20;
 
 pub const FULLY_PARALYZED_CHANCE: f32 = 0.25;
 
-#[cfg(any(feature = "gen7", feature = "gen8", feature = "gen9"))]
+#[cfg(any(
+    feature = "gen7",
+    feature = "gen8",
+    feature = "gen9",
+    feature = "champions"
+))]
 pub const HIT_SELF_IN_CONFUSION_CHANCE: f32 = 1.0 / 3.0;
 
 #[cfg(any(feature = "gen4", feature = "gen5", feature = "gen6"))]
@@ -78,7 +89,8 @@ pub const HIT_SELF_IN_CONFUSION_CHANCE: f32 = 1.0 / 2.0;
     feature = "gen6",
     feature = "gen7",
     feature = "gen8",
-    feature = "gen9"
+    feature = "gen9",
+    feature = "champions"
 ))]
 pub const CONSECUTIVE_PROTECT_CHANCE: f32 = 1.0 / 3.0;
 
@@ -88,19 +100,35 @@ pub const CONSECUTIVE_PROTECT_CHANCE: f32 = 1.0 / 2.0;
 #[cfg(any(feature = "gen4", feature = "gen5", feature = "gen6"))]
 pub const PARALYSIS_SPEED_MULTIPLIER: f32 = 0.25;
 
-#[cfg(any(feature = "gen7", feature = "gen8", feature = "gen9"))]
+#[cfg(any(
+    feature = "gen7",
+    feature = "gen8",
+    feature = "gen9",
+    feature = "champions"
+))]
 pub const PARALYSIS_SPEED_MULTIPLIER: f32 = 0.5;
 
 #[cfg(any(feature = "gen4", feature = "gen5", feature = "gen6"))]
 pub const BURN_RESIDUAL_DAMAGE_PCT: f32 = 0.125;
 
-#[cfg(any(feature = "gen7", feature = "gen8", feature = "gen9"))]
+#[cfg(any(
+    feature = "gen7",
+    feature = "gen8",
+    feature = "gen9",
+    feature = "champions"
+))]
 pub const BURN_RESIDUAL_DAMAGE_PCT: f32 = 0.0625;
 
 #[cfg(any(feature = "gen4", feature = "gen5"))]
 pub const PARTIALLY_TRAPPED_DAMAGE_PCT: f32 = 0.0625;
 
-#[cfg(any(feature = "gen6", feature = "gen7", feature = "gen8", feature = "gen9"))]
+#[cfg(any(
+    feature = "gen6",
+    feature = "gen7",
+    feature = "gen8",
+    feature = "gen9",
+    feature = "champions"
+))]
 pub const PARTIALLY_TRAPPED_DAMAGE_PCT: f32 = 0.125;
 
 pub const SIDE_CONDITION_DURATION: i8 = 5;
@@ -349,7 +377,7 @@ fn generate_instructions_from_switch(
     }
 
     if side.side_conditions.healing_wish > 0 {
-        #[cfg(any(feature = "gen8", feature = "gen9"))]
+        #[cfg(any(feature = "gen8", feature = "gen9", feature = "champions"))]
         let mut healing_wish_consumed = false;
 
         #[cfg(any(feature = "gen4", feature = "gen5", feature = "gen6", feature = "gen7"))]
@@ -759,7 +787,13 @@ pub fn immune_to_status(
                 // sleep clause
             }
 
-            #[cfg(any(feature = "gen6", feature = "gen7", feature = "gen8", feature = "gen9"))]
+            #[cfg(any(
+                feature = "gen6",
+                feature = "gen7",
+                feature = "gen8",
+                feature = "gen9",
+                feature = "champions"
+            ))]
             PokemonStatus::PARALYZE => {
                 target_pkmn.has_type(&PokemonType::ELECTRIC)
                     || target_pkmn.ability == Abilities::LIMBER
@@ -4420,7 +4454,13 @@ mod tests {
             false,
         );
 
-        #[cfg(any(feature = "gen6", feature = "gen7", feature = "gen8", feature = "gen9"))]
+        #[cfg(any(
+            feature = "gen6",
+            feature = "gen7",
+            feature = "gen8",
+            feature = "gen9",
+            feature = "champions"
+        ))]
         let expected_instructions = vec![StateInstructions::default()];
 
         #[cfg(any(feature = "gen4", feature = "gen5"))]
@@ -5259,7 +5299,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "gen9")]
+    #[cfg(any(feature = "gen9", feature = "champions"))]
     fn test_basic_status_move() {
         let mut state: State = State::default();
         let mut choice = MOVES.get(&Choices::GLARE).unwrap().to_owned();
@@ -5289,7 +5329,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "gen9")]
+    #[cfg(any(feature = "gen9", feature = "champions"))]
     fn test_status_move_that_can_miss() {
         let mut state: State = State::default();
         let mut choice = MOVES.get(&Choices::THUNDERWAVE).unwrap().to_owned();
@@ -6330,7 +6370,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "gen8", feature = "gen9"))]
+    #[cfg(any(feature = "gen8", feature = "gen9", feature = "champions"))]
     fn test_rapidspin_clears_hazards() {
         let mut state: State = State::default();
         state.side_one.side_conditions.stealth_rock = 1;
@@ -6423,7 +6463,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "gen8", feature = "gen9"))]
+    #[cfg(any(feature = "gen8", feature = "gen9", feature = "champions"))]
     fn test_rapidspin_clears_multiple_hazards() {
         let mut state: State = State::default();
         state.side_one.side_conditions.stealth_rock = 1;
@@ -6483,7 +6523,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "gen8", feature = "gen9"))]
+    #[cfg(any(feature = "gen8", feature = "gen9", feature = "champions"))]
     fn test_rapidspin_does_not_clear_opponent_hazards() {
         let mut state: State = State::default();
         state.side_two.side_conditions.stealth_rock = 1;
@@ -7210,7 +7250,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "gen9")]
+    #[cfg(any(feature = "gen9", feature = "champions"))]
     fn test_knockoff_removing_item() {
         let mut state: State = State::default();
         let mut choice = MOVES.get(&Choices::KNOCKOFF).unwrap().to_owned();
@@ -9151,7 +9191,12 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "gen7", feature = "gen8", feature = "gen9"))]
+    #[cfg(any(
+        feature = "gen7",
+        feature = "gen8",
+        feature = "gen9",
+        feature = "champions"
+    ))]
     fn test_later_gen_speed_cutting_in_half() {
         let mut state = State::default();
         state.side_one.get_active().status = PokemonStatus::PARALYZE;
@@ -10071,7 +10116,12 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "gen9", feature = "gen8", feature = "gen7"))]
+    #[cfg(any(
+        feature = "gen9",
+        feature = "gen8",
+        feature = "gen7",
+        feature = "champions"
+    ))]
     fn test_end_of_turn_burn_damage() {
         let mut state = State::default();
         state.side_one.get_active().status = PokemonStatus::BURN;
@@ -10435,7 +10485,13 @@ mod tests {
             })],
         };
 
-        #[cfg(any(feature = "gen6", feature = "gen7", feature = "gen8", feature = "gen9"))]
+        #[cfg(any(
+            feature = "gen6",
+            feature = "gen7",
+            feature = "gen8",
+            feature = "gen9",
+            feature = "champions"
+        ))]
         let expected_instructions = StateInstructions {
             percentage: 100.0,
             instruction_list: vec![Instruction::Damage(DamageInstruction {

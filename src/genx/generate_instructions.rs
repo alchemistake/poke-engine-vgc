@@ -65,9 +65,11 @@ pub const MAX_SLEEP_TURNS: i8 = 4;
     feature = "gen7",
     feature = "gen8",
     feature = "gen9",
-    feature = "champions"
 ))]
 pub const MAX_SLEEP_TURNS: i8 = 3;
+
+#[cfg(feature = "champions")]
+pub const MAX_SLEEP_TURNS: i8 = 2;
 
 #[cfg(not(feature = "champions"))]
 pub const THAW_CHANCE: f32 = 0.20;
@@ -151,11 +153,22 @@ const PROTECT_VOLATILES: [PokemonVolatileStatus; 6] = [
     PokemonVolatileStatus::ENDURE,
 ];
 
+#[cfg(not(feature = "champions"))]
 fn chance_to_wake_up(turns_asleep: i8) -> f32 {
     if turns_asleep == 0 {
         0.0
     } else {
         1.0 / (1 + MAX_SLEEP_TURNS - turns_asleep) as f32
+    }
+}
+
+#[cfg(feature = "champions")]
+fn chance_to_wake_up(turns_asleep: i8) -> f32 {
+    match turns_asleep {
+        0 => 0.0,
+        1 => 0.333,
+        2 => 1.0,
+        _ => panic!("turns_asleep should never be above 2 when calculating wake up chance"),
     }
 }
 

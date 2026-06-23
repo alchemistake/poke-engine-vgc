@@ -5,7 +5,7 @@ use poke_engine::engine::abilities::{Abilities, WEATHER_ABILITY_TURNS};
 use poke_engine::engine::damage_calc::CRIT_MULTIPLIER;
 use poke_engine::engine::generate_instructions::{
     generate_instructions_from_move_pair, BASE_CRIT_CHANCE, BURN_RESIDUAL_DAMAGE_PCT,
-    CONSECUTIVE_PROTECT_CHANCE, FULLY_PARALYZED_CHANCE, MAX_SLEEP_TURNS, THAW_CHANCE,
+    CONSECUTIVE_PROTECT_CHANCE, FULLY_PARALYZED_CHANCE, THAW_CHANCE,
 };
 use poke_engine::engine::items::Items;
 use poke_engine::engine::state::{MoveChoice, PokemonVolatileStatus, Terrain, Weather};
@@ -32,6 +32,9 @@ use poke_engine::state::{
 
 #[cfg(feature = "terastallization")]
 use poke_engine::instruction::ToggleTerastallizedInstruction;
+
+#[cfg(not(feature = "champions"))]
+use poke_engine::engine::generate_instructions::MAX_SLEEP_TURNS;
 
 pub fn generate_instructions_with_state_assertion(
     state: &mut State,
@@ -21363,6 +21366,7 @@ fn test_solarpower_damage() {
 }
 
 #[test]
+#[cfg(not(feature = "champions"))]
 fn test_baddreams() {
     let mut state = State::default();
     state.side_one.get_active().ability = Abilities::BADDREAMS;
@@ -21567,6 +21571,7 @@ fn test_sleeptalk_when_asleep_and_rest_turns_active() {
 }
 
 #[test]
+#[cfg(not(feature = "champions"))]
 fn test_baddreams_does_not_overkill() {
     let mut state = State::default();
     state.side_one.get_active().ability = Abilities::BADDREAMS;

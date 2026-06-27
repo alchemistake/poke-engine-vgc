@@ -512,30 +512,38 @@ fn common_pkmn_damage_calc(
     attacking_side: &Side,
     attacker: &Pokemon,
     attacking_stat: i16,
+    crit_attacking_stat: i16,
     defending_side: &Side,
     defender: &Pokemon,
     defending_stat: i16,
+    crit_defending_stat: i16,
     weather: &Weather,
     terrain: &Terrain,
     choice: &Choice,
-) -> f32 {
+) -> (f32, f32) {
     let mut damage: f32;
-    damage = 2.0 * attacker.level as f32;
-    damage = damage.floor() / 5.0;
-    damage = damage.floor() + 2.0;
-    damage = damage.floor() * choice.base_power;
-    damage = damage * attacking_stat as f32 / defending_stat as f32;
+    let mut crit_damage: f32;
+    let mut common_damage = 2.0 * attacker.level as f32;
+    common_damage = common_damage.floor() / 5.0;
+    common_damage = common_damage.floor() + 2.0;
+    common_damage = common_damage.floor() * choice.base_power;
+
+    damage = common_damage * attacking_stat as f32 / defending_stat as f32;
     damage = damage.floor() / 50.0;
     damage = damage.floor() + 2.0;
 
-    let defender_types = get_defending_types(&defending_side, defender, attacker, choice);
+    crit_damage = common_damage * crit_attacking_stat as f32 / crit_defending_stat as f32;
+    crit_damage = crit_damage.floor() / 50.0;
+    crit_damage = crit_damage.floor() + 2.0;
 
     let mut damage_modifier = 1.0;
-
     if defender.terastallized && choice.move_type == PokemonType::STELLAR {
         damage_modifier *= 2.0;
     } else {
-        damage_modifier *= _type_effectiveness_modifier(&choice.move_type, &defender_types);
+        damage_modifier *= _type_effectiveness_modifier(
+            &choice.move_type,
+            &get_defending_types(&defending_side, defender, attacker, choice),
+        );
     }
 
     if attacker.ability != Abilities::CLOUDNINE
@@ -551,7 +559,10 @@ fn common_pkmn_damage_calc(
     damage_modifier *= volatile_status_modifier(&choice, attacking_side, defending_side);
     damage_modifier *= terrain_modifier(terrain, attacker, defender, &choice);
 
-    damage * damage_modifier
+    damage = damage * damage_modifier;
+    crit_damage = crit_damage * damage_modifier;
+
+    (damage, crit_damage)
 }
 
 // This is a basic damage calculation function that assumes special effects/modifiers
@@ -590,13 +601,15 @@ pub fn calculate_damage(
             &choice,
         );
 
-    let mut damage = common_pkmn_damage_calc(
+    let (mut damage, mut crit_damage) = common_pkmn_damage_calc(
         attacking_side,
         attacker,
         attacking_stat,
+        crit_attacking_stat,
         defending_side,
         defender,
         defending_stat,
+        crit_defending_stat,
         &effective_weather,
         &state.terrain.terrain_type,
         choice,
@@ -615,17 +628,6 @@ pub fn calculate_damage(
         }
     }
 
-    let mut crit_damage = common_pkmn_damage_calc(
-        attacking_side,
-        attacker,
-        crit_attacking_stat,
-        defending_side,
-        defender,
-        crit_defending_stat,
-        &effective_weather,
-        &state.terrain.terrain_type,
-        choice,
-    );
     crit_damage *= CRIT_MULTIPLIER;
 
     match _damage_rolls {
@@ -654,12 +656,14 @@ pub fn calculate_futuresight_damage(
     let attacking_stat = attacking_side.pokemon[attacking_side_pokemon_index].special_attack;
     let defending_stat = defending_side.get_active_immutable().special_defense;
     let attacker = attacking_side.get_active_immutable();
-    let mut damage = common_pkmn_damage_calc(
+    let (mut damage, _) = common_pkmn_damage_calc(
         attacking_side,
         attacker,
         attacking_stat,
+        attacking_stat,
         defending_side,
         defending_side.get_active_immutable(),
+        defending_stat,
         defending_stat,
         &Weather::NONE,
         &Terrain::NONE,

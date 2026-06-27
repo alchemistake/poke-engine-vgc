@@ -339,8 +339,8 @@ fn get_attacking_and_defending_stats(
     defender: &Pokemon,
     attacking_side: &Side,
     defending_side: &Side,
-    state: &State,
     choice: &Choice,
+    effective_weather: Weather,
 ) -> (i16, i16, i16, i16) {
     let mut should_calc_attacker_boost = true;
     let mut should_calc_defender_boost = true;
@@ -486,13 +486,13 @@ fn get_attacking_and_defending_stats(
         feature = "gen9",
         feature = "champions"
     ))]
-    if state.weather_is_active(&Weather::SNOW)
+    if effective_weather == Weather::SNOW
         && defender.has_type(&PokemonType::ICE)
         && defending_stat == PokemonBoostableStat::Defense
     {
         defending_final_stat = (defending_final_stat as f32 * 1.5) as i16;
         crit_defending_stat = (crit_defending_stat as f32 * 1.5) as i16;
-    } else if state.weather_is_active(&Weather::SAND)
+    } else if effective_weather == Weather::SAND
         && defender.has_type(&PokemonType::ROCK)
         && defending_stat == PokemonBoostableStat::SpecialDefense
     {
@@ -597,8 +597,8 @@ pub fn calculate_damage(
             defender,
             attacking_side,
             defending_side,
-            state,
             &choice,
+            effective_weather,
         );
 
     let (mut damage, mut crit_damage) = common_pkmn_damage_calc(

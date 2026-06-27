@@ -141,6 +141,12 @@ pub const PARTIALLY_TRAPPED_DAMAGE_PCT: f32 = 0.0625;
 ))]
 pub const PARTIALLY_TRAPPED_DAMAGE_PCT: f32 = 0.125;
 
+#[cfg(not(feature = "champions"))]
+pub const SALT_CURE_DAMAGE_DIVISOR: f32 = 8.0;
+
+#[cfg(feature = "champions")]
+pub const SALT_CURE_DAMAGE_DIVISOR: f32 = 16.0;
+
 pub const SIDE_CONDITION_DURATION: i8 = 5;
 pub const TAILWIND_DURATION: i8 = 4;
 
@@ -3483,11 +3489,11 @@ fn add_end_of_turn_instructions(
             .contains(&PokemonVolatileStatus::SALTCURE)
         {
             let active_pkmn = side.get_active();
-            let mut divisor = 8.0;
+            let mut divisor = SALT_CURE_DAMAGE_DIVISOR;
             if active_pkmn.has_type(&PokemonType::WATER)
                 || active_pkmn.has_type(&PokemonType::STEEL)
             {
-                divisor = 4.0;
+                divisor /= 2.0;
             }
             let damage_amount =
                 cmp::min((active_pkmn.maxhp as f32 / divisor) as i16, active_pkmn.hp);
@@ -10540,11 +10546,12 @@ mod tests {
             &SideReference::SideOne,
         );
 
+        let expected_damage = (2.0 * (100.0 / SALT_CURE_DAMAGE_DIVISOR)) as i16;
         let expected_instructions = StateInstructions {
             percentage: 100.0,
             instruction_list: vec![Instruction::Damage(DamageInstruction {
                 side_ref: SideReference::SideOne,
-                damage_amount: 25,
+                damage_amount: expected_damage,
             })],
         };
 

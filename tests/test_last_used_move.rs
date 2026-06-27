@@ -778,6 +778,8 @@ fn test_firstimpression_first_turn_switched_in() {
         false,
     );
 
+    let expected_damage = if cfg!(feature = "champions") { 79 } else { 71 };
+
     let expected_instructions = vec![StateInstructions {
         percentage: 100.0,
         instruction_list: vec![
@@ -788,7 +790,7 @@ fn test_firstimpression_first_turn_switched_in() {
             }),
             Instruction::Damage(DamageInstruction {
                 side_ref: SideReference::SideTwo,
-                damage_amount: 71,
+                damage_amount: expected_damage,
             }),
             Instruction::SetLastUsedMove(SetLastUsedMoveInstruction {
                 side_ref: SideReference::SideTwo,

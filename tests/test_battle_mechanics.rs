@@ -797,7 +797,7 @@ fn test_basic_flinching_functionality() {
 
     let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
         &mut state,
-        Choices::IRONHEAD,
+        Choices::BITE,
         Choices::TACKLE,
     );
 
@@ -807,7 +807,7 @@ fn test_basic_flinching_functionality() {
             instruction_list: vec![
                 Instruction::Damage(DamageInstruction {
                     side_ref: SideReference::SideTwo,
-                    damage_amount: 63,
+                    damage_amount: 48,
                 }),
                 Instruction::Damage(DamageInstruction {
                     side_ref: SideReference::SideOne,
@@ -820,7 +820,7 @@ fn test_basic_flinching_functionality() {
             instruction_list: vec![
                 Instruction::Damage(DamageInstruction {
                     side_ref: SideReference::SideTwo,
-                    damage_amount: 63,
+                    damage_amount: 48,
                 }),
                 Instruction::ApplyVolatileStatus(ApplyVolatileStatusInstruction {
                     side_ref: SideReference::SideTwo,
@@ -841,11 +841,8 @@ fn test_flinching_first_and_second_move() {
     let mut state = State::default();
     state.side_one.get_active().speed = 150; // faster than side two
 
-    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
-        &mut state,
-        Choices::IRONHEAD,
-        Choices::IRONHEAD,
-    );
+    let vec_of_instructions =
+        set_moves_on_pkmn_and_call_generate_instructions(&mut state, Choices::BITE, Choices::BITE);
 
     let expected_instructions = vec![
         StateInstructions {
@@ -853,11 +850,11 @@ fn test_flinching_first_and_second_move() {
             instruction_list: vec![
                 Instruction::Damage(DamageInstruction {
                     side_ref: SideReference::SideTwo,
-                    damage_amount: 63,
+                    damage_amount: 48,
                 }),
                 Instruction::Damage(DamageInstruction {
                     side_ref: SideReference::SideOne,
-                    damage_amount: 63,
+                    damage_amount: 48,
                 }),
             ],
         },
@@ -866,7 +863,7 @@ fn test_flinching_first_and_second_move() {
             instruction_list: vec![
                 Instruction::Damage(DamageInstruction {
                     side_ref: SideReference::SideTwo,
-                    damage_amount: 63,
+                    damage_amount: 48,
                 }),
                 Instruction::ApplyVolatileStatus(ApplyVolatileStatusInstruction {
                     side_ref: SideReference::SideTwo,
@@ -8945,7 +8942,7 @@ fn test_pp_not_decremented_when_flinched() {
     state
         .side_two
         .get_active()
-        .replace_move(PokemonMoveIndex::M0, Choices::IRONHEAD);
+        .replace_move(PokemonMoveIndex::M0, Choices::BITE);
     state.side_two.get_active().moves[&PokemonMoveIndex::M0].pp = 1;
 
     let vec_of_instructions = generate_instructions_with_state_assertion(
@@ -8965,7 +8962,7 @@ fn test_pp_not_decremented_when_flinched() {
                 }),
                 Instruction::Damage(DamageInstruction {
                     side_ref: SideReference::SideOne,
-                    damage_amount: 63,
+                    damage_amount: 48,
                 }),
                 Instruction::DecrementPP(DecrementPPInstruction {
                     side_ref: SideReference::SideOne,
@@ -8988,7 +8985,7 @@ fn test_pp_not_decremented_when_flinched() {
                 }),
                 Instruction::Damage(DamageInstruction {
                     side_ref: SideReference::SideOne,
-                    damage_amount: 63,
+                    damage_amount: 48,
                 }),
                 Instruction::ApplyVolatileStatus(ApplyVolatileStatusInstruction {
                     side_ref: SideReference::SideOne,
@@ -13381,16 +13378,22 @@ fn test_direclaw() {
         Choices::SPLASH,
     );
 
+    let expected_percentages = if cfg!(feature = "champions") {
+        (70.18903, 9.79847, 10.0125, 9.999999)
+    } else {
+        (49.998, 16.666, 16.666, 16.67)
+    };
+
     let expected_instructions = vec![
         StateInstructions {
-            percentage: 49.998,
+            percentage: expected_percentages.0,
             instruction_list: vec![Instruction::Damage(DamageInstruction {
                 side_ref: SideReference::SideTwo,
                 damage_amount: 63,
             })],
         },
         StateInstructions {
-            percentage: 16.666,
+            percentage: expected_percentages.1,
             instruction_list: vec![
                 Instruction::Damage(DamageInstruction {
                     side_ref: SideReference::SideTwo,
@@ -13405,7 +13408,7 @@ fn test_direclaw() {
             ],
         },
         StateInstructions {
-            percentage: 16.666,
+            percentage: expected_percentages.2,
             instruction_list: vec![
                 Instruction::Damage(DamageInstruction {
                     side_ref: SideReference::SideTwo,
@@ -13420,7 +13423,7 @@ fn test_direclaw() {
             ],
         },
         StateInstructions {
-            percentage: 16.67,
+            percentage: expected_percentages.3,
             instruction_list: vec![
                 Instruction::Damage(DamageInstruction {
                     side_ref: SideReference::SideTwo,
@@ -14193,7 +14196,7 @@ fn test_iceface_against_move_with_possible_secondary() {
     let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
         &mut state,
         Choices::SPLASH,
-        Choices::IRONHEAD,
+        Choices::BITE,
     );
 
     let expected_instructions = vec![

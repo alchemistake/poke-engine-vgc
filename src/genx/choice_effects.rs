@@ -52,6 +52,7 @@ pub fn modify_choice(
                 attacker_choice.flags.charge = false;
             }
         }
+        #[cfg(not(feature = "champions"))]
         Choices::DIRECLAW => {
             // percentages are a hack and are incorrect in situations
             // where one or more status effects are not possible
@@ -67,6 +68,26 @@ pub fn modify_choice(
             });
             attacker_choice.add_or_create_secondaries(Secondary {
                 chance: 25.0,
+                target: MoveTarget::Opponent,
+                effect: Effect::Status(PokemonStatus::SLEEP),
+            });
+        }
+        #[cfg(feature = "champions")]
+        Choices::DIRECLAW => {
+            // percentages are a hack and are incorrect in situations
+            // where one or more status effects are not possible
+            attacker_choice.add_or_create_secondaries(Secondary {
+                chance: 10.00,
+                target: MoveTarget::Opponent,
+                effect: Effect::Status(PokemonStatus::POISON),
+            });
+            attacker_choice.add_or_create_secondaries(Secondary {
+                chance: 11.125,
+                target: MoveTarget::Opponent,
+                effect: Effect::Status(PokemonStatus::PARALYZE),
+            });
+            attacker_choice.add_or_create_secondaries(Secondary {
+                chance: 12.25,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::SLEEP),
             });
@@ -215,6 +236,11 @@ pub fn modify_choice(
             _ => {}
         },
         Choices::GROWTH => {
+            // as of writing this, growth should fail in champions if mega-sol is active
+            // not that the 2x boost fails to activate, it literally fails to do anything
+            // a) that's probably a bug?
+            // b) can only have this happen with some skill swap shenanigans
+            // so I won't bother implementing
             if state.weather_is_active(&Weather::SUN) {
                 attacker_choice.boost = Some(Boost {
                     target: MoveTarget::User,

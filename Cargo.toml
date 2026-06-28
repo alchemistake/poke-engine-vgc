@@ -39,6 +39,7 @@ gen7 = []
 gen8 = []
 gen9 = []
 champions = []
+bss = ["champions"]
 terastallization = ["gen9"]
 
 default = []

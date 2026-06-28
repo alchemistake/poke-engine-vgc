@@ -91,6 +91,8 @@ pub enum Instruction {
     ToggleSideTwoForceSwitch,
     ToggleTerastallized(ToggleTerastallizedInstruction),
     ToggleMegaEvolved(ToggleMegaEvolvedInstruction),
+    TeamPreviewFaintIndex(SideReference, PokemonIndex),
+    ToggleTeamPreview,
 }
 
 impl fmt::Debug for Instruction {
@@ -343,6 +345,12 @@ impl fmt::Debug for Instruction {
             }
             Instruction::ToggleSideTwoForceSwitch => {
                 write!(f, "ToggleSideTwoForceSwitch")
+            }
+            Instruction::TeamPreviewFaintIndex(side_ref, index) => {
+                write!(f, "TeamPreviewFaintIndex: {:?}, {:?}", side_ref, index)
+            }
+            Instruction::ToggleTeamPreview => {
+                write!(f, "ToggleTeamPreview")
             }
         }
     }

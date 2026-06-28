@@ -47,6 +47,9 @@ gen9:
 champions:
 	cargo build --release --features champions --no-default-features
 
+bss:
+	cargo build --release --features bss --no-default-features
+
 tera:
 	cargo build --release --features gen9,terastallization --no-default-features
 

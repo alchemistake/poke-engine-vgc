@@ -55,6 +55,7 @@ pub enum MoveChoice {
     MoveMega(PokemonMoveIndex),
     Move(PokemonMoveIndex),
     Switch(PokemonIndex),
+    TeamPreview(PokemonIndex, PokemonIndex, PokemonIndex), // lead, second, third
     None,
 }
 
@@ -71,6 +72,11 @@ impl MoveChoice {
                 format!("{}", side.get_active_immutable().moves[&index].id).to_lowercase()
             }
             MoveChoice::Switch(index) => format!("{}", side.pokemon[*index].id).to_lowercase(),
+            MoveChoice::TeamPreview(lead, second, third) => format!(
+                "{},{},{}",
+                side.pokemon[*lead].id, side.pokemon[*second].id, side.pokemon[*third].id
+            )
+            .to_lowercase(),
             MoveChoice::None => "No Move".to_string(),
         }
     }
@@ -87,6 +93,36 @@ impl MoveChoice {
             {
                 return Some(MoveChoice::Switch(pkmn_iter.pokemon_index));
             }
+        }
+        let pkmn_id_strings = side
+            .pokemon
+            .pkmn
+            .iter()
+            .map(|pkmn| pkmn.id.to_string().to_lowercase())
+            .collect::<Vec<String>>();
+        let parts = s.split(',').collect::<Vec<&str>>();
+        if parts.len() == 3
+            && pkmn_id_strings.contains(&parts[0].to_string())
+            && pkmn_id_strings.contains(&parts[1].to_string())
+            && pkmn_id_strings.contains(&parts[2].to_string())
+        {
+            let lead_index = pkmn_id_strings
+                .iter()
+                .position(|id| id == parts[0])
+                .unwrap();
+            let second_index = pkmn_id_strings
+                .iter()
+                .position(|id| id == parts[1])
+                .unwrap();
+            let third_index = pkmn_id_strings
+                .iter()
+                .position(|id| id == parts[2])
+                .unwrap();
+            return Some(MoveChoice::TeamPreview(
+                PokemonIndex::deserialize(&lead_index.to_string()),
+                PokemonIndex::deserialize(&second_index.to_string()),
+                PokemonIndex::deserialize(&third_index.to_string()),
+            ));
         }
 
         // check if s endswith `-tera`
@@ -737,7 +773,43 @@ impl Pokemon {
     }
 }
 
+const ALL_POKEMON_INDICES: [PokemonIndex; 6] = [
+    PokemonIndex::P0,
+    PokemonIndex::P1,
+    PokemonIndex::P2,
+    PokemonIndex::P3,
+    PokemonIndex::P4,
+    PokemonIndex::P5,
+];
+
 impl Side {
+    // generates BSS team preview options
+    // BSS is a 6v6 game at team preview, but only 3v3 in battle.
+    // This should generate all 60 options for both sides using MoveChoice::TeamPreview.
+    // 60 options because: 6 choose 3 = 20, and each side must select a lead, so 20 * 3 = 60.
+    // MoveChoice::TeamPreview(lead, reserve1, reserve2) where lead is the index of the lead pokemon,
+    // and reserve1 and reserve2 are the indices of the other two pokemon.
+    // Note that the order of reserve1 and reserve2 does not matter, so we can just generate all combinations of 3 pokemon from 6,
+    // and then for each combination, generate 3 permutations of the 3 pokemon to determine the lead.
+    pub fn bss_team_preview_get_all_options(&self) -> Vec<MoveChoice> {
+        let mut options = Vec::with_capacity(60);
+
+        let num_pkmn_indices = ALL_POKEMON_INDICES.len();
+        for i in 0..num_pkmn_indices {
+            for j in (i + 1)..num_pkmn_indices {
+                for k in (j + 1)..num_pkmn_indices {
+                    let lead = ALL_POKEMON_INDICES[i];
+                    let reserve1 = ALL_POKEMON_INDICES[j];
+                    let reserve2 = ALL_POKEMON_INDICES[k];
+                    options.push(MoveChoice::TeamPreview(lead, reserve1, reserve2));
+                    options.push(MoveChoice::TeamPreview(reserve1, lead, reserve2));
+                    options.push(MoveChoice::TeamPreview(reserve2, lead, reserve1));
+                }
+            }
+        }
+        options
+    }
+
     pub fn reset_negative_boosts(
         &mut self,
         side_ref: SideReference,
@@ -1040,7 +1112,7 @@ impl Side {
     pub fn num_fainted_pkmn(&self) -> i8 {
         let mut count = 0;
         for p in self.pokemon.into_iter() {
-            if p.hp == 0 {
+            if p.hp == 0 && p.id != PokemonName::NONE {
                 count += 1;
             }
         }
@@ -1050,6 +1122,14 @@ impl Side {
 
 impl State {
     pub fn root_get_all_options(&self) -> (Vec<MoveChoice>, Vec<MoveChoice>) {
+        #[cfg(feature = "bss")]
+        if self.team_preview {
+            return (
+                self.side_one.bss_team_preview_get_all_options(),
+                self.side_two.bss_team_preview_get_all_options(),
+            );
+        }
+
         if self.team_preview {
             let mut s1_options = Vec::with_capacity(6);
             let mut s2_options = Vec::with_capacity(6);
@@ -1075,6 +1155,7 @@ impl State {
             s1_options.retain(|x| match x {
                 MoveChoice::Move(_) | MoveChoice::MoveTera(_) | MoveChoice::MoveMega(_) => true,
                 MoveChoice::Switch(_) => false,
+                MoveChoice::TeamPreview(_, _, _) => false,
                 MoveChoice::None => true,
             });
         }
@@ -1102,6 +1183,7 @@ impl State {
             s2_options.retain(|x| match x {
                 MoveChoice::Move(_) | MoveChoice::MoveTera(_) | MoveChoice::MoveMega(_) => true,
                 MoveChoice::Switch(_) => false,
+                MoveChoice::TeamPreview(_, _, _) => false,
                 MoveChoice::None => true,
             });
         }

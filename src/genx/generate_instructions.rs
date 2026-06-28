@@ -3939,12 +3939,106 @@ fn mega_evolve(state: &mut State, side_ref: SideReference, instructions: &mut St
     ability_on_switch_in(state, &side_ref, instructions);
 }
 
+pub fn generate_instructions_for_bss_team_preview(
+    state: &mut State,
+    side_one_move: (PokemonIndex, PokemonIndex, PokemonIndex),
+    side_two_move: (PokemonIndex, PokemonIndex, PokemonIndex),
+) -> Vec<StateInstructions> {
+    let mut state_instructions: StateInstructions = StateInstructions::default();
+    let should_last_used_move = state.use_last_used_move;
+
+    // run the switches
+    for (side_ref, move_choice) in [
+        (SideReference::SideOne, side_one_move),
+        (SideReference::SideTwo, side_two_move),
+    ] {
+        let side = state.get_side(&side_ref);
+        state_instructions
+            .instruction_list
+            .push(Instruction::Switch(SwitchInstruction {
+                side_ref,
+                previous_index: side.active_index,
+                next_index: move_choice.0,
+            }));
+        if should_last_used_move {
+            state_instructions
+                .instruction_list
+                .push(Instruction::SetLastUsedMove(SetLastUsedMoveInstruction {
+                    side_ref,
+                    last_used_move: LastUsedMove::Switch(move_choice.0),
+                    previous_last_used_move: side.last_used_move,
+                }));
+            side.last_used_move = LastUsedMove::Switch(move_choice.0);
+        }
+        side.active_index = move_choice.0;
+    }
+
+    let pkmn_speed_order = if get_effective_speed(state, &SideReference::SideOne)
+        > get_effective_speed(state, &SideReference::SideTwo)
+    {
+        vec![SideReference::SideOne, SideReference::SideTwo]
+    } else {
+        vec![SideReference::SideTwo, SideReference::SideOne]
+    };
+
+    for side_ref in pkmn_speed_order.iter() {
+        ability_on_switch_in(state, side_ref, &mut state_instructions);
+        item_on_switch_in(state, side_ref, &mut state_instructions);
+    }
+    state.reverse_instructions(&state_instructions.instruction_list);
+
+    // after this point the instructions are reversed,
+    // so the state does not need to be modified to reflect the additional instructions added
+
+    // faint the pkmn that were not selected
+    for (side_ref, move_choice) in [
+        (SideReference::SideOne, side_one_move),
+        (SideReference::SideTwo, side_two_move),
+    ] {
+        let pkmn_indices = [move_choice.0, move_choice.1, move_choice.2];
+        let mut pkmn_iter = state.get_side_immutable(&side_ref).pokemon.into_iter();
+        while let Some(_) = pkmn_iter.next() {
+            if !pkmn_indices.contains(&pkmn_iter.pokemon_index) {
+                state_instructions
+                    .instruction_list
+                    .push(Instruction::TeamPreviewFaintIndex(
+                        side_ref,
+                        pkmn_iter.pokemon_index,
+                    ));
+            }
+        }
+    }
+
+    state_instructions
+        .instruction_list
+        .push(Instruction::ToggleTeamPreview);
+
+    vec![state_instructions]
+}
+
 pub fn generate_instructions_from_move_pair(
     state: &mut State,
     side_one_move: &MoveChoice,
     side_two_move: &MoveChoice,
     branch_on_damage: bool,
 ) -> Vec<StateInstructions> {
+    #[cfg(feature = "bss")]
+    if state.team_preview {
+        let (s1_lead, s1_reserve_1, s1_reserve_2) = match side_one_move {
+            MoveChoice::TeamPreview(a, b, c) => (*a, *b, *c),
+            _ => panic!("Side one move is not a team preview"),
+        };
+        let (s2_lead, s2_reserve_1, s2_reserve_2) = match side_two_move {
+            MoveChoice::TeamPreview(a, b, c) => (*a, *b, *c),
+            _ => panic!("Side two move is not a team preview"),
+        };
+        return generate_instructions_for_bss_team_preview(
+            state,
+            (s1_lead, s1_reserve_1, s1_reserve_2),
+            (s2_lead, s2_reserve_1, s2_reserve_2),
+        );
+    }
+
     let mut side_one_choice;
     let mut s1_tera = false;
     let mut s1_mega = false;
@@ -3971,6 +4065,9 @@ pub fn generate_instructions_from_move_pair(
             side_one_choice = state.side_one.get_active().moves[move_index].choice.clone();
             side_one_choice.move_index = *move_index;
             s1_mega = true;
+        }
+        MoveChoice::TeamPreview(_, _, _) => {
+            panic!("Team preview should not be handled in generate_instructions_from_move_pair");
         }
         MoveChoice::None => {
             side_one_choice = Choice::default();
@@ -4003,6 +4100,9 @@ pub fn generate_instructions_from_move_pair(
             side_two_choice = state.side_two.get_active().moves[move_index].choice.clone();
             side_two_choice.move_index = *move_index;
             s2_mega = true;
+        }
+        MoveChoice::TeamPreview(_, _, _) => {
+            panic!("Team preview should not be handled in generate_instructions_from_move_pair");
         }
         MoveChoice::None => {
             side_two_choice = Choice::default();

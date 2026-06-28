@@ -182,12 +182,14 @@ fn pprint_mcts_result(state: &State, result: MctsResult) {
     println!("\nTotal Iterations: {}\n", result.iteration_count);
     println!("Side One:");
     println!(
-        "\t{:<25}{:>12}{:>12}{:>10}{:>10}",
+        "\t{:<40}{:>12}{:>12}{:>10}{:>10}",
         "Move", "Total Score", "Avg Score", "Visits", "% Visits"
     );
-    for x in result.s1.iter() {
+    let mut s1_sorted = result.s1.clone();
+    s1_sorted.sort_by(|a, b| b.visits.cmp(&a.visits));
+    for x in s1_sorted.iter().take(20) {
         println!(
-            "\t{:<25}{:>12.2}{:>12.2}{:>10}{:>10.2}",
+            "\t{:<40}{:>12.2}{:>12.2}{:>10}{:>10.2}",
             x.move_choice.to_string(&state.side_one),
             x.total_score,
             x.total_score / x.visits as f32,
@@ -198,12 +200,14 @@ fn pprint_mcts_result(state: &State, result: MctsResult) {
 
     println!("Side Two:");
     println!(
-        "\t{:<25}{:>12}{:>12}{:>10}{:>10}",
+        "\t{:<40}{:>12}{:>12}{:>10}{:>10}",
         "Move", "Total Score", "Avg Score", "Visits", "% Visits"
     );
-    for x in result.s2.iter() {
+    let mut s2_sorted = result.s2.clone();
+    s2_sorted.sort_by(|a, b| b.visits.cmp(&a.visits));
+    for x in s2_sorted.iter().take(20) {
         println!(
-            "\t{:<25}{:>12.2}{:>12.2}{:>10}{:>10.2}",
+            "\t{:<40}{:>12.2}{:>12.2}{:>10}{:>10.2}",
             x.move_choice.to_string(&state.side_two),
             x.total_score,
             x.total_score / x.visits as f32,

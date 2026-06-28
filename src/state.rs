@@ -1978,6 +1978,12 @@ impl State {
                 let active = self.get_side(&instruction.side_ref).get_active();
                 active.id = PokemonName::from(active.id as i16 + instruction.name_change);
             }
+            Instruction::TeamPreviewFaintIndex(side_ref, pkmn_index) => {
+                self.get_side(&side_ref).pokemon[*pkmn_index].hp = 0;
+            }
+            Instruction::ToggleTeamPreview => {
+                self.team_preview = !self.team_preview;
+            }
         }
     }
 
@@ -2173,6 +2179,13 @@ impl State {
             Instruction::FormeChange(instruction) => {
                 let active = self.get_side(&instruction.side_ref).get_active();
                 active.id = PokemonName::from(active.id as i16 - instruction.name_change);
+            }
+            Instruction::TeamPreviewFaintIndex(side_ref, pkmn_index) => {
+                let pkmn = &mut self.get_side(side_ref).pokemon[*pkmn_index];
+                pkmn.hp = pkmn.maxhp;
+            }
+            Instruction::ToggleTeamPreview => {
+                self.team_preview = !self.team_preview;
             }
         }
     }

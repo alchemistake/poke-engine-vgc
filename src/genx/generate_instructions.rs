@@ -2428,6 +2428,11 @@ pub fn generate_instructions_from_move(
             branch_damage = (max_crit_damage as f32 * 0.925) as i16;
             incoming_instructions.update_percentage(1.0 - crit_rate);
             regular_damage = (max_damage_dealt as f32 * 0.925) as i16;
+        } else if choice.move_id.guaranteed_crit()
+            && defender_active.ability != Abilities::BATTLEARMOR
+            && defender_active.ability != Abilities::SHELLARMOR
+        {
+            regular_damage = (max_crit_damage as f32 * 0.925) as i16;
         } else {
             regular_damage = avg_damage_dealt;
         }

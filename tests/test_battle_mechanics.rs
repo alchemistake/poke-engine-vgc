@@ -15484,6 +15484,8 @@ fn test_multi_hit_move_where_first_hit_breaks_substitute() {
 fn test_contact_multi_hit_move_versus_rockyhelmet() {
     let mut state = State::default();
     state.side_two.get_active().item = Items::ROCKYHELMET;
+    state.side_two.get_active().maxhp = 500;
+    state.side_two.get_active().hp = 500;
 
     let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
         &mut state,
@@ -15491,20 +15493,22 @@ fn test_contact_multi_hit_move_versus_rockyhelmet() {
         Choices::SPLASH,
     );
 
+    let expected_damage = ((21f32) * CRIT_MULTIPLIER) as i16;
+
     let expected_instructions = vec![StateInstructions {
         percentage: 100.0,
         instruction_list: vec![
             Instruction::Damage(DamageInstruction {
                 side_ref: SideReference::SideTwo,
-                damage_amount: 21,
+                damage_amount: expected_damage,
             }),
             Instruction::Damage(DamageInstruction {
                 side_ref: SideReference::SideTwo,
-                damage_amount: 21,
+                damage_amount: expected_damage,
             }),
             Instruction::Damage(DamageInstruction {
                 side_ref: SideReference::SideTwo,
-                damage_amount: 21,
+                damage_amount: expected_damage,
             }),
             Instruction::Heal(HealInstruction {
                 side_ref: SideReference::SideOne,
@@ -15670,16 +15674,14 @@ fn test_triple_multihit_move_versus_substitute_and_rockyhelmet() {
         Choices::SPLASH,
     );
 
+    let expected_damage = ((21f32) * CRIT_MULTIPLIER) as i16;
+
     let expected_instructions = vec![StateInstructions {
         percentage: 100.0,
         instruction_list: vec![
             Instruction::DamageSubstitute(DamageInstruction {
                 side_ref: SideReference::SideTwo,
-                damage_amount: 21,
-            }),
-            Instruction::DamageSubstitute(DamageInstruction {
-                side_ref: SideReference::SideTwo,
-                damage_amount: 4,
+                damage_amount: 25,
             }),
             Instruction::RemoveVolatileStatus(RemoveVolatileStatusInstruction {
                 side_ref: SideReference::SideTwo,
@@ -15687,7 +15689,11 @@ fn test_triple_multihit_move_versus_substitute_and_rockyhelmet() {
             }),
             Instruction::Damage(DamageInstruction {
                 side_ref: SideReference::SideTwo,
-                damage_amount: 21,
+                damage_amount: expected_damage,
+            }),
+            Instruction::Damage(DamageInstruction {
+                side_ref: SideReference::SideTwo,
+                damage_amount: expected_damage,
             }),
             Instruction::Heal(HealInstruction {
                 side_ref: SideReference::SideOne,
@@ -20663,7 +20669,7 @@ fn test_wickedblow_gen9() {
         percentage: 100.0,
         instruction_list: vec![Instruction::Damage(DamageInstruction {
             side_ref: SideReference::SideTwo,
-            damage_amount: 60,
+            damage_amount: 89,
         })],
     }];
     assert_eq!(expected_instructions, vec_of_instructions);
@@ -20684,7 +20690,7 @@ fn test_wickedblow_gen8() {
         percentage: 100.0,
         instruction_list: vec![Instruction::Damage(DamageInstruction {
             side_ref: SideReference::SideTwo,
-            damage_amount: 63,
+            damage_amount: 95,
         })],
     }];
     assert_eq!(expected_instructions, vec_of_instructions);

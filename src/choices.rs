@@ -6591,7 +6591,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
         },
     );
 
-    if cfg!(feature = "gen9") {
+    if cfg!(feature = "gen9") || cfg!(feature = "champions") {
         moves.insert(
             Choices::GLACIALLANCE,
             Choice {
@@ -6810,7 +6810,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
         },
     );
 
-    if cfg!(feature = "gen9") {
+    if cfg!(feature = "gen9") || cfg!(feature = "champions") {
         moves.insert(
             Choices::GRASSYGLIDE,
             Choice {
@@ -9906,7 +9906,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             ..Default::default()
         },
     );
-    if cfg!(feature = "gen9") {
+    if cfg!(feature = "gen9") || cfg!(feature = "champions") {
         moves.insert(
             Choices::LUSTERPURGE,
             Choice {
@@ -10753,7 +10753,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             ..Default::default()
         },
     );
-    if cfg!(feature = "gen9") {
+    if cfg!(feature = "gen9") || cfg!(feature = "champions") {
         moves.insert(
             Choices::MISTBALL,
             Choice {
@@ -11103,7 +11103,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             ..Default::default()
         },
     );
-    if cfg!(feature = "gen9") || cfg!(feature = "gen8") {
+    if cfg!(feature = "champions") || cfg!(feature = "gen9") || cfg!(feature = "gen8") {
         moves.insert(
             Choices::MULTIATTACK,
             Choice {
@@ -13235,7 +13235,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
         },
     );
 
-    if cfg!(feature = "gen9") || cfg!(feature = "gen8") {
+    if cfg!(feature = "champions") || cfg!(feature = "gen9") || cfg!(feature = "gen8") {
         moves.insert(
             Choices::RAPIDSPIN,
             Choice {
@@ -17257,7 +17257,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
         },
     );
 
-    if cfg!(feature = "gen9") || cfg!(feature = "gen8") {
+    if cfg!(feature = "champions") || cfg!(feature = "gen9") || cfg!(feature = "gen8") {
         moves.insert(
             Choices::TELEPORT,
             Choice {
@@ -18831,7 +18831,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
         },
     );
 
-    if cfg!(feature = "gen9") {
+    if cfg!(feature = "champions") || cfg!(feature = "gen9") {
         moves.insert(
             Choices::WICKEDBLOW,
             Choice {
@@ -19327,6 +19327,9 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
 
     #[cfg(any(feature = "gen1", feature = "gen2", feature = "gen3"))]
     undo_physical_special_split(&mut moves);
+
+    #[cfg(feature = "champions")]
+    apply_champions_modifiers(&mut moves);
 
     moves
 });
@@ -20670,4 +20673,77 @@ pub fn undo_physical_special_split(moves: &mut HashMap<Choices, Choice>) {
             }
         }
     }
+}
+
+#[cfg(feature = "champions")]
+fn apply_champions_modifiers(moves: &mut HashMap<Choices, Choice>) {
+    moves.get_mut(&Choices::ANCHORSHOT).unwrap().base_power = 90.0;
+    moves.get_mut(&Choices::APPLEACID).unwrap().base_power = 90.0;
+    moves.get_mut(&Choices::ASTRALBARRAGE).unwrap().base_power = 110.0;
+    moves.get_mut(&Choices::BEAKBLAST).unwrap().base_power = 120.0;
+    moves.get_mut(&Choices::BLOODMOON).unwrap().base_power = 130.0;
+    moves.get_mut(&Choices::BOLTBEAK).unwrap().base_power = 80.0;
+    moves.get_mut(&Choices::BONERUSH).unwrap().base_power = 30.0;
+    moves.get_mut(&Choices::CRABHAMMER).unwrap().base_power = 95.0;
+    moves.get_mut(&Choices::DRAGONCLAW).unwrap().flags.slicing = true;
+    moves.get_mut(&Choices::DRAGONHAMMER).unwrap().base_power = 90.0;
+    moves.get_mut(&Choices::FIRELASH).unwrap().base_power = 90.0;
+    moves.get_mut(&Choices::FIRSTIMPRESSION).unwrap().base_power = 100.0;
+    moves.get_mut(&Choices::FISHIOUSREND).unwrap().base_power = 80.0;
+    moves.get_mut(&Choices::GEARGRIND).unwrap().base_power = 60.0;
+    moves.get_mut(&Choices::GEARGRIND).unwrap().accuracy = 90.0;
+    moves.get_mut(&Choices::GRAVAPPLE).unwrap().base_power = 90.0;
+    moves.get_mut(&Choices::HYPERDRILL).unwrap().base_power = 120.0;
+    moves.get_mut(&Choices::INFERNALPARADE).unwrap().base_power = 65.0;
+    moves.get_mut(&Choices::IRONHEAD).unwrap().secondaries = Some(vec![Secondary {
+        chance: 20.0,
+        target: MoveTarget::Opponent,
+        effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
+    }]);
+    moves.get_mut(&Choices::MAKEITRAIN).unwrap().base_power = 95.0;
+    moves.get_mut(&Choices::MAKEITRAIN).unwrap().boost = Some(Boost {
+        target: MoveTarget::User,
+        boosts: StatBoosts {
+            attack: 0,
+            defense: 0,
+            special_attack: -2,
+            special_defense: 0,
+            speed: 0,
+            accuracy: 0,
+        },
+    });
+    moves.get_mut(&Choices::MOONBLAST).unwrap().secondaries = Some(vec![Secondary {
+        chance: 10.0,
+        target: MoveTarget::Opponent,
+        effect: Effect::Boost(StatBoosts {
+            attack: 0,
+            defense: 0,
+            special_attack: -1,
+            special_defense: 0,
+            speed: 0,
+            accuracy: 0,
+        }),
+    }]);
+    moves.get_mut(&Choices::MOUNTAINGALE).unwrap().base_power = 120.0;
+    moves.get_mut(&Choices::NIGHTDAZE).unwrap().base_power = 90.0;
+    moves.get_mut(&Choices::PSYSHIELDBASH).unwrap().base_power = 90.0;
+    moves.get_mut(&Choices::REVELATIONDANCE).unwrap().base_power = 100.0;
+    moves.get_mut(&Choices::SHADOWCLAW).unwrap().flags.slicing = true;
+    moves.get_mut(&Choices::SNAPTRAP).unwrap().move_type = PokemonType::STEEL;
+    moves.get_mut(&Choices::SNIPESHOT).unwrap().base_power = 85.0;
+    moves.get_mut(&Choices::SPIRITSHACKLE).unwrap().base_power = 90.0;
+    moves.get_mut(&Choices::SYRUPBOMB).unwrap().base_power = 90.0;
+    moves.get_mut(&Choices::TOXICTHREAD).unwrap().boost = Some(Boost {
+        target: MoveTarget::Opponent,
+        boosts: StatBoosts {
+            attack: 0,
+            defense: 0,
+            special_attack: 0,
+            special_defense: 0,
+            speed: -2,
+            accuracy: 0,
+        },
+    });
+    moves.get_mut(&Choices::TRIPLEDIVE).unwrap().base_power = 35.0;
+    moves.get_mut(&Choices::TROPKICK).unwrap().base_power = 85.0;
 }

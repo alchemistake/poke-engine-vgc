@@ -52,6 +52,7 @@ pub fn modify_choice(
                 attacker_choice.flags.charge = false;
             }
         }
+        #[cfg(not(feature = "champions"))]
         Choices::DIRECLAW => {
             // percentages are a hack and are incorrect in situations
             // where one or more status effects are not possible
@@ -67,6 +68,26 @@ pub fn modify_choice(
             });
             attacker_choice.add_or_create_secondaries(Secondary {
                 chance: 25.0,
+                target: MoveTarget::Opponent,
+                effect: Effect::Status(PokemonStatus::SLEEP),
+            });
+        }
+        #[cfg(feature = "champions")]
+        Choices::DIRECLAW => {
+            // percentages are a hack and are incorrect in situations
+            // where one or more status effects are not possible
+            attacker_choice.add_or_create_secondaries(Secondary {
+                chance: 10.00,
+                target: MoveTarget::Opponent,
+                effect: Effect::Status(PokemonStatus::POISON),
+            });
+            attacker_choice.add_or_create_secondaries(Secondary {
+                chance: 11.125,
+                target: MoveTarget::Opponent,
+                effect: Effect::Status(PokemonStatus::PARALYZE),
+            });
+            attacker_choice.add_or_create_secondaries(Secondary {
+                chance: 12.25,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::SLEEP),
             });
@@ -157,13 +178,9 @@ pub fn modify_choice(
         }
         Choices::LASTRESPECTS => {
             // Technically not correct because of reviving moves but good enough
-            let mut bp = 50.0;
-            for pkmn in attacking_side.pokemon.into_iter() {
-                if pkmn.hp == 0 {
-                    bp += 50.0;
-                }
-            }
-            attacker_choice.base_power = bp
+            let mut bp_boost = 1.0;
+            bp_boost += 1.0 * attacking_side.num_fainted_pkmn() as f32;
+            attacker_choice.base_power *= bp_boost
         }
         Choices::CLANGOROUSSOUL => {
             let attacker = attacking_side.get_active_immutable();
@@ -215,6 +232,11 @@ pub fn modify_choice(
             _ => {}
         },
         Choices::GROWTH => {
+            // as of writing this, growth should fail in champions if mega-sol is active
+            // not that the 2x boost fails to activate, it literally fails to do anything
+            // a) that's probably a bug?
+            // b) can only have this happen with some skill swap shenanigans
+            // so I won't bother implementing
             if state.weather_is_active(&Weather::SUN) {
                 attacker_choice.boost = Some(Boost {
                     target: MoveTarget::User,
@@ -250,25 +272,32 @@ pub fn modify_choice(
                 attacker_choice.base_power *= 1.5;
             }
         }
-        #[cfg(any(feature = "gen3", feature = "gen4"))]
+        #[cfg(feature = "gen4")]
         Choices::EXPLOSION | Choices::SELFDESTRUCT => {
             attacker_choice.base_power *= 2.0;
         }
 
         Choices::MORNINGSUN | Choices::MOONLIGHT | Choices::SYNTHESIS => {
-            match state.weather.weather_type {
-                Weather::SUN => {
-                    attacker_choice.heal = Some(Heal {
-                        target: MoveTarget::User,
-                        amount: 0.667,
-                    })
-                }
-                Weather::NONE => {}
-                _ => {
-                    attacker_choice.heal = Some(Heal {
-                        target: MoveTarget::User,
-                        amount: 0.25,
-                    })
+            if attacking_side.get_active_immutable().ability == Abilities::MEGASOL {
+                attacker_choice.heal = Some(Heal {
+                    target: MoveTarget::User,
+                    amount: 0.667,
+                })
+            } else {
+                match state.weather.weather_type {
+                    Weather::SUN => {
+                        attacker_choice.heal = Some(Heal {
+                            target: MoveTarget::User,
+                            amount: 0.667,
+                        })
+                    }
+                    Weather::NONE => {}
+                    _ => {
+                        attacker_choice.heal = Some(Heal {
+                            target: MoveTarget::User,
+                            amount: 0.25,
+                        })
+                    }
                 }
             }
         }
@@ -409,25 +438,32 @@ pub fn modify_choice(
                 attacker_choice.accuracy = 100.0;
             }
         }
-        Choices::WEATHERBALL => match state.weather.weather_type {
-            Weather::SUN | Weather::HARSHSUN => {
+        Choices::WEATHERBALL => {
+            if attacking_side.get_active_immutable().ability == Abilities::MEGASOL {
                 attacker_choice.base_power = 100.0;
                 attacker_choice.move_type = PokemonType::FIRE;
+            } else {
+                match state.weather.weather_type {
+                    Weather::SUN | Weather::HARSHSUN => {
+                        attacker_choice.base_power = 100.0;
+                        attacker_choice.move_type = PokemonType::FIRE;
+                    }
+                    Weather::RAIN | Weather::HEAVYRAIN => {
+                        attacker_choice.base_power = 100.0;
+                        attacker_choice.move_type = PokemonType::WATER;
+                    }
+                    Weather::SAND => {
+                        attacker_choice.base_power = 100.0;
+                        attacker_choice.move_type = PokemonType::ROCK;
+                    }
+                    Weather::HAIL | Weather::SNOW => {
+                        attacker_choice.base_power = 100.0;
+                        attacker_choice.move_type = PokemonType::ICE;
+                    }
+                    Weather::NONE => {}
+                }
             }
-            Weather::RAIN | Weather::HEAVYRAIN => {
-                attacker_choice.base_power = 100.0;
-                attacker_choice.move_type = PokemonType::WATER;
-            }
-            Weather::SAND => {
-                attacker_choice.base_power = 100.0;
-                attacker_choice.move_type = PokemonType::ROCK;
-            }
-            Weather::HAIL | Weather::SNOW => {
-                attacker_choice.base_power = 100.0;
-                attacker_choice.move_type = PokemonType::ICE;
-            }
-            Weather::NONE => {}
-        },
+        }
         Choices::SOLARBEAM | Choices::SOLARBLADE => {
             if state.weather_is_active(&Weather::SUN) || state.weather_is_active(&Weather::HARSHSUN)
             {
@@ -455,7 +491,13 @@ pub fn modify_choice(
             }
         }
 
-        #[cfg(any(feature = "gen6", feature = "gen7", feature = "gen8", feature = "gen9"))]
+        #[cfg(any(
+            feature = "gen6",
+            feature = "gen7",
+            feature = "gen8",
+            feature = "gen9",
+            feature = "champions"
+        ))]
         Choices::KNOCKOFF => {
             // Bonus damage still applies if substitute is hit
             let defender = defending_side.get_active_immutable();
@@ -507,7 +549,7 @@ pub fn modify_choice(
             }
         }
 
-        #[cfg(any(feature = "gen3", feature = "gen4"))]
+        #[cfg(feature = "gen4")]
         Choices::PAYBACK => {
             if !attacker_choice.first_move {
                 attacker_choice.base_power *= 2.0;
@@ -519,7 +561,8 @@ pub fn modify_choice(
             feature = "gen6",
             feature = "gen7",
             feature = "gen8",
-            feature = "gen9"
+            feature = "gen9",
+            feature = "champions"
         ))]
         Choices::PAYBACK => {
             if !attacker_choice.first_move && defender_choice.category != MoveCategory::Switch {
@@ -828,7 +871,7 @@ pub fn choice_after_damage_hit(
     }
 }
 
-#[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5", feature = "gen6"))]
+#[cfg(any(feature = "gen4", feature = "gen5", feature = "gen6"))]
 fn destinybond_before_move(
     attacking_side: &mut Side,
     attacking_side_ref: &SideReference,
@@ -856,7 +899,12 @@ fn destinybond_before_move(
     }
 }
 
-#[cfg(any(feature = "gen7", feature = "gen8", feature = "gen9"))]
+#[cfg(any(
+    feature = "gen7",
+    feature = "gen8",
+    feature = "gen9",
+    feature = "champions"
+))]
 fn destinybond_before_move(
     attacking_side: &mut Side,
     attacking_side_ref: &SideReference,

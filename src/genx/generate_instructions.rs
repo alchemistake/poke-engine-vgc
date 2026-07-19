@@ -18,8 +18,8 @@ use crate::instruction::{
     ChangeVolatileStatusDurationInstruction, ChangeWeather, DecrementRestTurnsInstruction,
     DecrementWishInstruction, HealInstruction, RemoveVolatileStatusInstruction,
     SetSecondMoveSwitchOutMoveInstruction, SetSleepTurnsInstruction, ToggleBatonPassingInstruction,
-    ToggleDamageDealtHitSubstituteInstruction, ToggleShedTailingInstruction,
-    ToggleTrickRoomInstruction,
+    ToggleDamageDealtHitSubstituteInstruction, ToggleMegaEvolvedInstruction,
+    ToggleShedTailingInstruction, ToggleTrickRoomInstruction,
 };
 use crate::instruction::{ChangeAbilityInstruction, ToggleTerastallizedInstruction};
 use crate::instruction::{DecrementFutureSightInstruction, FormeChangeInstruction};
@@ -45,13 +45,18 @@ use std::cmp;
 #[cfg(feature = "terastallization")]
 use crate::choices::MultiAccuracyMove;
 
-#[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5", feature = "gen6"))]
+#[cfg(any(feature = "gen4", feature = "gen5", feature = "gen6"))]
 pub const BASE_CRIT_CHANCE: f32 = 1.0 / 16.0;
 
-#[cfg(any(feature = "gen7", feature = "gen8", feature = "gen9"))]
+#[cfg(any(
+    feature = "gen7",
+    feature = "gen8",
+    feature = "gen9",
+    feature = "champions"
+))]
 pub const BASE_CRIT_CHANCE: f32 = 1.0 / 24.0;
 
-#[cfg(any(feature = "gen3", feature = "gen4"))]
+#[cfg(any(feature = "gen4"))]
 pub const MAX_SLEEP_TURNS: i8 = 4;
 
 #[cfg(any(
@@ -59,14 +64,34 @@ pub const MAX_SLEEP_TURNS: i8 = 4;
     feature = "gen6",
     feature = "gen7",
     feature = "gen8",
-    feature = "gen9"
+    feature = "gen9",
 ))]
 pub const MAX_SLEEP_TURNS: i8 = 3;
 
-#[cfg(any(feature = "gen7", feature = "gen8", feature = "gen9"))]
+#[cfg(feature = "champions")]
+pub const MAX_SLEEP_TURNS: i8 = 2;
+
+#[cfg(not(feature = "champions"))]
+pub const THAW_CHANCE: f32 = 0.20;
+
+#[cfg(feature = "champions")]
+pub const THAW_CHANCE: f32 = 0.25;
+
+#[cfg(not(feature = "champions"))]
+pub const FULLY_PARALYZED_CHANCE: f32 = 0.25;
+
+#[cfg(feature = "champions")]
+pub const FULLY_PARALYZED_CHANCE: f32 = 0.125;
+
+#[cfg(any(
+    feature = "gen7",
+    feature = "gen8",
+    feature = "gen9",
+    feature = "champions"
+))]
 pub const HIT_SELF_IN_CONFUSION_CHANCE: f32 = 1.0 / 3.0;
 
-#[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5", feature = "gen6"))]
+#[cfg(any(feature = "gen4", feature = "gen5", feature = "gen6"))]
 pub const HIT_SELF_IN_CONFUSION_CHANCE: f32 = 1.0 / 2.0;
 
 #[cfg(any(
@@ -74,12 +99,53 @@ pub const HIT_SELF_IN_CONFUSION_CHANCE: f32 = 1.0 / 2.0;
     feature = "gen6",
     feature = "gen7",
     feature = "gen8",
-    feature = "gen9"
+    feature = "gen9",
+    feature = "champions"
 ))]
 pub const CONSECUTIVE_PROTECT_CHANCE: f32 = 1.0 / 3.0;
 
-#[cfg(any(feature = "gen3", feature = "gen4"))]
+#[cfg(any(feature = "gen4"))]
 pub const CONSECUTIVE_PROTECT_CHANCE: f32 = 1.0 / 2.0;
+
+#[cfg(any(feature = "gen4", feature = "gen5", feature = "gen6"))]
+pub const PARALYSIS_SPEED_MULTIPLIER: f32 = 0.25;
+
+#[cfg(any(
+    feature = "gen7",
+    feature = "gen8",
+    feature = "gen9",
+    feature = "champions"
+))]
+pub const PARALYSIS_SPEED_MULTIPLIER: f32 = 0.5;
+
+#[cfg(any(feature = "gen4", feature = "gen5", feature = "gen6"))]
+pub const BURN_RESIDUAL_DAMAGE_PCT: f32 = 0.125;
+
+#[cfg(any(
+    feature = "gen7",
+    feature = "gen8",
+    feature = "gen9",
+    feature = "champions"
+))]
+pub const BURN_RESIDUAL_DAMAGE_PCT: f32 = 0.0625;
+
+#[cfg(any(feature = "gen4", feature = "gen5"))]
+pub const PARTIALLY_TRAPPED_DAMAGE_PCT: f32 = 0.0625;
+
+#[cfg(any(
+    feature = "gen6",
+    feature = "gen7",
+    feature = "gen8",
+    feature = "gen9",
+    feature = "champions"
+))]
+pub const PARTIALLY_TRAPPED_DAMAGE_PCT: f32 = 0.125;
+
+#[cfg(not(feature = "champions"))]
+pub const SALT_CURE_DAMAGE_DIVISOR: f32 = 8.0;
+
+#[cfg(feature = "champions")]
+pub const SALT_CURE_DAMAGE_DIVISOR: f32 = 16.0;
 
 pub const SIDE_CONDITION_DURATION: i8 = 5;
 pub const TAILWIND_DURATION: i8 = 4;
@@ -93,11 +159,22 @@ const PROTECT_VOLATILES: [PokemonVolatileStatus; 6] = [
     PokemonVolatileStatus::ENDURE,
 ];
 
+#[cfg(not(feature = "champions"))]
 fn chance_to_wake_up(turns_asleep: i8) -> f32 {
     if turns_asleep == 0 {
         0.0
     } else {
         1.0 / (1 + MAX_SLEEP_TURNS - turns_asleep) as f32
+    }
+}
+
+#[cfg(feature = "champions")]
+fn chance_to_wake_up(turns_asleep: i8) -> f32 {
+    match turns_asleep {
+        0 => 0.0,
+        1 => 0.333,
+        2 => 1.0,
+        _ => panic!("turns_asleep should never be above 2 when calculating wake up chance"),
     }
 }
 
@@ -166,7 +243,6 @@ fn generate_instructions_from_switch(
     incoming_instructions: &mut StateInstructions,
 ) {
     let should_last_used_move = state.use_last_used_move;
-    state.apply_instructions(&incoming_instructions.instruction_list);
 
     let (side, opposite_side) = state.get_both_sides(&switching_side_ref);
     if side.force_switch {
@@ -328,16 +404,10 @@ fn generate_instructions_from_switch(
     }
 
     if side.side_conditions.healing_wish > 0 {
-        #[cfg(any(feature = "gen8", feature = "gen9"))]
+        #[cfg(any(feature = "gen8", feature = "gen9", feature = "champions"))]
         let mut healing_wish_consumed = false;
 
-        #[cfg(any(
-            feature = "gen3",
-            feature = "gen4",
-            feature = "gen5",
-            feature = "gen6",
-            feature = "gen7"
-        ))]
+        #[cfg(any(feature = "gen4", feature = "gen5", feature = "gen6", feature = "gen7"))]
         let mut healing_wish_consumed = true;
 
         let switched_in_pkmn = side.get_active();
@@ -477,8 +547,6 @@ fn generate_instructions_from_switch(
 
     ability_on_switch_in(state, &switching_side_ref, incoming_instructions);
     item_on_switch_in(state, &switching_side_ref, incoming_instructions);
-
-    state.reverse_instructions(&incoming_instructions.instruction_list);
 }
 
 fn generate_instructions_from_increment_side_condition(
@@ -746,13 +814,19 @@ pub fn immune_to_status(
                 // sleep clause
             }
 
-            #[cfg(any(feature = "gen6", feature = "gen7", feature = "gen8", feature = "gen9"))]
+            #[cfg(any(
+                feature = "gen6",
+                feature = "gen7",
+                feature = "gen8",
+                feature = "gen9",
+                feature = "champions"
+            ))]
             PokemonStatus::PARALYZE => {
                 target_pkmn.has_type(&PokemonType::ELECTRIC)
                     || target_pkmn.ability == Abilities::LIMBER
             }
 
-            #[cfg(any(feature = "gen4", feature = "gen5", feature = "gen3"))]
+            #[cfg(any(feature = "gen4", feature = "gen5"))]
             PokemonStatus::PARALYZE => target_pkmn.ability == Abilities::LIMBER,
 
             PokemonStatus::POISON | PokemonStatus::TOXIC => {
@@ -1199,12 +1273,14 @@ fn get_instructions_from_drag(
 
     for pkmn_id in defending_side_alive_reserve_indices {
         let mut cloned_instructions = incoming_instructions.clone();
+        state.apply_instructions(&cloned_instructions.instruction_list);
         generate_instructions_from_switch(
             state,
             pkmn_id,
             attacking_side_reference.get_other_side(),
             &mut cloned_instructions,
         );
+        state.reverse_instructions(&cloned_instructions.instruction_list);
         cloned_instructions.update_percentage(1.0 / num_alive_reserve as f32);
         frozen_instructions.push(cloned_instructions);
     }
@@ -1492,7 +1568,7 @@ fn move_has_no_effect(state: &State, choice: &Choice, attacking_side_ref: &SideR
     let (_attacking_side, defending_side) = state.get_both_sides_immutable(attacking_side_ref);
     let defender = defending_side.get_active_immutable();
 
-    #[cfg(any(feature = "gen6", feature = "gen7", feature = "gen8", feature = "gen9"))]
+    #[cfg(not(any(feature = "gen4", feature = "gen5")))]
     if choice.flags.powder
         && choice.target == MoveTarget::Opponent
         && defender.has_type(&PokemonType::GRASS)
@@ -1709,18 +1785,18 @@ fn generate_instructions_from_existing_status_conditions(
         PokemonStatus::PARALYZE => {
             // Fully-Paralyzed Branch
             let mut fully_paralyzed_instruction = incoming_instructions.clone();
-            fully_paralyzed_instruction.update_percentage(0.25);
+            fully_paralyzed_instruction.update_percentage(FULLY_PARALYZED_CHANCE);
             final_instructions.push(fully_paralyzed_instruction);
 
             // Non-Paralyzed Branch
-            incoming_instructions.update_percentage(0.75);
+            incoming_instructions.update_percentage(1.0 - FULLY_PARALYZED_CHANCE);
         }
         PokemonStatus::FREEZE => {
             let mut still_frozen_instruction = incoming_instructions.clone();
-            still_frozen_instruction.update_percentage(0.80);
+            still_frozen_instruction.update_percentage(1.0 - THAW_CHANCE);
             final_instructions.push(still_frozen_instruction);
 
-            incoming_instructions.update_percentage(0.20);
+            incoming_instructions.update_percentage(THAW_CHANCE);
             attacker_active.status = PokemonStatus::NONE;
             incoming_instructions
                 .instruction_list
@@ -1955,17 +2031,6 @@ pub fn generate_instructions_from_move(
         );
     }
 
-    if choice.category == MoveCategory::Switch {
-        generate_instructions_from_switch(
-            state,
-            choice.switch_id,
-            attacking_side,
-            &mut incoming_instructions,
-        );
-        final_instructions.push(incoming_instructions);
-        return;
-    }
-
     let attacker_side = state.get_side(&attacking_side);
 
     if choice.move_id == Choices::NONE {
@@ -2030,13 +2095,7 @@ pub fn generate_instructions_from_move(
 
         // this value is incremented when an encored move has been used
         // the value being 2 means we are currently using the 3rd move so we can remove it
-        #[cfg(any(
-            feature = "gen5",
-            feature = "gen6",
-            feature = "gen7",
-            feature = "gen8",
-            feature = "gen9"
-        ))]
+        #[cfg(not(feature = "gen4"))]
         if side.volatile_status_durations.encore == 2 {
             incoming_instructions
                 .instruction_list
@@ -2072,13 +2131,7 @@ pub fn generate_instructions_from_move(
         }
     }
 
-    #[cfg(any(
-        feature = "gen5",
-        feature = "gen6",
-        feature = "gen7",
-        feature = "gen8",
-        feature = "gen9"
-    ))]
+    #[cfg(not(feature = "gen4"))]
     if side
         .volatile_statuses
         .contains(&PokemonVolatileStatus::TAUNT)
@@ -2375,6 +2428,11 @@ pub fn generate_instructions_from_move(
             branch_damage = (max_crit_damage as f32 * 0.925) as i16;
             incoming_instructions.update_percentage(1.0 - crit_rate);
             regular_damage = (max_damage_dealt as f32 * 0.925) as i16;
+        } else if choice.move_id.guaranteed_crit()
+            && defender_active.ability != Abilities::BATTLEARMOR
+            && defender_active.ability != Abilities::SHELLARMOR
+        {
+            regular_damage = (max_crit_damage as f32 * 0.925) as i16;
         } else {
             regular_damage = avg_damage_dealt;
         }
@@ -2493,16 +2551,9 @@ fn get_effective_speed(state: &State, side_reference: &SideReference) -> i16 {
         _ => {}
     }
 
-    #[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5", feature = "gen6"))]
     if active_pkmn.status == PokemonStatus::PARALYZE && active_pkmn.ability != Abilities::QUICKFEET
     {
-        boosted_speed *= 0.25;
-    }
-
-    #[cfg(any(feature = "gen7", feature = "gen8", feature = "gen9"))]
-    if active_pkmn.status == PokemonStatus::PARALYZE && active_pkmn.ability != Abilities::QUICKFEET
-    {
-        boosted_speed *= 0.50;
+        boosted_speed *= PARALYSIS_SPEED_MULTIPLIER;
     }
 
     boosted_speed as i16
@@ -3008,7 +3059,7 @@ fn add_end_of_turn_instructions(
 
                 let wish_heal_instruction = Instruction::Heal(HealInstruction {
                     side_ref: *side_ref,
-                    heal_amount: heal_amount,
+                    heal_amount,
                 });
                 incoming_instructions
                     .instruction_list
@@ -3034,11 +3085,7 @@ fn add_end_of_turn_instructions(
 
         match active_pkmn.status {
             PokemonStatus::BURN => {
-                #[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5", feature = "gen6"))]
-                let mut damage_factor = 0.125;
-
-                #[cfg(any(feature = "gen7", feature = "gen8", feature = "gen9",))]
-                let mut damage_factor = 0.0625;
+                let mut damage_factor = BURN_RESIDUAL_DAMAGE_PCT;
 
                 if active_pkmn.ability == Abilities::HEATPROOF {
                     damage_factor /= 2.0;
@@ -3052,7 +3099,7 @@ fn add_end_of_turn_instructions(
                 );
                 let burn_damage_instruction = Instruction::Damage(DamageInstruction {
                     side_ref: *side_ref,
-                    damage_amount: damage_amount,
+                    damage_amount,
                 });
                 active_pkmn.hp -= damage_amount;
                 incoming_instructions
@@ -3067,7 +3114,7 @@ fn add_end_of_turn_instructions(
 
                 let poison_damage_instruction = Instruction::Damage(DamageInstruction {
                     side_ref: *side_ref,
-                    damage_amount: damage_amount,
+                    damage_amount,
                 });
                 active_pkmn.hp -= damage_amount;
                 incoming_instructions
@@ -3430,13 +3477,10 @@ fn add_end_of_turn_instructions(
             .contains(&PokemonVolatileStatus::PARTIALLYTRAPPED)
         {
             let active_pkmn = side.get_active();
-
-            #[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5"))]
-            let damage_amount = cmp::min((active_pkmn.maxhp as f32 / 16.0) as i16, active_pkmn.hp);
-
-            #[cfg(any(feature = "gen6", feature = "gen7", feature = "gen8", feature = "gen9"))]
-            let damage_amount = cmp::min((active_pkmn.maxhp as f32 / 8.0) as i16, active_pkmn.hp);
-
+            let damage_amount = cmp::min(
+                (active_pkmn.maxhp as f32 * PARTIALLY_TRAPPED_DAMAGE_PCT) as i16,
+                active_pkmn.hp,
+            );
             incoming_instructions
                 .instruction_list
                 .push(Instruction::Damage(DamageInstruction {
@@ -3450,11 +3494,11 @@ fn add_end_of_turn_instructions(
             .contains(&PokemonVolatileStatus::SALTCURE)
         {
             let active_pkmn = side.get_active();
-            let mut divisor = 8.0;
+            let mut divisor = SALT_CURE_DAMAGE_DIVISOR;
             if active_pkmn.has_type(&PokemonType::WATER)
                 || active_pkmn.has_type(&PokemonType::STEEL)
             {
-                divisor = 4.0;
+                divisor /= 2.0;
             }
             let damage_amount =
                 cmp::min((active_pkmn.maxhp as f32 / divisor) as i16, active_pkmn.hp);
@@ -3797,6 +3841,37 @@ fn handle_both_moves(
     }
 }
 
+fn run_mega_evolutions(
+    state: &mut State,
+    s1_mega: bool,
+    s2_mega: bool,
+    incoming_instructions: &mut StateInstructions,
+) {
+    match (s1_mega, s2_mega) {
+        (true, true) => {
+            let s1_speed = get_effective_speed(state, &SideReference::SideOne);
+            let s2_speed = get_effective_speed(state, &SideReference::SideTwo);
+
+            // technically missing a branch if s1_speed == s2_speed,
+            // but practically this is rare enough for me to not care
+            if s1_speed > s2_speed {
+                mega_evolve(state, SideReference::SideOne, incoming_instructions);
+                mega_evolve(state, SideReference::SideTwo, incoming_instructions);
+            } else {
+                mega_evolve(state, SideReference::SideTwo, incoming_instructions);
+                mega_evolve(state, SideReference::SideOne, incoming_instructions);
+            }
+        }
+        (true, false) => {
+            mega_evolve(state, SideReference::SideOne, incoming_instructions);
+        }
+        (false, true) => {
+            mega_evolve(state, SideReference::SideTwo, incoming_instructions);
+        }
+        (false, false) => {}
+    }
+}
+
 fn mega_evolve(state: &mut State, side_ref: SideReference, instructions: &mut StateInstructions) {
     let side = state.get_side(&side_ref);
     let active_pkmn = side.get_active();
@@ -3824,7 +3899,9 @@ fn mega_evolve(state: &mut State, side_ref: SideReference, instructions: &mut St
     // change stats
     active_pkmn.recalculate_stats(&side_ref, instructions);
 
-    // change ability
+    // change ability / base_ability
+    // base_ability is used to revert a pokemon's ability when it switches out
+    // so it also needs to be changed if the mega evolution changes the pokemon's ability
     if mega_evolve_data.ability != active_pkmn.ability {
         instructions
             .instruction_list
@@ -3834,6 +3911,16 @@ fn mega_evolve(state: &mut State, side_ref: SideReference, instructions: &mut St
             }));
         active_pkmn.ability = mega_evolve_data.ability;
     }
+    if mega_evolve_data.ability != active_pkmn.base_ability {
+        instructions
+            .instruction_list
+            .push(Instruction::ChangeBaseAbility(ChangeAbilityInstruction {
+                side_ref,
+                ability_change: mega_evolve_data.ability as i16 - active_pkmn.base_ability as i16,
+            }));
+        active_pkmn.base_ability = mega_evolve_data.ability;
+    }
+
     // change type
     if mega_evolve_data.types != active_pkmn.types {
         instructions
@@ -3846,8 +3933,92 @@ fn mega_evolve(state: &mut State, side_ref: SideReference, instructions: &mut St
         active_pkmn.types = mega_evolve_data.types;
     }
 
+    instructions
+        .instruction_list
+        .push(Instruction::ToggleMegaEvolved(
+            ToggleMegaEvolvedInstruction { side_ref },
+        ));
+    active_pkmn.mega_evolved = true;
+
     // ability on switch in
     ability_on_switch_in(state, &side_ref, instructions);
+}
+
+pub fn generate_instructions_for_bss_team_preview(
+    state: &mut State,
+    side_one_move: (PokemonIndex, PokemonIndex, PokemonIndex),
+    side_two_move: (PokemonIndex, PokemonIndex, PokemonIndex),
+) -> Vec<StateInstructions> {
+    let mut state_instructions: StateInstructions = StateInstructions::default();
+    let should_last_used_move = state.use_last_used_move;
+
+    // run the switches
+    for (side_ref, move_choice) in [
+        (SideReference::SideOne, side_one_move),
+        (SideReference::SideTwo, side_two_move),
+    ] {
+        let side = state.get_side(&side_ref);
+        state_instructions
+            .instruction_list
+            .push(Instruction::Switch(SwitchInstruction {
+                side_ref,
+                previous_index: side.active_index,
+                next_index: move_choice.0,
+            }));
+        if should_last_used_move {
+            state_instructions
+                .instruction_list
+                .push(Instruction::SetLastUsedMove(SetLastUsedMoveInstruction {
+                    side_ref,
+                    last_used_move: LastUsedMove::Switch(move_choice.0),
+                    previous_last_used_move: side.last_used_move,
+                }));
+            side.last_used_move = LastUsedMove::Switch(move_choice.0);
+        }
+        side.active_index = move_choice.0;
+    }
+
+    let pkmn_speed_order = if get_effective_speed(state, &SideReference::SideOne)
+        > get_effective_speed(state, &SideReference::SideTwo)
+    {
+        vec![SideReference::SideOne, SideReference::SideTwo]
+    } else {
+        vec![SideReference::SideTwo, SideReference::SideOne]
+    };
+
+    for side_ref in pkmn_speed_order.iter() {
+        ability_on_switch_in(state, side_ref, &mut state_instructions);
+        item_on_switch_in(state, side_ref, &mut state_instructions);
+    }
+    state.reverse_instructions(&state_instructions.instruction_list);
+
+    // after this point the instructions are reversed,
+    // so the state does not need to be modified to reflect the additional instructions added
+
+    // faint the pkmn that were not selected
+    for (side_ref, move_choice) in [
+        (SideReference::SideOne, side_one_move),
+        (SideReference::SideTwo, side_two_move),
+    ] {
+        let pkmn_indices = [move_choice.0, move_choice.1, move_choice.2];
+        let mut pkmn_iter = state.get_side_immutable(&side_ref).pokemon.into_iter();
+        while let Some(_) = pkmn_iter.next() {
+            if !pkmn_indices.contains(&pkmn_iter.pokemon_index) {
+                state_instructions
+                    .instruction_list
+                    .push(Instruction::TeamPreviewFaintIndex(
+                        side_ref,
+                        pkmn_iter.pokemon_index,
+                    ));
+            }
+        }
+    }
+
+    state_instructions
+        .instruction_list
+        .push(Instruction::ToggleTeamPreview);
+
+    vec![state_instructions]
 }
 
 pub fn generate_instructions_from_move_pair(
@@ -3856,6 +4027,23 @@ pub fn generate_instructions_from_move_pair(
     side_two_move: &MoveChoice,
     branch_on_damage: bool,
 ) -> Vec<StateInstructions> {
+    #[cfg(feature = "bss")]
+    if state.team_preview {
+        let (s1_lead, s1_reserve_1, s1_reserve_2) = match side_one_move {
+            MoveChoice::TeamPreview(a, b, c) => (*a, *b, *c),
+            _ => panic!("Side one move is not a team preview"),
+        };
+        let (s2_lead, s2_reserve_1, s2_reserve_2) = match side_two_move {
+            MoveChoice::TeamPreview(a, b, c) => (*a, *b, *c),
+            _ => panic!("Side two move is not a team preview"),
+        };
+        return generate_instructions_for_bss_team_preview(
+            state,
+            (s1_lead, s1_reserve_1, s1_reserve_2),
+            (s2_lead, s2_reserve_1, s2_reserve_2),
+        );
+    }
+
     let mut side_one_choice;
     let mut s1_tera = false;
     let mut s1_mega = false;
@@ -3882,6 +4070,9 @@ pub fn generate_instructions_from_move_pair(
             side_one_choice = state.side_one.get_active().moves[move_index].choice.clone();
             side_one_choice.move_index = *move_index;
             s1_mega = true;
+        }
+        MoveChoice::TeamPreview(_, _, _) => {
+            panic!("Team preview should not be handled in generate_instructions_from_move_pair");
         }
         MoveChoice::None => {
             side_one_choice = Choice::default();
@@ -3915,6 +4106,9 @@ pub fn generate_instructions_from_move_pair(
             side_two_choice.move_index = *move_index;
             s2_mega = true;
         }
+        MoveChoice::TeamPreview(_, _, _) => {
+            panic!("Team preview should not be handled in generate_instructions_from_move_pair");
+        }
         MoveChoice::None => {
             side_two_choice = Choice::default();
         }
@@ -3923,10 +4117,65 @@ pub fn generate_instructions_from_move_pair(
     let mut state_instructions_vec: Vec<StateInstructions> = Vec::with_capacity(4);
     let mut incoming_instructions: StateInstructions = StateInstructions::default();
 
-    // Run terastallization / Mega evolutions
-    // Note: only create/apply instructions, don't apply changes
-    // generate_instructions_from_move() assumes instructions have not been applied
-    // technically, switches should happen _before_ this, but this is fine for now
+    // short-circuit if pursuit hitting a switching target
+    // pursuit screws up some assumptions so it's just easier to separate the logic if we detect
+    // that pursuit is being used against a switching target
+    //
+    // normally, the order of operations is:
+    //     run switches -> run megas/teras -> run moves
+    // however, if pursuit is used against a switching opponent, the order of operations becomes:
+    //    run megas/teras -> run pursuit -> run switches
+    if side_one_choice.move_id == Choices::PURSUIT
+        && side_two_choice.category == MoveCategory::Switch
+    {
+        get_instructions_from_pursuit_hitting_switching_target(
+            state,
+            SideReference::SideOne,
+            SideReference::SideTwo,
+            &mut side_one_choice,
+            &mut side_two_choice,
+            incoming_instructions,
+            &mut state_instructions_vec,
+            s1_mega,
+            s1_tera,
+            branch_on_damage,
+        );
+        return state_instructions_vec;
+    } else if side_two_choice.move_id == Choices::PURSUIT
+        && side_one_choice.category == MoveCategory::Switch
+    {
+        get_instructions_from_pursuit_hitting_switching_target(
+            state,
+            SideReference::SideTwo,
+            SideReference::SideOne,
+            &mut side_two_choice,
+            &mut side_one_choice,
+            incoming_instructions,
+            &mut state_instructions_vec,
+            s2_mega,
+            s2_tera,
+            branch_on_damage,
+        );
+        return state_instructions_vec;
+    }
+
+    // run switches
+    if let MoveChoice::Switch(switch_id) = side_one_move {
+        generate_instructions_from_switch(
+            state,
+            *switch_id,
+            SideReference::SideOne,
+            &mut incoming_instructions,
+        );
+    }
+    if let MoveChoice::Switch(switch_id) = side_two_move {
+        generate_instructions_from_switch(
+            state,
+            *switch_id,
+            SideReference::SideTwo,
+            &mut incoming_instructions,
+        );
+    }
     if s1_tera {
         state.side_one.get_active().terastallized = true;
         incoming_instructions
@@ -3947,12 +4196,8 @@ pub fn generate_instructions_from_move_pair(
                 },
             ));
     }
-    if s1_mega {
-        mega_evolve(state, SideReference::SideOne, &mut incoming_instructions);
-    }
-    if s2_mega {
-        mega_evolve(state, SideReference::SideTwo, &mut incoming_instructions);
-    }
+
+    run_mega_evolutions(state, s1_mega, s2_mega, &mut incoming_instructions);
 
     modify_choice_priority(&state, &SideReference::SideOne, &mut side_one_choice);
     modify_choice_priority(&state, &SideReference::SideTwo, &mut side_two_choice);
@@ -4066,6 +4311,79 @@ pub fn generate_instructions_from_move_pair(
         }
     }
     state_instructions_vec
+}
+
+fn get_instructions_from_pursuit_hitting_switching_target(
+    state: &mut State,
+    pursuiting_side_ref: SideReference,
+    switching_side_ref: SideReference,
+    pursuit_choice: &mut Choice,
+    switching_choice: &mut Choice,
+    mut incoming_instructions: StateInstructions,
+    state_instructions_vec: &mut Vec<StateInstructions>,
+    pursuiting_side_mega: bool,
+    pursuiting_side_tera: bool,
+    branch_on_damage: bool,
+) {
+    // pursuiting side mega / tera
+    if pursuiting_side_mega {
+        mega_evolve(state, pursuiting_side_ref, &mut incoming_instructions);
+    }
+    if pursuiting_side_tera {
+        state
+            .get_side(&pursuiting_side_ref)
+            .get_active()
+            .terastallized = true;
+        incoming_instructions
+            .instruction_list
+            .push(Instruction::ToggleTerastallized(
+                ToggleTerastallizedInstruction {
+                    side_ref: SideReference::SideOne,
+                },
+            ));
+    }
+
+    // reverse instructions because mega/tera might've added some
+    state.reverse_instructions(&incoming_instructions.instruction_list);
+
+    // pursuiting move
+    generate_instructions_from_move(
+        state,
+        pursuit_choice,
+        switching_choice,
+        pursuiting_side_ref,
+        incoming_instructions,
+        state_instructions_vec,
+        branch_on_damage,
+    );
+    after_move_finish(state, state_instructions_vec);
+
+    // loop through branches from pursuiting move, and apply the switching move on each of them
+    let mut i = 0;
+    let vec_len = state_instructions_vec.len();
+    switching_choice.first_move = false;
+    while i < vec_len {
+        let mut state_instruction = state_instructions_vec.remove(0);
+        state.apply_instructions(&state_instruction.instruction_list);
+        if state.get_side(&switching_side_ref).get_active().hp > 0 {
+            generate_instructions_from_switch(
+                state,
+                switching_choice.switch_id,
+                switching_side_ref,
+                &mut state_instruction,
+            );
+        }
+        state.reverse_instructions(&state_instruction.instruction_list);
+        after_move_finish(state, state_instructions_vec);
+        state_instructions_vec.push(state_instruction);
+        i += 1;
+    }
+
+    for state_instruction in state_instructions_vec.iter_mut() {
+        state.apply_instructions(&state_instruction.instruction_list);
+        add_end_of_turn_instructions(state, state_instruction, &SideReference::SideOne);
+        state.reverse_instructions(&state_instruction.instruction_list);
+    }
 }
 
 pub fn calculate_damage_rolls(
@@ -4268,10 +4586,16 @@ mod tests {
             false,
         );
 
-        #[cfg(any(feature = "gen6", feature = "gen7", feature = "gen8", feature = "gen9"))]
+        #[cfg(any(
+            feature = "gen6",
+            feature = "gen7",
+            feature = "gen8",
+            feature = "gen9",
+            feature = "champions"
+        ))]
         let expected_instructions = vec![StateInstructions::default()];
 
-        #[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5"))]
+        #[cfg(any(feature = "gen4", feature = "gen5"))]
         let expected_instructions = vec![StateInstructions {
             percentage: 100.0,
             instruction_list: vec![Instruction::ChangeStatus(ChangeStatusInstruction {
@@ -5107,7 +5431,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "gen9")]
+    #[cfg(any(feature = "gen9", feature = "champions"))]
     fn test_basic_status_move() {
         let mut state: State = State::default();
         let mut choice = MOVES.get(&Choices::GLARE).unwrap().to_owned();
@@ -5137,7 +5461,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "gen9")]
+    #[cfg(any(feature = "gen9", feature = "champions"))]
     fn test_status_move_that_can_miss() {
         let mut state: State = State::default();
         let mut choice = MOVES.get(&Choices::THUNDERWAVE).unwrap().to_owned();
@@ -6178,7 +6502,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "gen8", feature = "gen9"))]
+    #[cfg(any(feature = "gen8", feature = "gen9", feature = "champions"))]
     fn test_rapidspin_clears_hazards() {
         let mut state: State = State::default();
         state.side_one.side_conditions.stealth_rock = 1;
@@ -6271,7 +6595,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "gen8", feature = "gen9"))]
+    #[cfg(any(feature = "gen8", feature = "gen9", feature = "champions"))]
     fn test_rapidspin_clears_multiple_hazards() {
         let mut state: State = State::default();
         state.side_one.side_conditions.stealth_rock = 1;
@@ -6331,7 +6655,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "gen8", feature = "gen9"))]
+    #[cfg(any(feature = "gen8", feature = "gen9", feature = "champions"))]
     fn test_rapidspin_does_not_clear_opponent_hazards() {
         let mut state: State = State::default();
         state.side_two.side_conditions.stealth_rock = 1;
@@ -7058,7 +7382,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "gen9")]
+    #[cfg(any(feature = "gen9", feature = "champions"))]
     fn test_knockoff_removing_item() {
         let mut state: State = State::default();
         let mut choice = MOVES.get(&Choices::KNOCKOFF).unwrap().to_owned();
@@ -8393,12 +8717,12 @@ mod tests {
         let mut incoming_instructions = StateInstructions::default();
 
         let expected_instructions = StateInstructions {
-            percentage: 75.0,
+            percentage: (1.0 - FULLY_PARALYZED_CHANCE) * 100.0,
             instruction_list: vec![],
         };
 
         let expected_frozen_instructions = &mut vec![StateInstructions {
-            percentage: 25.0,
+            percentage: FULLY_PARALYZED_CHANCE * 100.0,
             instruction_list: vec![],
         }];
 
@@ -8558,7 +8882,7 @@ mod tests {
         let mut incoming_instructions = StateInstructions::default();
 
         let expected_instructions = StateInstructions {
-            percentage: 20.0,
+            percentage: THAW_CHANCE * 100.0,
             instruction_list: vec![Instruction::ChangeStatus(ChangeStatusInstruction {
                 side_ref: SideReference::SideOne,
                 pokemon_index: state.side_one.active_index,
@@ -8568,7 +8892,7 @@ mod tests {
         };
 
         let expected_frozen_instructions = &mut vec![StateInstructions {
-            percentage: 80.0,
+            percentage: (1.0 - THAW_CHANCE) * 100.0,
             instruction_list: vec![],
         }];
 
@@ -8777,7 +9101,7 @@ mod tests {
         })];
 
         let expected_instructions = StateInstructions {
-            percentage: 75.0,
+            percentage: (1.0 - FULLY_PARALYZED_CHANCE) * 100.0,
             instruction_list: vec![Instruction::Damage(DamageInstruction {
                 side_ref: SideReference::SideOne,
                 damage_amount: 1,
@@ -8785,7 +9109,7 @@ mod tests {
         };
 
         let expected_frozen_instructions = &mut vec![StateInstructions {
-            percentage: 25.0,
+            percentage: FULLY_PARALYZED_CHANCE * 100.0,
             instruction_list: vec![Instruction::Damage(DamageInstruction {
                 side_ref: SideReference::SideOne,
                 damage_amount: 1,
@@ -8999,7 +9323,12 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "gen7", feature = "gen8", feature = "gen9"))]
+    #[cfg(any(
+        feature = "gen7",
+        feature = "gen8",
+        feature = "gen9",
+        feature = "champions"
+    ))]
     fn test_later_gen_speed_cutting_in_half() {
         let mut state = State::default();
         state.side_one.get_active().status = PokemonStatus::PARALYZE;
@@ -9009,7 +9338,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5", feature = "gen6"))]
+    #[cfg(any(feature = "gen4", feature = "gen5", feature = "gen6"))]
     fn test_earlier_gen_speed_cutting_by_75_percent() {
         let mut state = State::default();
         state.side_one.get_active().status = PokemonStatus::PARALYZE;
@@ -9919,7 +10248,12 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "gen9", feature = "gen8", feature = "gen7"))]
+    #[cfg(any(
+        feature = "gen9",
+        feature = "gen8",
+        feature = "gen7",
+        feature = "champions"
+    ))]
     fn test_end_of_turn_burn_damage() {
         let mut state = State::default();
         state.side_one.get_active().status = PokemonStatus::BURN;
@@ -9943,7 +10277,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5", feature = "gen6"))]
+    #[cfg(any(feature = "gen4", feature = "gen5", feature = "gen6"))]
     fn test_early_generation_burn_one_eigth() {
         let mut state = State::default();
         state.side_one.get_active().status = PokemonStatus::BURN;
@@ -10274,7 +10608,7 @@ mod tests {
             &SideReference::SideOne,
         );
 
-        #[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5"))]
+        #[cfg(any(feature = "gen4", feature = "gen5"))]
         let expected_instructions = StateInstructions {
             percentage: 100.0,
             instruction_list: vec![Instruction::Damage(DamageInstruction {
@@ -10283,7 +10617,13 @@ mod tests {
             })],
         };
 
-        #[cfg(any(feature = "gen6", feature = "gen7", feature = "gen8", feature = "gen9"))]
+        #[cfg(any(
+            feature = "gen6",
+            feature = "gen7",
+            feature = "gen8",
+            feature = "gen9",
+            feature = "champions"
+        ))]
         let expected_instructions = StateInstructions {
             percentage: 100.0,
             instruction_list: vec![Instruction::Damage(DamageInstruction {
@@ -10311,11 +10651,12 @@ mod tests {
             &SideReference::SideOne,
         );
 
+        let expected_damage = (2.0 * (100.0 / SALT_CURE_DAMAGE_DIVISOR)) as i16;
         let expected_instructions = StateInstructions {
             percentage: 100.0,
             instruction_list: vec![Instruction::Damage(DamageInstruction {
                 side_ref: SideReference::SideOne,
-                damage_amount: 25,
+                damage_amount: expected_damage,
             })],
         };
 

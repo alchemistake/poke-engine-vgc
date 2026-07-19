@@ -57,6 +57,7 @@ pub enum Instruction {
     DecrementTerrainTurnsRemaining,
     ChangeType(ChangeType),
     ChangeAbility(ChangeAbilityInstruction),
+    ChangeBaseAbility(ChangeAbilityInstruction),
     ChangeItem(ChangeItemInstruction),
     ChangeAttack(ChangeStatInstruction),
     ChangeDefense(ChangeStatInstruction),
@@ -89,6 +90,9 @@ pub enum Instruction {
     ToggleSideOneForceSwitch,
     ToggleSideTwoForceSwitch,
     ToggleTerastallized(ToggleTerastallizedInstruction),
+    ToggleMegaEvolved(ToggleMegaEvolvedInstruction),
+    TeamPreviewFaintIndex(SideReference, PokemonIndex),
+    ToggleTeamPreview,
 }
 
 impl fmt::Debug for Instruction {
@@ -180,6 +184,13 @@ impl fmt::Debug for Instruction {
             }
             Instruction::ChangeAbility(c) => {
                 write!(f, "ChangeAbility {:?}: {:?}", c.side_ref, c.ability_change)
+            }
+            Instruction::ChangeBaseAbility(c) => {
+                write!(
+                    f,
+                    "ChangeBaseAbility {:?}: {:?}",
+                    c.side_ref, c.ability_change
+                )
             }
             Instruction::ChangeItem(c) => {
                 write!(
@@ -282,6 +293,9 @@ impl fmt::Debug for Instruction {
             Instruction::ToggleTerastallized(s) => {
                 write!(f, "ToggleTerastallized {:?}", s.side_ref)
             }
+            Instruction::ToggleMegaEvolved(s) => {
+                write!(f, "ToggleMegaEvolved {:?}", s.side_ref)
+            }
             Instruction::SetLastUsedMove(s) => {
                 write!(
                     f,
@@ -331,6 +345,12 @@ impl fmt::Debug for Instruction {
             }
             Instruction::ToggleSideTwoForceSwitch => {
                 write!(f, "ToggleSideTwoForceSwitch")
+            }
+            Instruction::TeamPreviewFaintIndex(side_ref, index) => {
+                write!(f, "TeamPreviewFaintIndex: {:?}, {:?}", side_ref, index)
+            }
+            Instruction::ToggleTeamPreview => {
+                write!(f, "ToggleTeamPreview")
             }
         }
     }
@@ -547,6 +567,11 @@ pub struct ToggleTrickRoomInstruction {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ToggleTerastallizedInstruction {
+    pub side_ref: SideReference,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct ToggleMegaEvolvedInstruction {
     pub side_ref: SideReference,
 }
 

@@ -604,12 +604,8 @@ pub fn ability_modify_attack_against(
             }
         }
         Abilities::VOLTABSORB => {
-            #[cfg(feature = "gen3")]
             let activate = attacker_choice.move_type == PokemonType::ELECTRIC
                 && attacker_choice.category != MoveCategory::Status;
-
-            #[cfg(not(feature = "gen3"))]
-            let activate = attacker_choice.move_type == PokemonType::ELECTRIC;
 
             if activate {
                 attacker_choice.remove_all_effects();

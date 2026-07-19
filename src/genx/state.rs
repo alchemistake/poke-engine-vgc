@@ -11,7 +11,7 @@ use crate::instruction::{
 use crate::pokemon::PokemonName;
 use crate::state::VolatileStatusBitset;
 use crate::state::{
-    LastUsedMove, Pokemon, PokemonBoostableStat, PokemonIndex, PokemonMoveIndex,
+    LastUsedMove, Pokemon, PokemonBoostableStat, PokemonIndex, PokemonMoveIndex, PokemonNature,
     PokemonSideCondition, PokemonStatus, PokemonType, Side, SideReference, State,
 };
 use core::panic;
@@ -19,6 +19,15 @@ use core::panic;
 fn common_pkmn_stat_calc(stat: u16, ev: u16, level: u16) -> u16 {
     // 31 IV always used
     ((2 * stat + 31 + (ev / 4)) * level) / 100
+}
+
+#[cfg(feature = "champions")]
+fn stat_points_to_effective_ev(stat_points: u16) -> u16 {
+    if stat_points == 0 {
+        0
+    } else {
+        8 * stat_points - 4
+    }
 }
 
 fn multiply_boost(boost_num: i8, stat_value: i16) -> i16 {
@@ -46,6 +55,7 @@ pub enum MoveChoice {
     MoveMega(PokemonMoveIndex),
     Move(PokemonMoveIndex),
     Switch(PokemonIndex),
+    TeamPreview(PokemonIndex, PokemonIndex, PokemonIndex), // lead, second, third
     None,
 }
 
@@ -62,6 +72,11 @@ impl MoveChoice {
                 format!("{}", side.get_active_immutable().moves[&index].id).to_lowercase()
             }
             MoveChoice::Switch(index) => format!("{}", side.pokemon[*index].id).to_lowercase(),
+            MoveChoice::TeamPreview(lead, second, third) => format!(
+                "{},{},{}",
+                side.pokemon[*lead].id, side.pokemon[*second].id, side.pokemon[*third].id
+            )
+            .to_lowercase(),
             MoveChoice::None => "No Move".to_string(),
         }
     }
@@ -78,6 +93,36 @@ impl MoveChoice {
             {
                 return Some(MoveChoice::Switch(pkmn_iter.pokemon_index));
             }
+        }
+        let pkmn_id_strings = side
+            .pokemon
+            .pkmn
+            .iter()
+            .map(|pkmn| pkmn.id.to_string().to_lowercase())
+            .collect::<Vec<String>>();
+        let parts = s.split(',').collect::<Vec<&str>>();
+        if parts.len() == 3
+            && pkmn_id_strings.contains(&parts[0].to_string())
+            && pkmn_id_strings.contains(&parts[1].to_string())
+            && pkmn_id_strings.contains(&parts[2].to_string())
+        {
+            let lead_index = pkmn_id_strings
+                .iter()
+                .position(|id| id == parts[0])
+                .unwrap();
+            let second_index = pkmn_id_strings
+                .iter()
+                .position(|id| id == parts[1])
+                .unwrap();
+            let third_index = pkmn_id_strings
+                .iter()
+                .position(|id| id == parts[2])
+                .unwrap();
+            return Some(MoveChoice::TeamPreview(
+                PokemonIndex::deserialize(&lead_index.to_string()),
+                PokemonIndex::deserialize(&second_index.to_string()),
+                PokemonIndex::deserialize(&third_index.to_string()),
+            ));
         }
 
         // check if s endswith `-tera`
@@ -312,22 +357,129 @@ impl Pokemon {
     }
     pub fn calculate_stats_from_base_stats(&self) -> (i16, i16, i16, i16, i16, i16) {
         let base_stats = self.id.base_stats();
-        (
-            (common_pkmn_stat_calc(base_stats.0 as u16, self.evs.0 as u16, self.level as u16)
+
+        #[cfg(feature = "champions")]
+        let evs = (
+            stat_points_to_effective_ev(self.evs.0 as u16),
+            stat_points_to_effective_ev(self.evs.1 as u16),
+            stat_points_to_effective_ev(self.evs.2 as u16),
+            stat_points_to_effective_ev(self.evs.3 as u16),
+            stat_points_to_effective_ev(self.evs.4 as u16),
+            stat_points_to_effective_ev(self.evs.5 as u16),
+        );
+
+        #[cfg(not(feature = "champions"))]
+        let evs = (
+            self.evs.0 as u16,
+            self.evs.1 as u16,
+            self.evs.2 as u16,
+            self.evs.3 as u16,
+            self.evs.4 as u16,
+            self.evs.5 as u16,
+        );
+
+        let mut result = (
+            (common_pkmn_stat_calc(base_stats.0 as u16, evs.0, self.level as u16)
                 + self.level as u16
                 + 10) as i16,
-            (common_pkmn_stat_calc(base_stats.1 as u16, self.evs.1 as u16, self.level as u16) + 5)
-                as i16,
-            (common_pkmn_stat_calc(base_stats.2 as u16, self.evs.2 as u16, self.level as u16) + 5)
-                as i16,
-            (common_pkmn_stat_calc(base_stats.3 as u16, self.evs.3 as u16, self.level as u16) + 5)
-                as i16,
-            (common_pkmn_stat_calc(base_stats.4 as u16, self.evs.4 as u16, self.level as u16) + 5)
-                as i16,
-            (common_pkmn_stat_calc(base_stats.5 as u16, self.evs.5 as u16, self.level as u16) + 5)
-                as i16,
-        )
+            (common_pkmn_stat_calc(base_stats.1 as u16, evs.1, self.level as u16) + 5) as i16,
+            (common_pkmn_stat_calc(base_stats.2 as u16, evs.2, self.level as u16) + 5) as i16,
+            (common_pkmn_stat_calc(base_stats.3 as u16, evs.3, self.level as u16) + 5) as i16,
+            (common_pkmn_stat_calc(base_stats.4 as u16, evs.4, self.level as u16) + 5) as i16,
+            (common_pkmn_stat_calc(base_stats.5 as u16, evs.5, self.level as u16) + 5) as i16,
+        );
+
+        match self.nature {
+            PokemonNature::LONELY => {
+                result.1 = result.1 * 11 / 10; // +Atk
+                result.2 = result.2 * 9 / 10; // -Def
+            }
+            PokemonNature::ADAMANT => {
+                result.1 = result.1 * 11 / 10; // +Atk
+                result.3 = result.3 * 9 / 10; // -SpA
+            }
+            PokemonNature::NAUGHTY => {
+                result.1 = result.1 * 11 / 10; // +Atk
+                result.4 = result.4 * 9 / 10; // -SpD
+            }
+            PokemonNature::BRAVE => {
+                result.1 = result.1 * 11 / 10; // +Atk
+                result.5 = result.5 * 9 / 10; // -Spe
+            }
+            PokemonNature::BOLD => {
+                result.2 = result.2 * 11 / 10; // +Def
+                result.1 = result.1 * 9 / 10; // -Atk
+            }
+            PokemonNature::IMPISH => {
+                result.2 = result.2 * 11 / 10; // +Def
+                result.3 = result.3 * 9 / 10; // -SpA
+            }
+            PokemonNature::LAX => {
+                result.2 = result.2 * 11 / 10; // +Def
+                result.4 = result.4 * 9 / 10; // -SpD
+            }
+            PokemonNature::RELAXED => {
+                result.2 = result.2 * 11 / 10; // +Def
+                result.5 = result.5 * 9 / 10; // -Spe
+            }
+            PokemonNature::MODEST => {
+                result.3 = result.3 * 11 / 10; // +SpA
+                result.1 = result.1 * 9 / 10; // -Atk
+            }
+            PokemonNature::MILD => {
+                result.3 = result.3 * 11 / 10; // +SpA
+                result.2 = result.2 * 9 / 10; // -Def
+            }
+            PokemonNature::RASH => {
+                result.3 = result.3 * 11 / 10; // +SpA
+                result.4 = result.4 * 9 / 10; // -SpD
+            }
+            PokemonNature::QUIET => {
+                result.3 = result.3 * 11 / 10; // +SpA
+                result.5 = result.5 * 9 / 10; // -Spe
+            }
+            PokemonNature::CALM => {
+                result.4 = result.4 * 11 / 10; // +SpD
+                result.1 = result.1 * 9 / 10; // -Atk
+            }
+            PokemonNature::GENTLE => {
+                result.4 = result.4 * 11 / 10; // +SpD
+                result.2 = result.2 * 9 / 10; // -Def
+            }
+            PokemonNature::CAREFUL => {
+                result.4 = result.4 * 11 / 10; // +SpD
+                result.3 = result.3 * 9 / 10; // -SpA
+            }
+            PokemonNature::SASSY => {
+                result.4 = result.4 * 11 / 10; // +SpD
+                result.5 = result.5 * 9 / 10; // -Spe
+            }
+            PokemonNature::TIMID => {
+                result.5 = result.5 * 11 / 10; // +Spe
+                result.1 = result.1 * 9 / 10; // -Atk
+            }
+            PokemonNature::HASTY => {
+                result.5 = result.5 * 11 / 10; // +Spe
+                result.2 = result.2 * 9 / 10; // -Def
+            }
+            PokemonNature::JOLLY => {
+                result.5 = result.5 * 11 / 10; // +Spe
+                result.3 = result.3 * 9 / 10; // -SpA
+            }
+            PokemonNature::NAIVE => {
+                result.5 = result.5 * 11 / 10; // +Spe
+                result.4 = result.4 * 9 / 10; // -SpD
+            }
+            // Neutral natures: no change
+            PokemonNature::HARDY
+            | PokemonNature::DOCILE
+            | PokemonNature::SERIOUS
+            | PokemonNature::BASHFUL
+            | PokemonNature::QUIRKY => {}
+        }
+        result
     }
+
     pub fn add_available_moves(
         &self,
         vec: &mut Vec<MoveChoice>,
@@ -335,6 +487,7 @@ impl Pokemon {
         encored: bool,
         taunted: bool,
         can_tera: bool,
+        side_can_mega: bool,
     ) {
         let mut iter = self.moves.into_iter();
         while let Some(p) = iter.next() {
@@ -365,7 +518,7 @@ impl Pokemon {
                 if can_tera {
                     vec.push(MoveChoice::MoveTera(iter.pokemon_move_index));
                 }
-                if self.can_mega_evolve() {
+                if side_can_mega && self.can_mega_evolve() {
                     vec.push(MoveChoice::MoveMega(iter.pokemon_move_index));
                 }
             }
@@ -453,6 +606,76 @@ impl Pokemon {
                 self.id == PokemonName::OGERPONWELLSPRING
                     || self.id == PokemonName::OGERPONWELLSPRINGTERA
             }
+            Items::VENUSAURITE
+            | Items::CHARIZARDITEX
+            | Items::CHARIZARDITEY
+            | Items::BLASTOISINITE
+            | Items::BEEDRILLITE
+            | Items::PIDGEOTITE
+            | Items::ALAKAZITE
+            | Items::SLOWBRONITE
+            | Items::GENGARITE
+            | Items::KANGASKHANITE
+            | Items::PINSIRITE
+            | Items::GYARADOSITE
+            | Items::AERODACTYLITE
+            | Items::MEWTWONITEX
+            | Items::MEWTWONITEY
+            | Items::AMPHAROSITE
+            | Items::STEELIXITE
+            | Items::SCIZORITE
+            | Items::HERACRONITE
+            | Items::HOUNDOOMINITE
+            | Items::TYRANITARITE
+            | Items::SCEPTILITE
+            | Items::BLAZIKENITE
+            | Items::SWAMPERTITE
+            | Items::GARDEVOIRITE
+            | Items::SABLENITE
+            | Items::MAWILITE
+            | Items::AGGRONITE
+            | Items::MEDICHAMITE
+            | Items::MANECTITE
+            | Items::SHARPEDONITE
+            | Items::CAMERUPTITE
+            | Items::ALTARIANITE
+            | Items::BANETTITE
+            | Items::ABSOLITE
+            | Items::GLALITITE
+            | Items::SALAMENCITE
+            | Items::METAGROSSITE
+            | Items::LATIASITE
+            | Items::LATIOSITE
+            | Items::LOPUNNITE
+            | Items::GARCHOMPITE
+            | Items::LUCARIONITE
+            | Items::ABOMASITE
+            | Items::GALLADITE
+            | Items::AUDINITE
+            | Items::DIANCITE
+            | Items::DRAGONINITE
+            | Items::CLEFABLITE
+            | Items::MEGANIUMITE
+            | Items::FERALIGITE
+            | Items::EMBOARITE
+            | Items::CHESNAUGHTITE
+            | Items::DELPHOXITE
+            | Items::GRENINJITE
+            | Items::CRABOMINITE
+            | Items::GOLURKITE
+            | Items::SCOVILLAINITE
+            | Items::GLIMMORANITE
+            | Items::FLOETTITE
+            | Items::VICTREEBELITE
+            | Items::STARMINITE
+            | Items::HAWLUCHANITE
+            | Items::SKARMORITE
+            | Items::MEOWSTICITE
+            | Items::FROSLASSITE
+            | Items::EXCADRITE
+            | Items::DRAMPANITE
+            | Items::CHIMECHITE
+            | Items::CHANDELURITE => true,
             _ => false,
         }
     }
@@ -470,6 +693,7 @@ impl Pokemon {
         }
         if self.has_type(&PokemonType::FLYING)
             || self.ability == Abilities::LEVITATE
+            || self.ability == Abilities::EELEVATE
             || self.item == Items::AIRBALLOON
         {
             return false;
@@ -549,7 +773,43 @@ impl Pokemon {
     }
 }
 
+const ALL_POKEMON_INDICES: [PokemonIndex; 6] = [
+    PokemonIndex::P0,
+    PokemonIndex::P1,
+    PokemonIndex::P2,
+    PokemonIndex::P3,
+    PokemonIndex::P4,
+    PokemonIndex::P5,
+];
+
 impl Side {
+    // generates BSS team preview options
+    // BSS is a 6v6 game at team preview, but only 3v3 in battle.
+    // This should generate all 60 options for both sides using MoveChoice::TeamPreview.
+    // 60 options because: 6 choose 3 = 20, and each side must select a lead, so 20 * 3 = 60.
+    // MoveChoice::TeamPreview(lead, reserve1, reserve2) where lead is the index of the lead pokemon,
+    // and reserve1 and reserve2 are the indices of the other two pokemon.
+    // Note that the order of reserve1 and reserve2 does not matter, so we can just generate all combinations of 3 pokemon from 6,
+    // and then for each combination, generate 3 permutations of the 3 pokemon to determine the lead.
+    pub fn bss_team_preview_get_all_options(&self) -> Vec<MoveChoice> {
+        let mut options = Vec::with_capacity(60);
+
+        let num_pkmn_indices = ALL_POKEMON_INDICES.len();
+        for i in 0..num_pkmn_indices {
+            for j in (i + 1)..num_pkmn_indices {
+                for k in (j + 1)..num_pkmn_indices {
+                    let lead = ALL_POKEMON_INDICES[i];
+                    let reserve1 = ALL_POKEMON_INDICES[j];
+                    let reserve2 = ALL_POKEMON_INDICES[k];
+                    options.push(MoveChoice::TeamPreview(lead, reserve1, reserve2));
+                    options.push(MoveChoice::TeamPreview(reserve1, lead, reserve2));
+                    options.push(MoveChoice::TeamPreview(reserve2, lead, reserve1));
+                }
+            }
+        }
+        options
+    }
+
     pub fn reset_negative_boosts(
         &mut self,
         side_ref: SideReference,
@@ -798,6 +1058,15 @@ impl Side {
         true
     }
 
+    pub fn can_use_mega(&self) -> bool {
+        for p in self.pokemon.into_iter() {
+            if p.mega_evolved {
+                return false;
+            }
+        }
+        true
+    }
+
     pub fn add_switches(&self, vec: &mut Vec<MoveChoice>) {
         let mut iter = self.pokemon.into_iter();
         while let Some(p) = iter.next() {
@@ -843,7 +1112,7 @@ impl Side {
     pub fn num_fainted_pkmn(&self) -> i8 {
         let mut count = 0;
         for p in self.pokemon.into_iter() {
-            if p.hp == 0 {
+            if p.hp == 0 && p.id != PokemonName::NONE {
                 count += 1;
             }
         }
@@ -853,6 +1122,14 @@ impl Side {
 
 impl State {
     pub fn root_get_all_options(&self) -> (Vec<MoveChoice>, Vec<MoveChoice>) {
+        #[cfg(feature = "bss")]
+        if self.team_preview {
+            return (
+                self.side_one.bss_team_preview_get_all_options(),
+                self.side_two.bss_team_preview_get_all_options(),
+            );
+        }
+
         if self.team_preview {
             let mut s1_options = Vec::with_capacity(6);
             let mut s2_options = Vec::with_capacity(6);
@@ -878,6 +1155,7 @@ impl State {
             s1_options.retain(|x| match x {
                 MoveChoice::Move(_) | MoveChoice::MoveTera(_) | MoveChoice::MoveMega(_) => true,
                 MoveChoice::Switch(_) => false,
+                MoveChoice::TeamPreview(_, _, _) => false,
                 MoveChoice::None => true,
             });
         }
@@ -897,6 +1175,7 @@ impl State {
                 encored,
                 taunted,
                 self.side_one.can_use_tera(),
+                self.side_one.can_use_mega(),
             );
         }
 
@@ -904,6 +1183,7 @@ impl State {
             s2_options.retain(|x| match x {
                 MoveChoice::Move(_) | MoveChoice::MoveTera(_) | MoveChoice::MoveMega(_) => true,
                 MoveChoice::Switch(_) => false,
+                MoveChoice::TeamPreview(_, _, _) => false,
                 MoveChoice::None => true,
             });
         }
@@ -923,6 +1203,7 @@ impl State {
                 encored,
                 taunted,
                 self.side_two.can_use_tera(),
+                self.side_two.can_use_mega(),
             );
         }
 
@@ -1011,6 +1292,7 @@ impl State {
                 encored,
                 taunted,
                 self.side_one.can_use_tera(),
+                self.side_one.can_use_mega(),
             );
             if !self.side_one.trapped(side_two_active) {
                 self.side_one.add_switches(&mut side_one_options);
@@ -1040,6 +1322,7 @@ impl State {
                 encored,
                 taunted,
                 self.side_two.can_use_tera(),
+                self.side_two.can_use_mega(),
             );
             if !self.side_two.trapped(side_one_active) {
                 self.side_two.add_switches(&mut side_two_options);
@@ -1164,6 +1447,23 @@ impl State {
             self.terrain.terrain_type
         } else {
             Terrain::NONE
+        }
+    }
+
+    pub fn get_weather(&self) -> Weather {
+        if self.weather.turns_remaining == 0 {
+            return Weather::NONE;
+        }
+        let s1_active = self.side_one.get_active_immutable();
+        let s2_active = self.side_two.get_active_immutable();
+        if s1_active.ability == Abilities::AIRLOCK
+            || s1_active.ability == Abilities::CLOUDNINE
+            || s2_active.ability == Abilities::AIRLOCK
+            || s2_active.ability == Abilities::CLOUDNINE
+        {
+            Weather::NONE
+        } else {
+            self.weather.weather_type
         }
     }
 

@@ -21,10 +21,16 @@ use crate::state::{
 };
 use std::cmp;
 
-#[cfg(any(feature = "gen3", feature = "gen4", feature = "gen5"))]
+#[cfg(any(feature = "gen4", feature = "gen5"))]
 pub const WEATHER_ABILITY_TURNS: i8 = -1;
 
-#[cfg(any(feature = "gen6", feature = "gen7", feature = "gen8", feature = "gen9"))]
+#[cfg(any(
+    feature = "gen6",
+    feature = "gen7",
+    feature = "gen8",
+    feature = "gen9",
+    feature = "champions"
+))]
 pub const WEATHER_ABILITY_TURNS: i8 = 5;
 
 define_enum_with_from_str! {
@@ -351,6 +357,8 @@ define_enum_with_from_str! {
         DRAGONIZE,
         SPICYSPRAY,
         PIERCINGDRILL,
+        EELEVATE,
+        FIREMANE,
     },
     default = NONE
 }
@@ -385,6 +393,7 @@ fn mold_breaker_ignores(ability: &Abilities) -> bool {
         | Abilities::KEENEYE
         | Abilities::LEAFGUARD
         | Abilities::LEVITATE
+        | Abilities::EELEVATE
         | Abilities::LIGHTNINGROD
         | Abilities::LIMBER
         | Abilities::MAGMAARMOR
@@ -542,7 +551,7 @@ pub fn ability_before_move(
         }
         // Technically incorrect
         // A move missing should not trigger this formechange
-        #[cfg(not(any(feature = "gen8", feature = "gen9")))]
+        #[cfg(not(any(feature = "gen8", feature = "gen9", feature = "champions")))]
         Abilities::DISGUISE
             if (choice.category == MoveCategory::Physical
                 || choice.category == MoveCategory::Special)
@@ -558,7 +567,7 @@ pub fn ability_before_move(
                 }));
             defending_pkmn.id = PokemonName::MIMIKYUBUSTED;
         }
-        #[cfg(any(feature = "gen8", feature = "gen9"))]
+        #[cfg(any(feature = "gen8", feature = "gen9", feature = "champions"))]
         Abilities::DISGUISE
             if (choice.category == MoveCategory::Physical
                 || choice.category == MoveCategory::Special)
@@ -603,7 +612,7 @@ pub fn ability_before_move(
                 active_pkmn.id = new_forme;
             }
         }
-        #[cfg(feature = "gen9")]
+        #[cfg(any(feature = "gen9", feature = "champions"))]
         Abilities::PROTEAN | Abilities::LIBERO => {
             if !attacking_side
                 .volatile_statuses
@@ -765,7 +774,7 @@ pub fn ability_after_damage_hit(
                 );
             }
         }
-        Abilities::BEASTBOOST => {
+        Abilities::BEASTBOOST | Abilities::EELEVATE => {
             if damage_dealt > 0 && defending_side.get_active_immutable().hp == 0 {
                 let highest_stat = &attacking_side.calculate_highest_stat();
                 apply_boost_instruction(
@@ -937,10 +946,6 @@ pub fn ability_after_damage_hit(
         }
         Abilities::ROUGHSKIN | Abilities::IRONBARBS => {
             if damage_dealt > 0 && choice.flags.contact {
-                #[cfg(feature = "gen3")]
-                let damage_dealt = cmp::min(attacking_pkmn.maxhp / 16, attacking_pkmn.hp);
-
-                #[cfg(not(feature = "gen3"))]
                 let damage_dealt = cmp::min(attacking_pkmn.maxhp / 8, attacking_pkmn.hp);
 
                 instructions
@@ -1742,9 +1747,9 @@ pub fn ability_on_switch_in(
             }
         }
         Abilities::SNOWWARNING => {
-            #[cfg(feature = "gen9")]
+            #[cfg(any(feature = "gen9", feature = "champions"))]
             let weather_type = Weather::SNOW;
-            #[cfg(not(feature = "gen9"))]
+            #[cfg(not(any(feature = "gen9", feature = "champions")))]
             let weather_type = Weather::HAIL;
 
             if state.weather.weather_type != weather_type {
@@ -1804,7 +1809,12 @@ pub fn ability_modify_attack_being_used(
         return;
     }
     match attacking_pkmn.ability {
-        #[cfg(any(feature = "gen9", feature = "gen8", feature = "gen7"))]
+        #[cfg(any(
+            feature = "champions",
+            feature = "gen9",
+            feature = "gen8",
+            feature = "gen7"
+        ))]
         Abilities::PRANKSTER => {
             if attacker_choice.category == MoveCategory::Status
                 && defending_side
@@ -1859,7 +1869,12 @@ pub fn ability_modify_attack_being_used(
                 attacker_choice.base_power *= 1.2;
             }
         }
-        #[cfg(any(feature = "gen9", feature = "gen8", feature = "gen7"))]
+        #[cfg(any(
+            feature = "champions",
+            feature = "gen9",
+            feature = "gen8",
+            feature = "gen7"
+        ))]
         Abilities::AERILATE => {
             if attacker_choice.move_type == PokemonType::NORMAL {
                 attacker_choice.move_type = PokemonType::FLYING;
@@ -1892,7 +1907,12 @@ pub fn ability_modify_attack_being_used(
                 attacker_choice.base_power *= 1.5;
             }
         }
-        #[cfg(any(feature = "gen9", feature = "gen8", feature = "gen7"))]
+        #[cfg(any(
+            feature = "champions",
+            feature = "gen9",
+            feature = "gen8",
+            feature = "gen7"
+        ))]
         Abilities::REFRIGERATE => {
             if attacker_choice.move_type == PokemonType::NORMAL {
                 attacker_choice.move_type = PokemonType::ICE;
@@ -2017,6 +2037,12 @@ pub fn ability_modify_attack_being_used(
                 attacker_choice.base_power *= 1.5;
             }
         }
+        #[cfg(any(feature = "gen9", feature = "champions"))]
+        Abilities::TRANSISTOR => {
+            if attacker_choice.move_type == PokemonType::ELECTRIC {
+                attacker_choice.base_power *= 1.3;
+            }
+        }
         #[cfg(any(
             feature = "gen8",
             feature = "gen7",
@@ -2029,10 +2055,9 @@ pub fn ability_modify_attack_being_used(
                 attacker_choice.base_power *= 1.5;
             }
         }
-        #[cfg(any(feature = "gen9"))]
-        Abilities::TRANSISTOR => {
-            if attacker_choice.move_type == PokemonType::ELECTRIC {
-                attacker_choice.base_power *= 1.3;
+        Abilities::FIREMANE => {
+            if attacker_choice.move_type == PokemonType::FIRE {
+                attacker_choice.base_power *= 1.5;
             }
         }
         Abilities::STENCH => {
@@ -2088,7 +2113,12 @@ pub fn ability_modify_attack_being_used(
                 attacker_choice.base_power *= 1.5;
             };
         }
-        #[cfg(any(feature = "gen9", feature = "gen8", feature = "gen7"))]
+        #[cfg(any(
+            feature = "champions",
+            feature = "gen9",
+            feature = "gen8",
+            feature = "gen7"
+        ))]
         Abilities::PIXILATE => {
             if attacker_choice.move_type == PokemonType::NORMAL {
                 attacker_choice.move_type = PokemonType::FAIRY;
@@ -2100,6 +2130,12 @@ pub fn ability_modify_attack_being_used(
             if attacker_choice.move_type == PokemonType::NORMAL {
                 attacker_choice.move_type = PokemonType::FAIRY;
                 attacker_choice.base_power *= 1.3;
+            }
+        }
+        Abilities::DRAGONIZE => {
+            if attacker_choice.move_type == PokemonType::NORMAL {
+                attacker_choice.move_type = PokemonType::DRAGON;
+                attacker_choice.base_power *= 1.2;
             }
         }
         Abilities::DEFEATIST => {
@@ -2149,6 +2185,14 @@ pub fn ability_modify_attack_being_used(
                 attacker_choice.base_power *= 1.2;
             }
         }
+        #[cfg(feature = "champions")]
+        Abilities::UNSEENFIST | Abilities::PIERCINGDRILL => {
+            if attacker_choice.flags.contact {
+                attacker_choice.flags.protect = false;
+                attacker_choice.base_power *= 0.25;
+            }
+        }
+        #[cfg(not(feature = "champions"))]
         Abilities::UNSEENFIST => {
             if attacker_choice.flags.contact {
                 attacker_choice.flags.protect = false
@@ -2343,7 +2387,12 @@ pub fn ability_modify_attack_against(
                 });
             }
         }
-        #[cfg(any(feature = "gen9", feature = "gen8", feature = "gen7"))]
+        #[cfg(any(
+            feature = "champions",
+            feature = "gen9",
+            feature = "gen8",
+            feature = "gen7"
+        ))]
         Abilities::WEAKARMOR => {
             if attacker_choice.category == MoveCategory::Physical {
                 attacker_choice.add_or_create_secondaries(Secondary {
@@ -2417,28 +2466,6 @@ pub fn ability_modify_attack_against(
                 attacker_choice.base_power /= 1.5;
             }
         }
-        #[cfg(feature = "gen3")]
-        Abilities::EFFECTSPORE => {
-            if attacker_choice.flags.contact {
-                attacker_choice.add_or_create_secondaries(Secondary {
-                    chance: 3.30,
-                    target: MoveTarget::User,
-                    effect: Effect::Status(PokemonStatus::POISON),
-                });
-                attacker_choice.add_or_create_secondaries(Secondary {
-                    chance: 3.30,
-                    target: MoveTarget::User,
-                    effect: Effect::Status(PokemonStatus::PARALYZE),
-                });
-                attacker_choice.add_or_create_secondaries(Secondary {
-                    chance: 3.30,
-                    target: MoveTarget::User,
-                    effect: Effect::Status(PokemonStatus::SLEEP),
-                });
-            }
-        }
-
-        #[cfg(not(feature = "gen3"))]
         Abilities::EFFECTSPORE => {
             if attacker_choice.flags.contact {
                 attacker_choice.add_or_create_secondaries(Secondary {
@@ -2466,6 +2493,13 @@ pub fn ability_modify_attack_against(
                     effect: Effect::Status(PokemonStatus::BURN),
                 });
             }
+        }
+        Abilities::SPICYSPRAY => {
+            attacker_choice.add_or_create_secondaries(Secondary {
+                chance: 100.0,
+                target: MoveTarget::User,
+                effect: Effect::Status(PokemonStatus::BURN),
+            });
         }
         Abilities::GOOEY => {
             if attacker_choice.flags.contact {
@@ -2537,7 +2571,7 @@ pub fn ability_modify_attack_against(
                 attacker_choice.base_power *= 1.33;
             }
         }
-        Abilities::LEVITATE => {
+        Abilities::LEVITATE | Abilities::EELEVATE => {
             if attacker_choice.move_type == PokemonType::GROUND
                 && attacker_choice.target == MoveTarget::Opponent
                 && attacker_choice.move_id != Choices::THOUSANDARROWS
@@ -2780,14 +2814,7 @@ pub fn ability_modify_attack_against(
             }
         }
         Abilities::VOLTABSORB => {
-            #[cfg(feature = "gen3")]
-            let activate = attacker_choice.move_type == PokemonType::ELECTRIC
-                && attacker_choice.category != MoveCategory::Status;
-
-            #[cfg(not(feature = "gen3"))]
-            let activate = attacker_choice.move_type == PokemonType::ELECTRIC;
-
-            if activate {
+            if attacker_choice.move_type == PokemonType::ELECTRIC {
                 attacker_choice.remove_all_effects();
                 attacker_choice.accuracy = 100.0;
                 attacker_choice.base_power = 0.0;

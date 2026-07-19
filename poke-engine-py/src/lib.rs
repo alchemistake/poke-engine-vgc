@@ -603,6 +603,7 @@ pub struct PyPokemon {
     pub rest_turns: i8,
     pub sleep_turns: i8,
     pub weight_kg: f32,
+    pub mega_evolved: bool,
     pub terastallized: bool,
     pub tera_type: String,
     pub moves: Vec<PyMove>,
@@ -641,6 +642,7 @@ impl From<Pokemon> for PyPokemon {
             rest_turns: other.rest_turns,
             sleep_turns: other.sleep_turns,
             weight_kg: other.weight_kg,
+            mega_evolved: other.mega_evolved,
             terastallized: other.terastallized,
             tera_type: other.tera_type.to_string(),
             moves: other
@@ -687,6 +689,7 @@ impl Into<Pokemon> for PyPokemon {
             rest_turns: self.rest_turns,
             sleep_turns: self.sleep_turns,
             weight_kg: self.weight_kg,
+            mega_evolved: self.mega_evolved,
             terastallized: self.terastallized,
             tera_type: PokemonType::from_str(&self.tera_type).unwrap(),
             moves: PokemonMoves {
@@ -724,6 +727,7 @@ impl PyPokemon {
         sleep_turns=0,
         weight_kg=0.0,
         moves=Vec::<PyMove>::new(),
+        mega_evolved=false,
         terastallized=false,
         tera_type="typeless".to_string(),
     ))]
@@ -749,6 +753,7 @@ impl PyPokemon {
         sleep_turns: i8,
         weight_kg: f32,
         moves: Vec<PyMove>,
+        mega_evolved: bool,
         terastallized: bool,
         tera_type: String,
     ) -> Self {
@@ -776,6 +781,7 @@ impl PyPokemon {
             rest_turns,
             sleep_turns,
             weight_kg,
+            mega_evolved,
             terastallized,
             tera_type,
             moves,
@@ -924,12 +930,15 @@ impl PyIterativeDeepeningResult {
 fn mcts(
     py_state: PyState,
     duration_ms: u64,
-    iterations: u32,
+    mut iterations: u32,
     threads: usize,
 ) -> PyResult<PyMctsResult> {
     let mut state: State = py_state.into();
     let duration = Duration::from_millis(duration_ms);
     let (s1_options, s2_options) = state.root_get_all_options();
+    if s1_options.len() <= 1 {
+        iterations = 100; // if there's only one option, force a quick exit
+    }
     let mcts_result = if threads > 1 {
         perform_mcts_shared_tree(
             &mut state, s1_options, s2_options, duration, iterations, threads,

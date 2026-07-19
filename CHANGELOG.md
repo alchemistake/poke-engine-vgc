@@ -1,5 +1,73 @@
 # Changelog
 
+## [v0.0.48](https://github.com/pmariglia/poke-engine/releases/tag/v0.0.48) - 2026-07-19
+
+### Features
+
+- Reg M-B Champions data + abilities - ([dc2ee33](https://github.com/pmariglia/poke-engine/commit/dc2ee33737d842fab0c0593f3584df2f92a0bcde))
+
+- Megasol - ([c2281f0](https://github.com/pmariglia/poke-engine/commit/c2281f0f20cf56b383b25f72fd3591c6a56ef61e))
+
+- Spicyspray - ([436761e](https://github.com/pmariglia/poke-engine/commit/436761e18ee78c71c43fe613d1f0876e6f4e6108))
+
+- Dragonize - ([cf46339](https://github.com/pmariglia/poke-engine/commit/cf4633938357e103e694914af5efc80d58093b16))
+
+- Champions unseenfist and piercingdrill - ([2f42f72](https://github.com/pmariglia/poke-engine/commit/2f42f72bcb0161fbce29b835e5a224b61e9504f9))
+
+- Champions base stat calc for stat points - ([6681875](https://github.com/pmariglia/poke-engine/commit/668187561971d0f818c3ab8c97c71a1b4bcc547a))
+
+- Mega evolving - ([2a19937](https://github.com/pmariglia/poke-engine/commit/2a19937d06c97e40d4fb383b85fb992dcfca7001))
+
+- Champions thaw chance change - ([5aab290](https://github.com/pmariglia/poke-engine/commit/5aab2902e6d8bb3964696781cdde27e2722031c2))
+
+- Champions paralysis change - ([09aab35](https://github.com/pmariglia/poke-engine/commit/09aab35b0543f0fd1dc16d991fcc2f207ca7a3b9))
+
+- Champions sleep duration changes - ([6edd66b](https://github.com/pmariglia/poke-engine/commit/6edd66b112a12e4c770173cfb539dd77bbdc7057))
+
+- Champions move changes - ([2302f8e](https://github.com/pmariglia/poke-engine/commit/2302f8ed3f5eb59162237e3ad34e762110b55165))
+
+- Force quick exit if s1 only has 1 option - ([1838c3b](https://github.com/pmariglia/poke-engine/commit/1838c3b081b6eced1f7e04e6d628a0115f92c123))
+
+
+### Bug Fixes
+
+- Floette mega info - ([5057d3e](https://github.com/pmariglia/poke-engine/commit/5057d3e1a4fe8cf784d2d041f2d7af976590b6fa))
+
+- Mega items cannot be removed - ([2487535](https://github.com/pmariglia/poke-engine/commit/248753576d5f879b83814fa24c6c14a603403c17))
+
+- Mega-evolving changes base ability - ([c46e948](https://github.com/pmariglia/poke-engine/commit/c46e94864252f007f5de07d2b9ef18430b61a2a0))
+
+- Tests calculate expected burn damage - ([52dda39](https://github.com/pmariglia/poke-engine/commit/52dda394755f88650bee7cc4e1c2866463a2fe33))
+
+- Meowstic megas M and F split - ([3d92dd0](https://github.com/pmariglia/poke-engine/commit/3d92dd0eb470246b99be082e0072dcf500784a83))
+
+- Guaranteed crit moves always use crit damage, regardless of branching - ([595c375](https://github.com/pmariglia/poke-engine/commit/595c375483a5059c51e47be0d1773e5c6431e832))
+
+
+### Miscellaneous Tasks
+
+- Bump pyo3 and rand - ([60e1cf8](https://github.com/pmariglia/poke-engine/commit/60e1cf8a2c707a510a8af6a079c09aaba71e2328))
+
+
+### Cleanup
+
+- Remove gen3 flags from later gens - ([58be899](https://github.com/pmariglia/poke-engine/commit/58be899674a2e39bd3da8e383597e5ed68be8d7e))
+
+
+### Refactor
+
+- Remove allocs from sample_node - ([79f8186](https://github.com/pmariglia/poke-engine/commit/79f8186fea83413dd7a14a97121c8d7958816b8b))
+
+- Switches happen before mega/tera - ([9d40257](https://github.com/pmariglia/poke-engine/commit/9d402571b46d70dbfba7ff751a8aa78ff6b2ef62))
+
+- Some more constants for generation differences - ([bc89c60](https://github.com/pmariglia/poke-engine/commit/bc89c603e3d33c0bf93f50763ccd575418ba1b57))
+
+- Champions flag exclusive with gen9 - ([dbf8787](https://github.com/pmariglia/poke-engine/commit/dbf8787f1e38bba7d975501e46880c9886da2fce))
+
+- Common_pkmn_damage_calc is called once - ([c21b361](https://github.com/pmariglia/poke-engine/commit/c21b3616fc3343dc0127293303caff7fab9a098b))
+
+- Get_attacking_and_defending_stats takes in effective weather - ([3194c62](https://github.com/pmariglia/poke-engine/commit/3194c625ef262ceca9ab711b075d8eba84091844))
+
 ## [v0.0.47](https://github.com/pmariglia/poke-engine/releases/tag/v0.0.47) - 2026-06-13
 
 ### Features

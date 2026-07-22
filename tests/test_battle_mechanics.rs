@@ -22150,3 +22150,63 @@ fn test_mustrecharge_move_only_allows_none() {
     );
     assert_eq!(expected_options, options);
 }
+
+// Single-status-cure berries. Each consumes itself and removes exactly the status it
+// cures. Assert on the resulting state (every branch), so the tests are robust to any
+// status branching (freeze thaw, full paralysis) rather than pinning instruction lists.
+fn assert_status_cure_berry(berry: Items, status: PokemonStatus) {
+    let mut state = State::default();
+    state.side_one.get_active().item = berry;
+    state.side_one.get_active().status = status;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::SPLASH,
+        Choices::SPLASH,
+    );
+
+    assert!(!vec_of_instructions.is_empty());
+    for si in &vec_of_instructions {
+        let mut branch = state.clone();
+        branch.apply_instructions(&si.instruction_list);
+        let active = branch.side_one.get_active_immutable();
+        assert_eq!(
+            PokemonStatus::NONE,
+            active.status,
+            "{:?} should have cured {:?}",
+            berry,
+            status
+        );
+        assert_eq!(
+            Items::NONE,
+            active.item,
+            "{:?} should have been consumed",
+            berry
+        );
+    }
+}
+
+#[test]
+fn test_aspearberry_cures_freeze() {
+    assert_status_cure_berry(Items::ASPEARBERRY, PokemonStatus::FREEZE);
+}
+
+#[test]
+fn test_cheriberry_cures_paralysis() {
+    assert_status_cure_berry(Items::CHERIBERRY, PokemonStatus::PARALYZE);
+}
+
+#[test]
+fn test_rawstberry_cures_burn() {
+    assert_status_cure_berry(Items::RAWSTBERRY, PokemonStatus::BURN);
+}
+
+#[test]
+fn test_pechaberry_cures_poison() {
+    assert_status_cure_berry(Items::PECHABERRY, PokemonStatus::POISON);
+}
+
+#[test]
+fn test_pechaberry_cures_toxic() {
+    assert_status_cure_berry(Items::PECHABERRY, PokemonStatus::TOXIC);
+}

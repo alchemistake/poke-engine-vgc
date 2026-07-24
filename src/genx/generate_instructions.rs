@@ -6427,6 +6427,165 @@ mod tests {
     }
 
     #[test]
+    fn test_electric_terrain_sets_terrain() {
+        let mut state: State = State::default();
+        let mut choice = MOVES
+            .get(&Choices::ELECTRICTERRAIN)
+            .unwrap()
+            .to_owned();
+
+        let mut instructions = vec![];
+        generate_instructions_from_move(
+            &mut state,
+            &mut choice,
+            &MOVES.get(&Choices::TACKLE).unwrap(),
+            SideReference::SideOne,
+            StateInstructions::default(),
+            &mut instructions,
+            false,
+        );
+
+        let expected_instructions = vec![StateInstructions {
+            percentage: 100.0,
+            instruction_list: vec![Instruction::ChangeTerrain(ChangeTerrain {
+                new_terrain: Terrain::ELECTRICTERRAIN,
+                new_terrain_turns_remaining: 5,
+                previous_terrain: Terrain::NONE,
+                previous_terrain_turns_remaining: 0,
+            })],
+        }];
+
+        assert_eq!(instructions, expected_instructions)
+    }
+
+    #[test]
+    fn test_electric_terrain_fails_if_already_active() {
+        let mut state: State = State::default();
+        state.terrain.terrain_type = Terrain::ELECTRICTERRAIN;
+        state.terrain.turns_remaining = 3;
+        let mut choice = MOVES
+            .get(&Choices::ELECTRICTERRAIN)
+            .unwrap()
+            .to_owned();
+
+        let mut instructions = vec![];
+        generate_instructions_from_move(
+            &mut state,
+            &mut choice,
+            &MOVES.get(&Choices::TACKLE).unwrap(),
+            SideReference::SideOne,
+            StateInstructions::default(),
+            &mut instructions,
+            false,
+        );
+
+        let expected_instructions = vec![StateInstructions {
+            percentage: 100.0,
+            instruction_list: vec![],
+        }];
+
+        assert_eq!(instructions, expected_instructions)
+    }
+
+    #[test]
+    fn test_grassy_terrain_replaces_other_terrain() {
+        let mut state: State = State::default();
+        state.terrain.terrain_type = Terrain::ELECTRICTERRAIN;
+        state.terrain.turns_remaining = 2;
+        let mut choice = MOVES
+            .get(&Choices::GRASSYTERRAIN)
+            .unwrap()
+            .to_owned();
+
+        let mut instructions = vec![];
+        generate_instructions_from_move(
+            &mut state,
+            &mut choice,
+            &MOVES.get(&Choices::TACKLE).unwrap(),
+            SideReference::SideOne,
+            StateInstructions::default(),
+            &mut instructions,
+            false,
+        );
+
+        let expected_instructions = vec![StateInstructions {
+            percentage: 100.0,
+            instruction_list: vec![Instruction::ChangeTerrain(ChangeTerrain {
+                new_terrain: Terrain::GRASSYTERRAIN,
+                new_terrain_turns_remaining: 5,
+                previous_terrain: Terrain::ELECTRICTERRAIN,
+                previous_terrain_turns_remaining: 2,
+            })],
+        }];
+
+        assert_eq!(instructions, expected_instructions)
+    }
+
+    #[test]
+    fn test_psychic_terrain_sets_terrain() {
+        let mut state: State = State::default();
+        let mut choice = MOVES
+            .get(&Choices::PSYCHICTERRAIN)
+            .unwrap()
+            .to_owned();
+
+        let mut instructions = vec![];
+        generate_instructions_from_move(
+            &mut state,
+            &mut choice,
+            &MOVES.get(&Choices::TACKLE).unwrap(),
+            SideReference::SideOne,
+            StateInstructions::default(),
+            &mut instructions,
+            false,
+        );
+
+        let expected_instructions = vec![StateInstructions {
+            percentage: 100.0,
+            instruction_list: vec![Instruction::ChangeTerrain(ChangeTerrain {
+                new_terrain: Terrain::PSYCHICTERRAIN,
+                new_terrain_turns_remaining: 5,
+                previous_terrain: Terrain::NONE,
+                previous_terrain_turns_remaining: 0,
+            })],
+        }];
+
+        assert_eq!(instructions, expected_instructions)
+    }
+
+    #[test]
+    fn test_misty_terrain_sets_terrain() {
+        let mut state: State = State::default();
+        let mut choice = MOVES
+            .get(&Choices::MISTYTERRAIN)
+            .unwrap()
+            .to_owned();
+
+        let mut instructions = vec![];
+        generate_instructions_from_move(
+            &mut state,
+            &mut choice,
+            &MOVES.get(&Choices::TACKLE).unwrap(),
+            SideReference::SideOne,
+            StateInstructions::default(),
+            &mut instructions,
+            false,
+        );
+
+        let expected_instructions = vec![StateInstructions {
+            percentage: 100.0,
+            instruction_list: vec![Instruction::ChangeTerrain(ChangeTerrain {
+                new_terrain: Terrain::MISTYTERRAIN,
+                new_terrain_turns_remaining: 5,
+                previous_terrain: Terrain::NONE,
+                previous_terrain_turns_remaining: 0,
+            })],
+        }];
+
+        assert_eq!(instructions, expected_instructions)
+    }
+
+    #[test]
     fn test_tidyup_clears_side_conditions_and_substitutes() {
         let mut state: State = State::default();
         state.terrain.terrain_type = Terrain::ELECTRICTERRAIN;

@@ -124,8 +124,12 @@ define_enum_with_from_str! {
         PIXIEPLATE,
         LIGHTBALL,
         FOCUSSASH,
+        ASPEARBERRY,
+        CHERIBERRY,
         CHESTOBERRY,
         LUMBERRY,
+        PECHABERRY,
+        RAWSTBERRY,
         SITRUSBERRY,
         PETAYABERRY,
         SALACBERRY,
@@ -251,7 +255,11 @@ fn sitrus_berry(
     active_pkmn.item = Items::NONE;
 }
 
-fn chesto_berry(
+// A single-status-cure berry (Cheri/Chesto/Aspear/Pecha/Rawst): consume the berry and
+// remove the active Pokemon's status. The caller's match guard ensures the held status is
+// the one this berry cures, so `add_remove_status_instructions` removes the right status.
+fn status_cure_berry(
+    berry: Items,
     side_ref: &SideReference,
     attacking_side: &mut Side,
     instructions: &mut StateInstructions,
@@ -262,7 +270,7 @@ fn chesto_berry(
         .instruction_list
         .push(Instruction::ChangeItem(ChangeItemInstruction {
             side_ref: *side_ref,
-            current_item: Items::CHESTOBERRY,
+            current_item: berry,
             new_item: Items::NONE,
         }));
     active_pkmn.item = Items::NONE;
@@ -341,8 +349,23 @@ pub fn item_end_of_turn(
         Items::SITRUSBERRY if active_pkmn.hp <= active_pkmn.maxhp / 2 => {
             sitrus_berry(side_ref, attacking_side, instructions)
         }
+        Items::ASPEARBERRY if active_pkmn.status == PokemonStatus::FREEZE => {
+            status_cure_berry(Items::ASPEARBERRY, side_ref, attacking_side, instructions)
+        }
+        Items::CHERIBERRY if active_pkmn.status == PokemonStatus::PARALYZE => {
+            status_cure_berry(Items::CHERIBERRY, side_ref, attacking_side, instructions)
+        }
         Items::CHESTOBERRY if active_pkmn.status == PokemonStatus::SLEEP => {
-            chesto_berry(side_ref, attacking_side, instructions)
+            status_cure_berry(Items::CHESTOBERRY, side_ref, attacking_side, instructions)
+        }
+        Items::PECHABERRY
+            if active_pkmn.status == PokemonStatus::POISON
+                || active_pkmn.status == PokemonStatus::TOXIC =>
+        {
+            status_cure_berry(Items::PECHABERRY, side_ref, attacking_side, instructions)
+        }
+        Items::RAWSTBERRY if active_pkmn.status == PokemonStatus::BURN => {
+            status_cure_berry(Items::RAWSTBERRY, side_ref, attacking_side, instructions)
         }
         Items::LEFTOVERS => {
             let attacker = state.get_side(side_ref).get_active();

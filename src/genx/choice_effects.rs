@@ -1743,6 +1743,62 @@ pub fn choice_special_effect(
                 state.weather.turns_remaining = 5;
             }
         }
+        Choices::ELECTRICTERRAIN => {
+            if state.terrain.terrain_type != Terrain::ELECTRICTERRAIN {
+                instructions
+                    .instruction_list
+                    .push(Instruction::ChangeTerrain(ChangeTerrain {
+                        new_terrain: Terrain::ELECTRICTERRAIN,
+                        new_terrain_turns_remaining: 5,
+                        previous_terrain: state.terrain.terrain_type,
+                        previous_terrain_turns_remaining: state.terrain.turns_remaining,
+                    }));
+                state.terrain.terrain_type = Terrain::ELECTRICTERRAIN;
+                state.terrain.turns_remaining = 5;
+            }
+        }
+        Choices::GRASSYTERRAIN => {
+            if state.terrain.terrain_type != Terrain::GRASSYTERRAIN {
+                instructions
+                    .instruction_list
+                    .push(Instruction::ChangeTerrain(ChangeTerrain {
+                        new_terrain: Terrain::GRASSYTERRAIN,
+                        new_terrain_turns_remaining: 5,
+                        previous_terrain: state.terrain.terrain_type,
+                        previous_terrain_turns_remaining: state.terrain.turns_remaining,
+                    }));
+                state.terrain.terrain_type = Terrain::GRASSYTERRAIN;
+                state.terrain.turns_remaining = 5;
+            }
+        }
+        Choices::PSYCHICTERRAIN => {
+            if state.terrain.terrain_type != Terrain::PSYCHICTERRAIN {
+                instructions
+                    .instruction_list
+                    .push(Instruction::ChangeTerrain(ChangeTerrain {
+                        new_terrain: Terrain::PSYCHICTERRAIN,
+                        new_terrain_turns_remaining: 5,
+                        previous_terrain: state.terrain.terrain_type,
+                        previous_terrain_turns_remaining: state.terrain.turns_remaining,
+                    }));
+                state.terrain.terrain_type = Terrain::PSYCHICTERRAIN;
+                state.terrain.turns_remaining = 5;
+            }
+        }
+        Choices::MISTYTERRAIN => {
+            if state.terrain.terrain_type != Terrain::MISTYTERRAIN {
+                instructions
+                    .instruction_list
+                    .push(Instruction::ChangeTerrain(ChangeTerrain {
+                        new_terrain: Terrain::MISTYTERRAIN,
+                        new_terrain_turns_remaining: 5,
+                        previous_terrain: state.terrain.terrain_type,
+                        previous_terrain_turns_remaining: state.terrain.turns_remaining,
+                    }));
+                state.terrain.terrain_type = Terrain::MISTYTERRAIN;
+                state.terrain.turns_remaining = 5;
+            }
+        }
         _ => {}
     }
 }

@@ -6429,10 +6429,7 @@ mod tests {
     #[test]
     fn test_electric_terrain_sets_terrain() {
         let mut state: State = State::default();
-        let mut choice = MOVES
-            .get(&Choices::ELECTRICTERRAIN)
-            .unwrap()
-            .to_owned();
+        let mut choice = MOVES.get(&Choices::ELECTRICTERRAIN).unwrap().to_owned();
 
         let mut instructions = vec![];
         generate_instructions_from_move(
@@ -6463,10 +6460,7 @@ mod tests {
         let mut state: State = State::default();
         state.terrain.terrain_type = Terrain::ELECTRICTERRAIN;
         state.terrain.turns_remaining = 3;
-        let mut choice = MOVES
-            .get(&Choices::ELECTRICTERRAIN)
-            .unwrap()
-            .to_owned();
+        let mut choice = MOVES.get(&Choices::ELECTRICTERRAIN).unwrap().to_owned();
 
         let mut instructions = vec![];
         generate_instructions_from_move(
@@ -6492,10 +6486,7 @@ mod tests {
         let mut state: State = State::default();
         state.terrain.terrain_type = Terrain::ELECTRICTERRAIN;
         state.terrain.turns_remaining = 2;
-        let mut choice = MOVES
-            .get(&Choices::GRASSYTERRAIN)
-            .unwrap()
-            .to_owned();
+        let mut choice = MOVES.get(&Choices::GRASSYTERRAIN).unwrap().to_owned();
 
         let mut instructions = vec![];
         generate_instructions_from_move(
@@ -6524,10 +6515,7 @@ mod tests {
     #[test]
     fn test_psychic_terrain_sets_terrain() {
         let mut state: State = State::default();
-        let mut choice = MOVES
-            .get(&Choices::PSYCHICTERRAIN)
-            .unwrap()
-            .to_owned();
+        let mut choice = MOVES.get(&Choices::PSYCHICTERRAIN).unwrap().to_owned();
 
         let mut instructions = vec![];
         generate_instructions_from_move(
@@ -6556,10 +6544,7 @@ mod tests {
     #[test]
     fn test_misty_terrain_sets_terrain() {
         let mut state: State = State::default();
-        let mut choice = MOVES
-            .get(&Choices::MISTYTERRAIN)
-            .unwrap()
-            .to_owned();
+        let mut choice = MOVES.get(&Choices::MISTYTERRAIN).unwrap().to_owned();
 
         let mut instructions = vec![];
         generate_instructions_from_move(

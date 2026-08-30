@@ -35,7 +35,7 @@ const POKEMON_POISONED: f32 = -10.0;
 const POKEMON_BURNED: f32 = -25.0;
 
 const LEECH_SEED: f32 = -30.0;
-const SUBSTITUTE: f32 = 40.0;
+const SUBSTITUTE: f32 = 75.0;
 const CONFUSION: f32 = -20.0;
 
 const REFLECT: f32 = 20.0;

@@ -2029,6 +2029,11 @@ pub fn generate_instructions_from_move(
     mut final_instructions: &mut Vec<StateInstructions>,
     branch_on_damage: bool,
 ) {
+    if choice.category == MoveCategory::Switch {
+        final_instructions.push(incoming_instructions);
+        return;
+    }
+
     if state.use_damage_dealt {
         reset_damage_dealt(
             state.get_side(&attacking_side),

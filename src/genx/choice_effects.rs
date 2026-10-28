@@ -388,25 +388,13 @@ pub fn modify_choice(
                 attacker_choice.category = MoveCategory::Physical;
             }
         }
-        Choices::TERRAINPULSE => match state.terrain.terrain_type {
-            Terrain::ELECTRICTERRAIN => {
-                attacker_choice.move_type = PokemonType::ELECTRIC;
+        Choices::TERRAINPULSE => {
+            let grounded = attacking_side.get_active_immutable().is_grounded();
+            if let Some(t) = super::mechanics::terrain_pulse_type(state.terrain.terrain_type, grounded) {
+                attacker_choice.move_type = t;
                 attacker_choice.base_power *= 2.0;
             }
-            Terrain::GRASSYTERRAIN => {
-                attacker_choice.move_type = PokemonType::GRASS;
-                attacker_choice.base_power *= 2.0;
-            }
-            Terrain::MISTYTERRAIN => {
-                attacker_choice.move_type = PokemonType::FAIRY;
-                attacker_choice.base_power *= 2.0;
-            }
-            Terrain::PSYCHICTERRAIN => {
-                attacker_choice.move_type = PokemonType::PSYCHIC;
-                attacker_choice.base_power *= 2.0;
-            }
-            Terrain::NONE => {}
-        },
+        }
         Choices::TOXIC => {
             if attacking_side
                 .get_active_immutable()
@@ -416,29 +404,10 @@ pub fn modify_choice(
             }
         }
         Choices::WEATHERBALL => {
-            if attacking_side.get_active_immutable().ability == Abilities::MEGASOL {
+            let mega_sol = attacking_side.get_active_immutable().ability == Abilities::MEGASOL;
+            if let Some(t) = super::mechanics::weather_ball_type(state.weather.weather_type, mega_sol) {
                 attacker_choice.base_power = 100.0;
-                attacker_choice.move_type = PokemonType::FIRE;
-            } else {
-                match state.weather.weather_type {
-                    Weather::SUN | Weather::HARSHSUN => {
-                        attacker_choice.base_power = 100.0;
-                        attacker_choice.move_type = PokemonType::FIRE;
-                    }
-                    Weather::RAIN | Weather::HEAVYRAIN => {
-                        attacker_choice.base_power = 100.0;
-                        attacker_choice.move_type = PokemonType::WATER;
-                    }
-                    Weather::SAND => {
-                        attacker_choice.base_power = 100.0;
-                        attacker_choice.move_type = PokemonType::ROCK;
-                    }
-                    Weather::HAIL | Weather::SNOW => {
-                        attacker_choice.base_power = 100.0;
-                        attacker_choice.move_type = PokemonType::ICE;
-                    }
-                    Weather::NONE | Weather::DELTASTREAM => {}
-                }
+                attacker_choice.move_type = t;
             }
         }
         Choices::SOLARBEAM | Choices::SOLARBLADE => {

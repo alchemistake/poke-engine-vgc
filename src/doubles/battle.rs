@@ -1004,7 +1004,38 @@ fn execute_action(
         return;
     }
 
-    let choice = &action.choice;
+    // PS `onModifyType` / `onModifyMove` for moves whose type and power
+    // depend on the field (shared with the singles engine).
+    let mut modified = action.choice.clone();
+    match modified.move_id {
+        Choices::TERRAINPULSE => {
+            let grounded = state.side(side).team_member(idx).is_grounded();
+            if let Some(t) = crate::engine::mechanics::terrain_pulse_type(state.terrain.terrain_type, grounded) {
+                modified.move_type = t;
+                modified.base_power *= 2.0;
+            }
+        }
+        Choices::WEATHERBALL => {
+            let mega_sol = state.side(side).team_member(idx).ability == Abilities::MEGASOL;
+            if let Some(t) = crate::engine::mechanics::weather_ball_type(state.weather.weather_type, mega_sol) {
+                modified.move_type = t;
+                modified.base_power = 100.0;
+            }
+        }
+        _ => {}
+    }
+    // -ate abilities (shared rule).
+    let ate_boosted = match crate::engine::mechanics::ate_type_change(
+        state.side(side).team_member(idx).ability,
+        &modified,
+    ) {
+        Some(t) => {
+            modified.move_type = t;
+            true
+        }
+        None => false,
+    };
+    let choice = &modified;
     let target_side = side.other();
 
     // Resolve the target slot. Self / ally / field moves need no FOE target.
@@ -1376,6 +1407,8 @@ fn execute_action(
                         defender,
                         state.side(side).active[slot].helping_hand_mult,
                         speeds,
+                        state.terrain.terrain_type,
+                        ate_boosted,
                     ),
                 };
                 let mut ctx = ctx;
@@ -1797,6 +1830,8 @@ fn base_power_with_modifiers(
     defender: &crate::state::Pokemon,
     helping_hand_mult: f32,
     speeds: (i32, i32),
+    terrain: crate::engine::state::Terrain,
+    ate_boosted: bool,
 ) -> f32 {
     let dynamic = dynamic_base_power(choice, attacker, Some(defender), speeds);
     let bp = if dynamic > 0.0 { dynamic } else { choice.base_power };
@@ -1824,8 +1859,14 @@ fn base_power_with_modifiers(
         Abilities::FLAREBOOST if special && attacker.status == PokemonStatus::BURN => mods.push((19, 6144)),
         Abilities::PUNKROCK if f.sound => mods.push((7, 5325)),
         // TODO(PS parity): Rivalry (genders), Sand Force (weather), Analytic,
-        // Sheer Force, -ate abilities, Supreme Overlord.
+        // Sheer Force, Supreme Overlord.
         _ => {}
+    }
+    if ate_boosted {
+        mods.push((23, 4915));
+    }
+    if let Some(m) = crate::engine::mechanics::terrain_base_power_modifier(terrain, choice, attacker, defender) {
+        mods.push((6, m));
     }
     // Helping Hand stacks one x1.5 per use (`helping_hand_mult` = 1.5^n).
     let mut hh = helping_hand_mult;

@@ -347,3 +347,92 @@ pub fn contact_ability(defender_ability: Abilities) -> Option<ContactAbility> {
 pub fn powder_immune(p: &Pokemon) -> bool {
     p.has_type(&PokemonType::GRASS) || p.ability == Abilities::OVERCOAT
 }
+
+/// Terrain `onBasePower` (priority 6) as a 4096-based modifier: Electric /
+/// Grassy / Psychic Terrain boost a grounded user's matching moves x1.3;
+/// Grassy Terrain halves Earthquake / Bulldoze / Magnitude and Misty Terrain
+/// halves Dragon moves against a grounded target.
+pub fn terrain_base_power_modifier(
+    terrain: super::state::Terrain,
+    choice: &Choice,
+    attacker: &Pokemon,
+    defender: &Pokemon,
+) -> Option<i64> {
+    use super::state::Terrain;
+    let t = choice.move_type;
+    match terrain {
+        Terrain::ELECTRICTERRAIN if t == PokemonType::ELECTRIC && attacker.is_grounded() => Some(5325),
+        Terrain::PSYCHICTERRAIN if t == PokemonType::PSYCHIC && attacker.is_grounded() => Some(5325),
+        Terrain::GRASSYTERRAIN
+            if matches!(choice.move_id, Choices::EARTHQUAKE | Choices::BULLDOZE | Choices::MAGNITUDE)
+                && defender.is_grounded() =>
+        {
+            Some(2048)
+        }
+        Terrain::GRASSYTERRAIN if t == PokemonType::GRASS && attacker.is_grounded() => Some(5325),
+        Terrain::MISTYTERRAIN if t == PokemonType::DRAGON && defender.is_grounded() => Some(2048),
+        _ => None,
+    }
+}
+
+/// Terrain Pulse (`onModifyType` / `onModifyMove`): on a grounded user in a
+/// terrain, the move takes the terrain's type and doubles its base power.
+pub fn terrain_pulse_type(terrain: super::state::Terrain, user_grounded: bool) -> Option<PokemonType> {
+    use super::state::Terrain;
+    if !user_grounded {
+        return None;
+    }
+    match terrain {
+        Terrain::ELECTRICTERRAIN => Some(PokemonType::ELECTRIC),
+        Terrain::GRASSYTERRAIN => Some(PokemonType::GRASS),
+        Terrain::MISTYTERRAIN => Some(PokemonType::FAIRY),
+        Terrain::PSYCHICTERRAIN => Some(PokemonType::PSYCHIC),
+        Terrain::NONE => None,
+    }
+}
+
+/// Weather Ball (`onModifyType` / `onModifyMove`): in weather (or with Mega
+/// Sol: sun) it becomes the weather's type with 100 base power.
+pub fn weather_ball_type(weather: super::state::Weather, mega_sol: bool) -> Option<PokemonType> {
+    use super::state::Weather;
+    if mega_sol {
+        return Some(PokemonType::FIRE);
+    }
+    match weather {
+        Weather::SUN | Weather::HARSHSUN => Some(PokemonType::FIRE),
+        Weather::RAIN | Weather::HEAVYRAIN => Some(PokemonType::WATER),
+        Weather::SAND => Some(PokemonType::ROCK),
+        Weather::HAIL | Weather::SNOW => Some(PokemonType::ICE),
+        Weather::NONE | Weather::DELTASTREAM => None,
+    }
+}
+
+/// -ate abilities (`onModifyType`, gen 7+): Pixilate / Aerilate / Refrigerate
+/// / Galvanize turn Normal moves into their type, Normalize turns every move
+/// Normal; a changed move gets x1.2 (`typeChangerBoosted`, BasePower
+/// priority 23). The singles engine applies the same rule in
+/// `abilities::ability_modify_attack_being_used`.
+pub fn ate_type_change(ability: Abilities, choice: &Choice) -> Option<PokemonType> {
+    let no_modify = matches!(
+        choice.move_id,
+        Choices::JUDGMENT
+            | Choices::MULTIATTACK
+            | Choices::NATURALGIFT
+            | Choices::REVELATIONDANCE
+            | Choices::TECHNOBLAST
+            | Choices::TERRAINPULSE
+            | Choices::WEATHERBALL
+    );
+    if no_modify {
+        return None;
+    }
+    let from_normal = |t| if choice.move_type == PokemonType::NORMAL { Some(t) } else { None };
+    match ability {
+        Abilities::PIXILATE => from_normal(PokemonType::FAIRY),
+        Abilities::AERILATE => from_normal(PokemonType::FLYING),
+        Abilities::REFRIGERATE => from_normal(PokemonType::ICE),
+        Abilities::GALVANIZE => from_normal(PokemonType::ELECTRIC),
+        Abilities::NORMALIZE => Some(PokemonType::NORMAL),
+        _ => None,
+    }
+}

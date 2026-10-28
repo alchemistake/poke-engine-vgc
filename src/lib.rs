@@ -24,6 +24,11 @@ pub mod pokemon;
 pub mod search;
 pub mod state;
 
+// Doubles engine (gen 9 / champions). Uses the genx `engine` module, so it is
+// not available for the gen1/gen2/gen3 engines.
+#[cfg(not(any(feature = "gen1", feature = "gen2", feature = "gen3")))]
+pub mod doubles;
+
 #[macro_export]
 macro_rules! assert_unique_feature {
     () => {};

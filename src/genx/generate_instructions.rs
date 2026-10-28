@@ -580,7 +580,7 @@ fn generate_instructions_from_increment_side_condition(
     let affected_side_ref;
     match side_condition.target {
         MoveTarget::Opponent => affected_side_ref = attacking_side_reference.get_other_side(),
-        MoveTarget::User => affected_side_ref = *attacking_side_reference,
+        MoveTarget::User | MoveTarget::Ally => affected_side_ref = *attacking_side_reference,
     }
 
     let max_layers = match side_condition.condition {
@@ -610,7 +610,7 @@ fn generate_instructions_from_duration_side_conditions(
 ) {
     let affected_side_ref = match side_condition.target {
         MoveTarget::Opponent => attacking_side_reference.get_other_side(),
-        MoveTarget::User => *attacking_side_reference,
+        MoveTarget::User | MoveTarget::Ally => *attacking_side_reference,
     };
     if side_condition.condition == PokemonSideCondition::AuroraVeil
         && !state.weather_is_active(&Weather::HAIL)
@@ -678,7 +678,7 @@ fn get_instructions_from_volatile_statuses(
     let target_side: SideReference;
     match volatile_status.target {
         MoveTarget::Opponent => target_side = attacking_side_reference.get_other_side(),
-        MoveTarget::User => target_side = *attacking_side_reference,
+        MoveTarget::User | MoveTarget::Ally => target_side = *attacking_side_reference,
     }
 
     if volatile_status.volatile_status == PokemonVolatileStatus::YAWN
@@ -780,86 +780,20 @@ pub fn immune_to_status(
     status: &PokemonStatus,
 ) -> bool {
     let (target_side, attacking_side) = state.get_both_sides_immutable(target_side_ref);
-    let target_pkmn = target_side.get_active_immutable();
-    let attacking_pkmn = attacking_side.get_active_immutable();
-
-    // General Status Immunity
-    match target_pkmn.ability {
-        Abilities::SHIELDSDOWN => return target_pkmn.hp > target_pkmn.maxhp / 2,
-        Abilities::PURIFYINGSALT => return true,
-        Abilities::COMATOSE => return true,
-        Abilities::LEAFGUARD => return state.weather_is_active(&Weather::SUN),
-        _ => {}
-    }
-
-    if target_pkmn.status != PokemonStatus::NONE || target_pkmn.hp <= 0 {
-        true
-    } else if state.terrain.terrain_type == Terrain::MISTYTERRAIN && target_pkmn.is_grounded() {
-        true
-    } else if (target_side
-        .volatile_statuses
-        .contains(&PokemonVolatileStatus::SUBSTITUTE)
-        || target_side.side_conditions.safeguard > 0)
-        && status_target == &MoveTarget::Opponent
-    // substitute/safeguard don't block if the target is yourself (eg. rest)
-    {
-        true
-    } else {
-        // Specific status immunity
-        match status {
-            PokemonStatus::BURN => {
-                target_pkmn.has_type(&PokemonType::FIRE)
-                    || [
-                        Abilities::WATERVEIL,
-                        Abilities::WATERBUBBLE,
-                        Abilities::THERMALEXCHANGE,
-                    ]
-                    .contains(&target_pkmn.ability)
-            }
-            PokemonStatus::FREEZE => {
-                target_pkmn.has_type(&PokemonType::ICE)
-                    || target_pkmn.ability == Abilities::MAGMAARMOR
-                    || state.weather_is_active(&Weather::SUN)
-                    || state.weather_is_active(&Weather::HARSHSUN)
-            }
-            PokemonStatus::SLEEP => {
-                (state.terrain.terrain_type == Terrain::ELECTRICTERRAIN
-                    && target_pkmn.is_grounded())
-                    || [
-                        Abilities::INSOMNIA,
-                        Abilities::SWEETVEIL,
-                        Abilities::VITALSPIRIT,
-                    ]
-                    .contains(&target_pkmn.ability)
-                    || (status_target == &MoveTarget::Opponent
-                        && target_side.has_alive_non_rested_sleeping_pkmn())
-                // sleep clause
-            }
-
-            #[cfg(any(
-                feature = "gen6",
-                feature = "gen7",
-                feature = "gen8",
-                feature = "gen9",
-                feature = "champions"
-            ))]
-            PokemonStatus::PARALYZE => {
-                target_pkmn.has_type(&PokemonType::ELECTRIC)
-                    || target_pkmn.ability == Abilities::LIMBER
-            }
-
-            #[cfg(any(feature = "gen4", feature = "gen5"))]
-            PokemonStatus::PARALYZE => target_pkmn.ability == Abilities::LIMBER,
-
-            PokemonStatus::POISON | PokemonStatus::TOXIC => {
-                ((target_pkmn.has_type(&PokemonType::POISON)
-                    || target_pkmn.has_type(&PokemonType::STEEL))
-                    && attacking_pkmn.ability != Abilities::CORROSION)
-                    || [Abilities::IMMUNITY, Abilities::PASTELVEIL].contains(&target_pkmn.ability)
-            }
-            _ => false,
-        }
-    }
+    let from_opponent = status_target == &MoveTarget::Opponent;
+    let ctx = super::mechanics::StatusContext {
+        sun: state.weather_is_active(&Weather::SUN) || state.weather_is_active(&Weather::HARSHSUN),
+        misty_terrain: state.terrain.terrain_type == Terrain::MISTYTERRAIN,
+        electric_terrain: state.terrain.terrain_type == Terrain::ELECTRICTERRAIN,
+        safeguard: target_side.side_conditions.safeguard > 0,
+        substitute: target_side
+            .volatile_statuses
+            .contains(&PokemonVolatileStatus::SUBSTITUTE),
+        from_opponent,
+        sleep_clause: target_side.has_alive_non_rested_sleeping_pkmn(),
+        source_ability: attacking_side.get_active_immutable().ability,
+    };
+    super::mechanics::immune_to_status(target_side.get_active_immutable(), status, &ctx)
 }
 
 fn get_instructions_from_status_effects(
@@ -872,7 +806,7 @@ fn get_instructions_from_status_effects(
     let target_side_ref: SideReference;
     match status.target {
         MoveTarget::Opponent => target_side_ref = attacking_side_reference.get_other_side(),
-        MoveTarget::User => target_side_ref = *attacking_side_reference,
+        MoveTarget::User | MoveTarget::Ally => target_side_ref = *attacking_side_reference,
     }
 
     if hit_sub || immune_to_status(state, &status.target, &target_side_ref, &status.status) {
@@ -975,34 +909,27 @@ pub fn apply_boost_instruction(
                     amount: boost_amount,
                 }));
 
-            if boost_amount < 0 {
-                if target_pkmn_ability == Abilities::DEFIANT
-                    && attacking_side_ref != target_side_ref
-                    && target_side.attack_boost < 6
-                {
-                    let defiant_boost_amount = cmp::min(6 - target_side.attack_boost, 2);
-                    target_side.attack_boost += defiant_boost_amount;
-                    instructions
-                        .instruction_list
-                        .push(Instruction::Boost(BoostInstruction {
-                            side_ref: *target_side_ref,
-                            stat: PokemonBoostableStat::Attack,
-                            amount: defiant_boost_amount,
-                        }));
-                } else if target_pkmn_ability == Abilities::COMPETITIVE
-                    && attacking_side_ref != target_side_ref
-                    && target_side.special_attack_boost < 6
-                {
-                    let competitive_boost_amount =
-                        cmp::min(6 - target_side.special_attack_boost, 2);
-                    target_side.special_attack_boost += competitive_boost_amount;
-                    instructions
-                        .instruction_list
-                        .push(Instruction::Boost(BoostInstruction {
-                            side_ref: *target_side_ref,
-                            stat: PokemonBoostableStat::SpecialAttack,
-                            amount: competitive_boost_amount,
-                        }));
+            // Defiant / Competitive (shared with the doubles engine).
+            if boost_amount < 0 && attacking_side_ref != target_side_ref {
+                if let Some((stat, amount)) = super::mechanics::stat_drop_reaction(target_pkmn_ability) {
+                    let current = target_side.get_boost_from_boost_enum(&stat);
+                    if current < 6 {
+                        let reaction_amount = cmp::min(6 - current, amount);
+                        match stat {
+                            PokemonBoostableStat::Attack => target_side.attack_boost += reaction_amount,
+                            PokemonBoostableStat::SpecialAttack => {
+                                target_side.special_attack_boost += reaction_amount
+                            }
+                            _ => unreachable!("stat_drop_reaction only raises Atk / SpA"),
+                        }
+                        instructions
+                            .instruction_list
+                            .push(Instruction::Boost(BoostInstruction {
+                                side_ref: *target_side_ref,
+                                stat,
+                                amount: reaction_amount,
+                            }));
+                    }
                 }
             }
         }
@@ -1019,7 +946,7 @@ fn get_instructions_from_boosts(
     let target_side_ref: SideReference;
     match boosts.target {
         MoveTarget::Opponent => target_side_ref = attacking_side_reference.get_other_side(),
-        MoveTarget::User => target_side_ref = *attacking_side_reference,
+        MoveTarget::User | MoveTarget::Ally => target_side_ref = *attacking_side_reference,
     }
     let boostable_stats = boosts.boosts.get_as_pokemon_boostable();
     for (pkmn_boostable_stat, boost) in boostable_stats.iter().filter(|(_, b)| b != &0) {
@@ -1142,7 +1069,7 @@ fn get_instructions_from_secondaries(
                             MoveTarget::Opponent => {
                                 secondary_target_side_ref = side_reference.get_other_side();
                             }
-                            MoveTarget::User => {
+                            MoveTarget::User | MoveTarget::Ally => {
                                 secondary_target_side_ref = *side_reference;
                             }
                         }
@@ -1156,6 +1083,10 @@ fn get_instructions_from_secondaries(
                             }));
                         target_pkmn.item = Items::NONE;
                     }
+                    // TODO(PS parity): model flinch in the singles instruction engine.
+                    Effect::Flinch => {}
+                    // TODO(PS parity): model the statsRaisedThisTurn-gated secondary.
+                    Effect::IfStatsRaised { .. } => {}
                 }
                 state.reverse_instructions(&secondary_hit_instructions.instruction_list);
                 return_instruction_list.insert(i, secondary_hit_instructions);
@@ -1176,7 +1107,7 @@ fn get_instructions_from_heal(
     let target_side_ref: SideReference;
     match heal.target {
         MoveTarget::Opponent => target_side_ref = attacking_side_reference.get_other_side(),
-        MoveTarget::User => target_side_ref = *attacking_side_reference,
+        MoveTarget::User | MoveTarget::Ally => target_side_ref = *attacking_side_reference,
     }
 
     let target_pkmn = state.get_side(&target_side_ref).get_active();
@@ -1786,7 +1717,7 @@ fn before_move(
                     special_attack: 0,
                     special_defense: 0,
                     speed: -1,
-                    accuracy: 0,
+                    accuracy: 0, evasion: 0,
                 },
             })
         }

@@ -20,31 +20,7 @@ use crate::state::{
 };
 use std::cmp;
 
-const CHOICE_THAWS_USER: [Choices; 10] = [
-    Choices::FLAMEWHEEL,
-    Choices::SACREDFIRE,
-    Choices::FLAREBLITZ,
-    Choices::FUSIONFLARE,
-    Choices::SCALD,
-    Choices::STEAMERUPTION,
-    Choices::BURNUP,
-    Choices::PYROBALL,
-    Choices::SCORCHINGSANDS,
-    Choices::MATCHAGOTCHA,
-];
 
-// heavy metal doubles a pokemon's weight and light metal halves it
-fn weight_kg(pkmn: &Pokemon, ignore_ability: bool) -> f32 {
-    if ignore_ability {
-        return pkmn.weight_kg;
-    }
-    match pkmn.ability {
-        Abilities::HEAVYMETAL => pkmn.weight_kg * 2.0,
-        // PS works in hectograms and truncates
-        Abilities::LIGHTMETAL => ((pkmn.weight_kg * 10.0 / 2.0).trunc() / 10.0).max(0.1),
-        _ => pkmn.weight_kg,
-    }
-}
 
 pub fn modify_choice(
     state: &State,
@@ -124,20 +100,7 @@ pub fn modify_choice(
         // Flail and Reversal are the same move with different types
         Choices::FLAIL | Choices::REVERSAL => {
             let attacker = attacking_side.get_active_immutable();
-            let hp_ratio = attacker.hp as f32 / attacker.maxhp as f32;
-            if hp_ratio >= 0.688 {
-                attacker_choice.base_power = 20.0;
-            } else if hp_ratio >= 0.354 {
-                attacker_choice.base_power = 40.0;
-            } else if hp_ratio >= 0.208 {
-                attacker_choice.base_power = 80.0;
-            } else if hp_ratio >= 0.104 {
-                attacker_choice.base_power = 100.0;
-            } else if hp_ratio >= 0.042 {
-                attacker_choice.base_power = 150.0;
-            } else {
-                attacker_choice.base_power = 200.0;
-            }
+            attacker_choice.base_power = super::mechanics::reversal_power(attacker.hp, attacker.maxhp);
         }
         Choices::AURAWHEEL => {
             if attacking_side.get_active_immutable().id == PokemonName::MORPEKOHANGRY {
@@ -188,7 +151,7 @@ pub fn modify_choice(
         }
         Choices::HARDPRESS => {
             let defender = defending_side.get_active_immutable();
-            attacker_choice.base_power = 100.0 * (defender.hp as f32 / defender.maxhp as f32);
+            attacker_choice.base_power = super::mechanics::target_hp_power(100, defender.hp, defender.maxhp);
         }
         Choices::LASTRESPECTS => {
             // Technically not correct because of reviving moves but good enough
@@ -211,7 +174,7 @@ pub fn modify_choice(
                         special_attack: 1,
                         special_defense: 1,
                         speed: 1,
-                        accuracy: 0,
+                        accuracy: 0, evasion: 0,
                     },
                 });
             }
@@ -236,7 +199,7 @@ pub fn modify_choice(
                         special_attack: 2,
                         special_defense: 0,
                         speed: 2,
-                        accuracy: 0,
+                        accuracy: 0, evasion: 0,
                     },
                 });
             }
@@ -260,7 +223,7 @@ pub fn modify_choice(
                         special_attack: 2,
                         special_defense: 0,
                         speed: 0,
-                        accuracy: 0,
+                        accuracy: 0, evasion: 0,
                     },
                 });
             }
@@ -372,7 +335,7 @@ pub fn modify_choice(
                     special_attack: 0,
                     special_defense: 0,
                     speed: 0,
-                    accuracy: 0,
+                    accuracy: 0, evasion: 0,
                 },
             });
             if defending_side.attack_boost != -6 {
@@ -412,7 +375,7 @@ pub fn modify_choice(
                             special_attack: -1,
                             special_defense: 0,
                             speed: 0,
-                            accuracy: 0,
+                            accuracy: 0, evasion: 0,
                         }),
                     })
                 }
@@ -537,25 +500,14 @@ pub fn modify_choice(
         Choices::ELECTROBALL => {
             let attacker_speed = attacking_side.calculate_boosted_stat(PokemonBoostableStat::Speed);
             let defender_speed = defending_side.calculate_boosted_stat(PokemonBoostableStat::Speed);
-            let speed_ratio = attacker_speed as f32 / defender_speed as f32;
-            if speed_ratio >= 4.0 {
-                attacker_choice.base_power = 150.0;
-            } else if speed_ratio >= 3.0 {
-                attacker_choice.base_power = 120.0;
-            } else if speed_ratio >= 2.0 {
-                attacker_choice.base_power = 80.0;
-            } else if speed_ratio >= 1.0 {
-                attacker_choice.base_power = 60.0;
-            } else {
-                attacker_choice.base_power = 40.0;
-            }
+            attacker_choice.base_power =
+                super::mechanics::electro_ball_power(attacker_speed as i32, defender_speed as i32);
         }
         Choices::GYROBALL => {
             let attacker_speed = attacking_side.calculate_boosted_stat(PokemonBoostableStat::Speed);
             let defender_speed = defending_side.calculate_boosted_stat(PokemonBoostableStat::Speed);
-
             attacker_choice.base_power =
-                ((25.0 * defender_speed as f32 / attacker_speed as f32) + 1.0).min(150.0);
+                super::mechanics::gyro_ball_power(attacker_speed as i32, defender_speed as i32);
         }
         Choices::AVALANCHE => {
             if !attacker_choice.first_move && defending_side.damage_dealt.damage > 0 {
@@ -641,43 +593,18 @@ pub fn modify_choice(
         Choices::GRASSKNOT | Choices::LOWKICK => {
             let attacker = attacking_side.get_active_immutable();
             let defender = defending_side.get_active_immutable();
-            let defender_weight = weight_kg(
-                defender,
-                ignores_target_ability(attacker, attacker_choice, &defender.ability),
-            );
-            if defender_weight < 10.0 {
-                attacker_choice.base_power = 20.0;
-            } else if defender_weight < 25.0 {
-                attacker_choice.base_power = 40.0;
-            } else if defender_weight < 50.0 {
-                attacker_choice.base_power = 60.0;
-            } else if defender_weight < 100.0 {
-                attacker_choice.base_power = 80.0;
-            } else if defender_weight < 200.0 {
-                attacker_choice.base_power = 100.0;
-            } else {
-                attacker_choice.base_power = 120.0;
-            }
+            let ignore = ignores_target_ability(attacker, attacker_choice, &defender.ability);
+            attacker_choice.base_power =
+                super::mechanics::grass_knot_power(super::mechanics::weight_hg(defender, ignore));
         }
         Choices::HEATCRASH | Choices::HEAVYSLAM => {
             let attacker = attacking_side.get_active_immutable();
             let defender = defending_side.get_active_immutable();
-            let defender_weight = weight_kg(
-                defender,
-                ignores_target_ability(attacker, attacker_choice, &defender.ability),
+            let ignore = ignores_target_ability(attacker, attacker_choice, &defender.ability);
+            attacker_choice.base_power = super::mechanics::heavy_slam_power(
+                super::mechanics::weight_hg(attacker, false),
+                super::mechanics::weight_hg(defender, ignore),
             );
-            let weight_ratio = defender_weight / weight_kg(attacker, false);
-            if weight_ratio > 0.5 {
-                attacker_choice.base_power = 40.0;
-            } else if weight_ratio > 0.3335 {
-                attacker_choice.base_power = 60.0;
-            } else if weight_ratio >= 0.2501 {
-                attacker_choice.base_power = 80.0;
-            } else if weight_ratio >= 0.2001 {
-                attacker_choice.base_power = 100.0;
-            } else {
-                attacker_choice.base_power = 120.0;
-            }
         }
         _ => {}
     }
@@ -977,7 +904,7 @@ pub fn choice_before_move(
     destinybond_before_move(attacking_side, attacking_side_ref, choice, instructions);
 
     if attacking_side.get_active_immutable().status == PokemonStatus::FREEZE
-        && CHOICE_THAWS_USER.contains(&choice.move_id)
+        && super::mechanics::THAWS_USER.contains(&choice.move_id)
     {
         add_remove_status_instructions(
             instructions,

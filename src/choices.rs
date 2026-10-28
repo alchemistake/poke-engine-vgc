@@ -30,6 +30,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 ..Default::default()
             },
             drain: Some(0.5),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -46,6 +47,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -71,8 +73,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -98,8 +102,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -125,8 +131,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: -1,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -149,8 +157,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -176,8 +187,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: -2,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -193,6 +206,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -205,6 +219,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -221,6 +237,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 slicing: true,
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -237,6 +255,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 wind: true,
                 ..Default::default()
             },
+            pp: 8,
+            crit_ratio: 2,
             ..Default::default()
         },
     );
@@ -248,6 +268,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 16,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -269,8 +291,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 2,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -294,6 +319,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     wind: true,
                     ..Default::default()
                 },
+                pp: 20,
+                crit_ratio: 2,
                 ..Default::default()
             },
         );
@@ -310,6 +337,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 20,
+                crit_ratio: 2,
                 ..Default::default()
             },
         );
@@ -332,6 +361,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -347,6 +377,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
+            secondaries: Some(vec![Secondary { chance: 100.0, target: MoveTarget::Opponent, effect: Effect::IfStatsRaised { status: None } }]),
             ..Default::default()
         },
     );
@@ -360,6 +392,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 16,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -382,8 +416,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     },
                 }),
+                pp: 20,
+                always_hit: true,
                 ..Default::default()
             },
         );
@@ -406,8 +443,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 2,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     },
                 }),
+                pp: 20,
+                always_hit: true,
                 ..Default::default()
             },
         );
@@ -424,6 +464,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -448,8 +489,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 1,
                     speed: 1,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 8,
             ..Default::default()
         },
     );
@@ -474,8 +517,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: -1,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -491,6 +536,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 slicing: true,
                 ..Default::default()
             },
+            pp: 20,
+            crit_ratio: 2,
             ..Default::default()
         },
     );
@@ -507,6 +554,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -523,6 +571,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::AQUARING,
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -548,8 +598,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 1,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -566,6 +618,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -580,6 +633,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
+            self_boosts: Some(StatBoosts { attack: 0, defense: -1, special_attack: 0, special_defense: -1, speed: 0, accuracy: 0, evasion: 0 }),
             ..Default::default()
         },
     );
@@ -595,6 +650,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            multihit: 20,
+            pp: 20,
             ..Default::default()
         },
     );
@@ -607,6 +664,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -614,7 +673,6 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
         Choices::AROMATICMIST,
         Choice {
             move_id: Choices::AROMATICMIST,
-            target: MoveTarget::User,
             move_type: PokemonType::FAIRY,
             flags: Flags {
                 ..Default::default()
@@ -628,8 +686,12 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 1,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
+            always_hit: true,
+            target: MoveTarget::Ally,
             ..Default::default()
         },
     );
@@ -642,6 +704,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -663,6 +727,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -679,6 +744,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -700,6 +766,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -714,6 +781,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -728,6 +796,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
+            crit_ratio: 2,
             ..Default::default()
         },
     );
@@ -745,6 +815,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::ATTRACT,
             }),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -767,6 +838,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     pulse: true,
                     ..Default::default()
                 },
+                pp: 20,
+                always_hit: true,
                 ..Default::default()
             },
         );
@@ -784,6 +857,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     pulse: true,
                     ..Default::default()
                 },
+                pp: 20,
+                always_hit: true,
                 ..Default::default()
             },
         );
@@ -809,8 +884,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 1,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -836,8 +913,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -863,8 +942,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -882,6 +963,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 condition: PokemonSideCondition::AuroraVeil,
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -903,8 +986,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 2,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 16,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -921,6 +1007,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -943,6 +1030,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
             }]),
             crash: Some(0.5),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -966,8 +1054,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -983,6 +1073,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -1000,6 +1091,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::BANEFULBUNKER,
             }),
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -1019,6 +1112,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::POISON),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -1035,6 +1129,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            multihit: 20,
+            pp: 20,
             ..Default::default()
         },
     );
@@ -1056,8 +1152,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -1071,6 +1170,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 pivot: true,
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -1087,6 +1188,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -1106,6 +1208,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -1120,6 +1223,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -1136,6 +1240,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -1152,6 +1257,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 slicing: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -1167,6 +1273,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -1179,6 +1286,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -1190,6 +1299,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 16,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -1210,6 +1321,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::BIDE,
             }),
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -1235,6 +1348,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     volatile_status: PokemonVolatileStatus::PARTIALLYTRAPPED,
                 }),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -1256,6 +1370,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     volatile_status: PokemonVolatileStatus::PARTIALLYTRAPPED,
                 }),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -1279,6 +1394,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -1301,6 +1417,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -1320,6 +1437,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 ..Default::default()
             },
             drain: Some(0.5),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -1344,8 +1462,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -1362,6 +1482,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 recharge: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -1383,6 +1504,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
             }]),
+            pp: 12,
+            crit_ratio: 2,
             ..Default::default()
         },
     );
@@ -1402,6 +1525,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -1428,8 +1552,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: -1,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -1452,6 +1578,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::FREEZE),
                 }]),
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -1478,6 +1605,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::FREEZE),
                 }]),
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -1499,6 +1627,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::FREEZE),
                 }]),
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -1516,6 +1645,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::TRAPPED,
             }),
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -1530,6 +1661,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -1550,6 +1682,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
             }]),
+            pp: 8,
             ..Default::default()
         },
     );
@@ -1565,6 +1698,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -1585,6 +1719,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -1600,6 +1735,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -1621,6 +1757,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
             }]),
+            pp: 8,
             ..Default::default()
         },
     );
@@ -1641,6 +1778,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -1656,6 +1794,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            multihit: 2,
+            pp: 12,
             ..Default::default()
         },
     );
@@ -1676,6 +1816,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                multihit: 20,
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -1692,6 +1834,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                multihit: 20,
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -1708,6 +1852,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 sound: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -1730,6 +1875,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
             }]),
+            pp: 8,
+            charge_setup: ChargeSetup::Always { turns: 1 },
             ..Default::default()
         },
     );
@@ -1746,6 +1893,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 ..Default::default()
             },
             drain: Some(0.5),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -1761,6 +1909,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -1777,6 +1926,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 ..Default::default()
             },
             recoil: Some(0.33),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -1802,8 +1952,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -1819,6 +1971,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -1833,6 +1986,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -1848,6 +2002,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -1873,8 +2028,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: -1,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -1904,8 +2061,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: -1,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -1931,8 +2090,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: -1,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -1959,8 +2120,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: -1,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -1986,8 +2149,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: -1,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -2004,6 +2169,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -2029,8 +2195,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: -1,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -2052,8 +2220,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -2078,8 +2249,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: -1,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -2097,6 +2270,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 punch: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -2117,6 +2291,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                multihit: 20,
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -2133,6 +2309,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                multihit: 20,
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -2151,6 +2329,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::BURNINGBULWARK,
             }),
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -2165,6 +2345,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
+            secondaries: Some(vec![Secondary { chance: 100.0, target: MoveTarget::Opponent, effect: Effect::IfStatsRaised { status: Some(PokemonStatus::BURN) } }]),
             ..Default::default()
         },
     );
@@ -2179,6 +2361,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -2198,6 +2381,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -2219,8 +2403,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 1,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -2233,6 +2420,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -2255,8 +2444,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -2278,6 +2469,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 condition: PokemonSideCondition::Spikes,
             }),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -2290,6 +2482,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -2311,12 +2505,15 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 1,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
             volatile_status: Some(VolatileStatus {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::CHARGE,
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -2342,8 +2539,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -2366,8 +2565,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -2394,6 +2595,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -2415,6 +2617,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -2440,8 +2643,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -2454,6 +2659,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 pivot: true,
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -2469,6 +2676,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -2488,6 +2696,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 amount: -0.5,
             }),
+            pp: 8,
             ..Default::default()
         },
     );
@@ -2506,6 +2715,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
+            force_switch: true,
             ..Default::default()
         },
     );
@@ -2531,6 +2742,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     volatile_status: PokemonVolatileStatus::PARTIALLYTRAPPED,
                 }),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -2552,6 +2764,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     volatile_status: PokemonVolatileStatus::PARTIALLYTRAPPED,
                 }),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -2577,8 +2790,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 8,
             ..Default::default()
         },
     );
@@ -2592,6 +2807,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 sound: true,
                 ..Default::default()
             },
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -2606,6 +2823,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -2630,8 +2849,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: -1,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 8,
+            self_boosts: Some(StatBoosts { attack: 0, defense: -1, special_attack: 0, special_defense: -1, speed: 0, accuracy: 0, evasion: 0 }),
             ..Default::default()
         },
     );
@@ -2639,7 +2861,6 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
         Choices::COACHING,
         Choice {
             move_id: Choices::COACHING,
-            target: MoveTarget::User,
             move_type: PokemonType::FIGHTING,
             flags: Flags {
                 ..Default::default()
@@ -2653,8 +2874,12 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 12,
+            always_hit: true,
+            target: MoveTarget::Ally,
             ..Default::default()
         },
     );
@@ -2676,8 +2901,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 1,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -2693,6 +2921,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -2712,6 +2941,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -2729,6 +2959,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 punch: true,
                 ..Default::default()
             },
+            multihit: 20,
+            pp: 16,
             ..Default::default()
         },
     );
@@ -2743,6 +2975,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -2765,8 +2998,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -2784,6 +3020,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::CONFUSION,
             }),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -2803,6 +3040,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -2829,8 +3067,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: -1,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -2857,8 +3097,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: -1,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -2872,6 +3114,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -2883,6 +3127,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -2895,6 +3141,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -2909,6 +3157,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -2922,6 +3171,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 reflectable: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -2943,8 +3193,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 1,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -2966,8 +3219,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -2997,8 +3253,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: -2,
                         accuracy: 0,
+                        evasion: 0,
                     },
                 }),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -3023,8 +3281,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: -2,
                         accuracy: 0,
+                        evasion: 0,
                     },
                 }),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -3041,6 +3301,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -3052,6 +3313,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -3072,6 +3334,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -3088,6 +3351,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -3111,6 +3375,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
+                crit_ratio: 2,
                 ..Default::default()
             },
         );
@@ -3128,6 +3394,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
+                crit_ratio: 2,
                 ..Default::default()
             },
         );
@@ -3146,6 +3414,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 condition: PokemonSideCondition::CraftyShield,
             }),
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -3162,6 +3432,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
+            crit_ratio: 2,
             ..Default::default()
         },
     );
@@ -3183,6 +3455,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::POISON),
             }]),
+            pp: 20,
+            crit_ratio: 2,
             ..Default::default()
         },
     );
@@ -3210,8 +3484,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: -1,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -3239,8 +3515,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -3268,8 +3546,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -3284,6 +3564,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -3304,12 +3585,15 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: -1,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
             volatile_status: Some(VolatileStatus {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::CURSE,
             }),
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -3327,6 +3611,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 slicing: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -3342,6 +3627,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -3362,6 +3648,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -3387,6 +3674,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     reflectable: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -3406,6 +3694,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     reflectable: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -3421,6 +3710,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -3441,8 +3731,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 16,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -3464,8 +3757,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 1,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -3487,12 +3783,15 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
             volatile_status: Some(VolatileStatus {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::DEFENSECURL,
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -3515,8 +3814,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 16,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -3533,6 +3835,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::DESTINYBOND,
             }),
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -3550,6 +3854,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::PROTECT,
             }),
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -3583,8 +3889,12 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 8,
+                self_boosts: Some(StatBoosts { attack: 0, defense: 2, special_attack: 0, special_defense: 0, speed: 0, accuracy: 0, evasion: 0 }),
+                self_boost_chance: 50.0,
                 ..Default::default()
             },
         );
@@ -3611,8 +3921,12 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 8,
+                self_boosts: Some(StatBoosts { attack: 0, defense: 2, special_attack: 0, special_defense: 0, speed: 0, accuracy: 0, evasion: 0 }),
+                self_boost_chance: 50.0,
                 ..Default::default()
             },
         );
@@ -3631,6 +3945,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
+                charge_setup: ChargeSetup::Always { turns: 1 },
                 ..Default::default()
             },
         );
@@ -3648,6 +3964,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
+                charge_setup: ChargeSetup::Always { turns: 1 },
                 ..Default::default()
             },
         );
@@ -3665,6 +3983,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
+                charge_setup: ChargeSetup::Always { turns: 1 },
                 ..Default::default()
             },
         );
@@ -3681,6 +4001,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
+            crit_ratio: 2,
             ..Default::default()
         },
     );
@@ -3704,6 +4026,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     volatile_status: PokemonVolatileStatus::DISABLE,
                 }),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -3722,6 +4045,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     volatile_status: PokemonVolatileStatus::DISABLE,
                 }),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -3738,6 +4062,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 sound: true,
                 ..Default::default()
             },
+            pp: 16,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -3757,6 +4083,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -3774,6 +4101,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
+                charge_setup: ChargeSetup::Always { turns: 1 },
                 ..Default::default()
             },
         );
@@ -3791,6 +4120,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
+                charge_setup: ChargeSetup::Always { turns: 1 },
                 ..Default::default()
             },
         );
@@ -3809,6 +4140,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     punch: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -3831,6 +4163,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
                 }]),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -3843,6 +4176,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -3862,6 +4196,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 flags: Flags {
                     ..Default::default()
                 },
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -3876,6 +4211,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 flags: Flags {
                     ..Default::default()
                 },
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -3894,6 +4230,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     ..Default::default()
                 },
                 recoil: Some(0.33),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -3911,6 +4248,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     ..Default::default()
                 },
                 recoil: Some(0.33),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -3928,6 +4266,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            multihit: 2,
+            pp: 12,
             ..Default::default()
         },
     );
@@ -3949,6 +4289,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
             }]),
+            multihit: 2,
+            pp: 8,
             ..Default::default()
         },
     );
@@ -3964,6 +4306,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            multihit: 2,
+            pp: 20,
             ..Default::default()
         },
     );
@@ -3979,6 +4323,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -3995,6 +4340,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            multihit: 20,
+            pp: 12,
             ..Default::default()
         },
     );
@@ -4016,8 +4363,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 16,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -4048,8 +4398,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     },
                 }),
+                pp: 8,
+                self_boosts: Some(StatBoosts { attack: 0, defense: 0, special_attack: -2, special_defense: 0, speed: 0, accuracy: 0, evasion: 0 }),
                 ..Default::default()
             },
         );
@@ -4075,8 +4428,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     },
                 }),
+                pp: 8,
+                self_boosts: Some(StatBoosts { attack: 0, defense: 0, special_attack: -2, special_defense: 0, speed: 0, accuracy: 0, evasion: 0 }),
                 ..Default::default()
             },
         );
@@ -4102,8 +4458,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: -1,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 8,
+            self_boosts: Some(StatBoosts { attack: 0, defense: -1, special_attack: 0, special_defense: -1, speed: 0, accuracy: 0, evasion: 0 }),
             ..Default::default()
         },
     );
@@ -4123,6 +4482,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -4133,10 +4493,12 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             base_power: 60.0,
             category: MoveCategory::Status,
             move_type: PokemonType::DRAGON,
-            target: MoveTarget::User,
             flags: Flags {
                 ..Default::default()
             },
+            pp: 16,
+            always_hit: true,
+            target: MoveTarget::Ally,
             ..Default::default()
         },
     );
@@ -4152,6 +4514,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -4173,8 +4536,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 1,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -4189,6 +4555,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            multihit: 2,
+            pp: 12,
             ..Default::default()
         },
     );
@@ -4203,6 +4571,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -4218,6 +4587,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -4239,6 +4609,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     pulse: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -4255,6 +4626,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     pulse: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -4269,6 +4641,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -4290,6 +4663,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -4308,6 +4682,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
+            force_switch: true,
             ..Default::default()
         },
     );
@@ -4325,6 +4701,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 ..Default::default()
             },
             drain: Some(0.75),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -4348,6 +4725,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     ..Default::default()
                 },
                 drain: Some(0.5),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -4367,6 +4745,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     ..Default::default()
                 },
                 drain: Some(0.5),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -4384,6 +4763,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 ..Default::default()
             },
             drain: Some(0.5),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -4399,6 +4779,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -4415,6 +4796,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
+            crit_ratio: 2,
             ..Default::default()
         },
     );
@@ -4439,8 +4822,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: -1,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -4457,6 +4842,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            multihit: 2,
+            pp: 16,
             ..Default::default()
         },
     );
@@ -4473,6 +4860,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            multihit: 2,
+            pp: 12,
             ..Default::default()
         },
     );
@@ -4487,6 +4876,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -4509,6 +4899,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
             }]),
+            pp: 8,
             ..Default::default()
         },
     );
@@ -4533,8 +4924,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: -1,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -4549,6 +4942,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -4564,6 +4958,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 sound: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -4586,8 +4981,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -4603,6 +5000,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 sound: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -4619,6 +5017,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -4630,6 +5029,9 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 12,
+            terrain_id: 1,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -4646,6 +5048,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::ELECTRIFY,
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -4660,6 +5064,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -4675,6 +5080,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -4690,6 +5096,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
+            charge_setup: ChargeSetup::OnlyRain { turns: 1 },
             ..Default::default()
         },
     );
@@ -4715,8 +5123,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: -1,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -4734,6 +5144,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::EMBARGO,
             }),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -4753,6 +5164,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -4770,6 +5182,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::ENCORE,
             }),
+            pp: 8,
             ..Default::default()
         },
     );
@@ -4784,6 +5197,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -4801,6 +5215,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::ENDURE,
             }),
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -4832,8 +5248,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: -1,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -4860,8 +5278,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: -1,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -4876,6 +5296,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 reflectable: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -4890,6 +5311,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -4914,8 +5336,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 1,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
+            crit_ratio: 2,
             ..Default::default()
         },
     );
@@ -4932,6 +5357,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 recharge: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -4946,6 +5372,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -4961,6 +5388,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 8,
+                selfdestruct: true,
                 ..Default::default()
             },
         );
@@ -4976,6 +5405,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 8,
+                selfdestruct: true,
                 ..Default::default()
             },
         );
@@ -4996,6 +5427,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -5012,6 +5444,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -5027,6 +5460,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -5038,6 +5472,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -5053,6 +5489,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 wind: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -5074,6 +5511,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -5096,8 +5534,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: -2,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -5113,6 +5553,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -5128,6 +5570,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -5150,8 +5593,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -5171,6 +5616,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 flags: Flags {
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -5186,6 +5632,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 flags: Flags {
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -5202,6 +5649,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -5224,6 +5673,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -5240,6 +5690,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -5265,8 +5716,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 8,
             ..Default::default()
         },
     );
@@ -5291,8 +5744,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -5312,6 +5767,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -5324,6 +5780,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -5337,6 +5795,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
+            selfdestruct: true,
             ..Default::default()
         },
     );
@@ -5358,6 +5818,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::BURN),
                 }]),
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -5383,6 +5844,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::BURN),
                 }]),
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -5404,6 +5866,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::BURN),
                 }]),
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -5434,6 +5897,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
                 },
             ]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -5459,8 +5923,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -5481,6 +5947,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -5496,6 +5963,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -5518,6 +5986,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -5542,6 +6011,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     volatile_status: PokemonVolatileStatus::PARTIALLYTRAPPED,
                 }),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -5562,6 +6032,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     volatile_status: PokemonVolatileStatus::PARTIALLYTRAPPED,
                 }),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -5579,6 +6050,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -5595,6 +6067,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -5609,6 +6082,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
+            ohko: true,
             ..Default::default()
         },
     );
@@ -5623,6 +6098,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -5637,6 +6113,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -5662,8 +6139,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 1,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -5689,6 +6168,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::BURN),
                 }]),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -5709,6 +6189,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::BURN),
                 }]),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -5730,6 +6211,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -5751,6 +6233,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 effect: Effect::Status(PokemonStatus::BURN),
             }]),
             recoil: Some(0.33),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -5773,8 +6256,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: -1,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -5799,8 +6284,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: -1,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -5823,12 +6310,14 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
             volatile_status: Some(VolatileStatus {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::CONFUSION,
             }),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -5853,8 +6342,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 8,
+            self_boosts: Some(StatBoosts { attack: 0, defense: 0, special_attack: -2, special_defense: 0, speed: 0, accuracy: 0, evasion: 0 }),
             ..Default::default()
         },
     );
@@ -5868,6 +6360,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -5884,6 +6377,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 pivot: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -5905,6 +6399,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -5919,6 +6414,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 reflectable: true,
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -5930,6 +6427,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -5944,6 +6443,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -5961,6 +6462,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
+            charge_setup: ChargeSetup::Always { turns: 1 },
             ..Default::default()
         },
     );
@@ -5984,6 +6487,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -6001,6 +6505,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -6028,8 +6533,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: -1,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 8,
             ..Default::default()
         },
     );
@@ -6046,6 +6553,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::FOCUSENERGY,
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -6063,6 +6572,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 punch: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -6080,6 +6590,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::FOLLOWME,
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -6100,6 +6612,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -6117,6 +6630,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::FORESIGHT,
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -6130,6 +6645,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 reflectable: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -6145,6 +6661,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -6164,6 +6681,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::FREEZE),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -6185,6 +6703,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
             }]),
+            pp: 8,
+            charge_setup: ChargeSetup::OnlySnow { turns: 1 },
             ..Default::default()
         },
     );
@@ -6204,6 +6724,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::FREEZE),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -6219,6 +6740,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -6235,6 +6757,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 recharge: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -6256,6 +6779,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
+                crit_ratio: 3,
                 ..Default::default()
             },
         );
@@ -6272,6 +6797,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
+                crit_ratio: 3,
                 ..Default::default()
             },
         );
@@ -6287,6 +6814,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -6303,6 +6831,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            multihit: 20,
+            pp: 20,
             ..Default::default()
         },
     );
@@ -6325,6 +6855,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     slicing: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -6342,6 +6873,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -6359,6 +6891,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -6376,6 +6909,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            multihit: 20,
+            pp: 16,
             ..Default::default()
         },
     );
@@ -6390,6 +6925,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -6404,6 +6940,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -6423,6 +6960,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 flags: Flags {
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -6437,6 +6975,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 flags: Flags {
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -6451,6 +6990,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 flags: Flags {
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -6469,6 +7009,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::GASTROACID,
             }),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -6485,6 +7026,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            multihit: 2,
+            pp: 16,
             ..Default::default()
         },
     );
@@ -6497,6 +7040,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -6519,8 +7064,12 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 2,
                     speed: 2,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 12,
+            charge_setup: ChargeSetup::Always { turns: 2 },
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -6542,6 +7091,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     ..Default::default()
                 },
                 drain: Some(0.5),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -6559,6 +7109,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     ..Default::default()
                 },
                 drain: Some(0.5),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -6577,6 +7128,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 recharge: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -6591,6 +7143,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -6607,6 +7160,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -6622,6 +7176,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -6648,8 +7203,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: -1,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -6665,6 +7222,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -6688,6 +7246,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     reflectable: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -6707,6 +7266,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     reflectable: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -6725,6 +7285,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     reflectable: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -6741,6 +7302,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -6755,6 +7317,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -6775,6 +7338,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -6790,6 +7354,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -6810,6 +7375,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 sound: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -6827,6 +7393,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -6843,6 +7410,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -6855,6 +7423,9 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 12,
+            terrain_id: 4,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -6879,8 +7450,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -6892,6 +7465,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -6915,8 +7490,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -6943,8 +7520,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     },
                 }),
+                pp: 20,
+                always_hit: true,
                 ..Default::default()
             },
         );
@@ -6967,8 +7547,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     },
                 }),
+                pp: 20,
+                always_hit: true,
                 ..Default::default()
             },
         );
@@ -6986,6 +7569,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::GRUDGE,
             }),
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -6998,6 +7583,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -7010,6 +7597,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -7025,6 +7614,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
+            ohko: true,
             ..Default::default()
         },
     );
@@ -7051,6 +7642,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::POISON),
                 }]),
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -7072,6 +7664,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::POISON),
                 }]),
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -7089,6 +7682,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     wind: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -7105,6 +7699,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     wind: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -7121,6 +7716,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -7132,6 +7728,9 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 12,
+            weather_id: 4,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -7158,8 +7757,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: -1,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 12,
+            self_boosts: Some(StatBoosts { attack: 0, defense: 0, special_attack: 0, special_defense: 0, speed: -1, accuracy: 0, evasion: 0 }),
             ..Default::default()
         },
     );
@@ -7172,6 +7774,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -7193,8 +7797,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -7209,6 +7816,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -7220,6 +7828,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -7240,6 +7850,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -7256,6 +7867,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 ..Default::default()
             },
             recoil: Some(0.25),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -7281,8 +7893,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: -1,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 8,
+            self_boosts: Some(StatBoosts { attack: 0, defense: -1, special_attack: 0, special_defense: -1, speed: 0, accuracy: 0, evasion: 0 }),
             ..Default::default()
         },
     );
@@ -7300,6 +7915,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 ..Default::default()
             },
             recoil: Some(0.5),
+            pp: 8,
             ..Default::default()
         },
     );
@@ -7313,6 +7929,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 sound: true,
                 ..Default::default()
             },
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -7330,6 +7948,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::HEALBLOCK,
             }),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -7351,6 +7970,9 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 amount: -1.0,
             }),
+            pp: 12,
+            selfdestruct: true,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -7368,6 +7990,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 amount: 0.5,
             }),
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -7383,6 +8007,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 reflectable: true,
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -7403,6 +8029,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -7415,6 +8042,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -7429,6 +8058,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -7456,6 +8086,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::BURN),
                 }]),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -7478,6 +8109,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::BURN),
                 }]),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -7493,6 +8125,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -7510,6 +8143,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::HELPINGHAND,
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -7530,6 +8165,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -7545,6 +8181,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -7560,6 +8197,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -8024,6 +8662,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -8042,6 +8681,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     ..Default::default()
                 },
                 crash: Some(0.5),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -8060,6 +8700,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     ..Default::default()
                 },
                 crash: Some(0.5),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -8078,6 +8719,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     ..Default::default()
                 },
                 crash: Some(0.5),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -8094,6 +8736,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -8106,6 +8749,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -8127,8 +8772,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 1,
+                    evasion: 0,
                 },
             }),
+            pp: 16,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -8144,6 +8792,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -8159,6 +8808,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
+            ohko: true,
             ..Default::default()
         },
     );
@@ -8176,6 +8827,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 ..Default::default()
             },
             drain: Some(0.5),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -8198,8 +8850,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -8227,6 +8882,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
                 }]),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -8249,6 +8905,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
                 }]),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -8266,6 +8923,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 recharge: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -8287,6 +8945,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -8303,6 +8962,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -8318,6 +8978,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -8334,6 +8995,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 recharge: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -8348,6 +9010,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 contact: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -8370,6 +9033,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -8392,8 +9056,12 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 8,
+            self_boosts: Some(StatBoosts { attack: 0, defense: -1, special_attack: 0, special_defense: 0, speed: 0, accuracy: 0, evasion: 0 }),
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -8407,6 +9075,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -8422,6 +9092,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 sound: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -8440,6 +9111,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 reflectable: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -8457,6 +9129,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -8482,6 +9155,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::FREEZE),
                 }]),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -8502,6 +9176,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::FREEZE),
                 }]),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -8524,6 +9199,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
             }]),
+            pp: 8,
+            charge_setup: ChargeSetup::OnlySnow { turns: 1 },
             ..Default::default()
         },
     );
@@ -8553,6 +9230,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
                 },
             ]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -8579,8 +9257,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: -1,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 12,
+            self_boosts: Some(StatBoosts { attack: 0, defense: 0, special_attack: 0, special_defense: 0, speed: -1, accuracy: 0, evasion: 0 }),
             ..Default::default()
         },
     );
@@ -8602,6 +9283,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::FREEZE),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -8617,6 +9299,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -8632,6 +9315,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -8652,6 +9336,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -8671,6 +9356,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                multihit: 20,
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -8686,6 +9373,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                multihit: 20,
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -8713,8 +9402,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: -1,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -8731,6 +9422,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::IMPRISON,
             }),
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -8751,6 +9444,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -8766,6 +9460,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -8786,6 +9481,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -8806,6 +9502,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
             }]),
+            pp: 8,
             ..Default::default()
         },
     );
@@ -8825,6 +9522,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::PARTIALLYTRAPPED,
             }),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -8841,6 +9539,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::INGRAIN,
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -8853,6 +9553,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -8865,6 +9567,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -8886,8 +9590,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 16,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -8908,6 +9615,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -8934,8 +9642,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -8950,6 +9660,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
+            crit_ratio: 2,
             ..Default::default()
         },
     );
@@ -8966,6 +9678,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -8983,6 +9696,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 punch: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -8997,6 +9711,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -9015,6 +9730,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     ..Default::default()
                 },
                 crash: Some(0.5),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -9033,6 +9749,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     ..Default::default()
                 },
                 crash: Some(0.5),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -9051,6 +9768,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     ..Default::default()
                 },
                 crash: Some(0.5),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -9069,6 +9787,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 amount: 0.25,
             }),
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -9085,6 +9805,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 20,
+                crit_ratio: 2,
                 ..Default::default()
             },
         );
@@ -9101,6 +9823,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 20,
+                crit_ratio: 2,
                 ..Default::default()
             },
         );
@@ -9125,8 +9849,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: -1,
+                    evasion: 0,
                 },
             }),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -9144,6 +9870,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::KINGSSHIELD,
             }),
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -9165,6 +9893,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -9181,6 +9910,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -9198,6 +9928,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 slicing: true,
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -9212,6 +9944,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -9228,6 +9961,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::LASERFOCUS,
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -9243,6 +9978,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -9263,6 +9999,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -9279,6 +10016,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -9294,6 +10032,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -9313,6 +10052,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -9327,6 +10067,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -9344,6 +10085,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     slicing: true,
                     ..Default::default()
                 },
+                pp: 16,
+                crit_ratio: 2,
                 ..Default::default()
             },
         );
@@ -9361,6 +10104,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     slicing: true,
                     ..Default::default()
                 },
+                pp: 16,
+                crit_ratio: 2,
                 ..Default::default()
             },
         );
@@ -9392,8 +10137,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     },
                 }),
+                pp: 8,
+                self_boosts: Some(StatBoosts { attack: 0, defense: 0, special_attack: -2, special_defense: 0, speed: 0, accuracy: 0, evasion: 0 }),
                 ..Default::default()
             },
         );
@@ -9419,8 +10167,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     },
                 }),
+                pp: 8,
+                self_boosts: Some(StatBoosts { attack: 0, defense: 0, special_attack: -2, special_defense: 0, speed: 0, accuracy: 0, evasion: 0 }),
                 ..Default::default()
             },
         );
@@ -9447,8 +10198,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: -1,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -9473,6 +10226,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     ..Default::default()
                 },
                 drain: Some(0.5),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -9491,6 +10245,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     ..Default::default()
                 },
                 drain: Some(0.5),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -9511,6 +10266,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::LEECHSEED,
             }),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -9533,8 +10289,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -9561,6 +10319,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::PARALYZE),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -9582,6 +10341,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::PARALYZE),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -9600,6 +10360,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 amount: 0.25,
             }),
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -9616,6 +10378,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 ..Default::default()
             },
             recoil: Some(0.5),
+            pp: 8,
             ..Default::default()
         },
     );
@@ -9633,6 +10396,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::User,
                     volatile_status: PokemonVolatileStatus::LIGHTSCREEN,
                 }),
+                pp: 20,
+                always_hit: true,
                 ..Default::default()
             },
         );
@@ -9650,6 +10415,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::User,
                     condition: PokemonSideCondition::LightScreen,
                 }),
+                pp: 20,
+                always_hit: true,
                 ..Default::default()
             },
         );
@@ -9676,8 +10443,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -9690,6 +10459,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -9708,6 +10479,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 reflectable: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -9730,6 +10502,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -9745,6 +10518,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -9777,8 +10551,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: -1,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -9805,8 +10581,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: -1,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -9824,6 +10602,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 condition: PokemonSideCondition::LuckyChant,
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -9848,8 +10628,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: -2,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -9867,6 +10649,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 amount: 0.25,
             }),
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -9880,6 +10664,9 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 heal: true,
                 ..Default::default()
             },
+            pp: 12,
+            selfdestruct: true,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -9905,8 +10692,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -9932,8 +10721,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: -1,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -9959,8 +10750,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: -1,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -9979,6 +10772,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 punch: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -9993,6 +10787,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -10012,6 +10808,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -10029,6 +10826,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::MAGICCOAT,
             }),
+            pp: 16,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -10043,6 +10842,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 reflectable: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -10054,6 +10854,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -10078,6 +10880,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     volatile_status: PokemonVolatileStatus::PARTIALLYTRAPPED,
                 }),
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -10098,6 +10901,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     volatile_status: PokemonVolatileStatus::PARTIALLYTRAPPED,
                 }),
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -10118,6 +10922,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     volatile_status: PokemonVolatileStatus::PARTIALLYTRAPPED,
                 }),
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -10134,6 +10939,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -10146,6 +10953,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -10162,6 +10971,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::MAGNETRISE,
             }),
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -10175,6 +10986,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -10198,8 +11010,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 8,
+            self_boosts: Some(StatBoosts { attack: 0, defense: 0, special_attack: -2, special_defense: 0, speed: 0, accuracy: 0, evasion: 0 }),
             ..Default::default()
         },
     );
@@ -10219,6 +11034,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::TOXIC),
             }]),
+            pp: 8,
             ..Default::default()
         },
     );
@@ -10235,6 +11051,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 condition: PokemonSideCondition::MatBlock,
             }),
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -10257,6 +11075,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 effect: Effect::Status(PokemonStatus::BURN),
             }]),
             drain: Some(0.5),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -10273,6 +11092,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::TRAPPED,
             }),
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -10294,8 +11115,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -10308,6 +11132,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -10324,6 +11150,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 ..Default::default()
             },
             drain: Some(0.5),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -10340,6 +11167,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -10356,6 +11184,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -10373,6 +11202,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 punch: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -10394,12 +11224,15 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
             heal: Some(Heal {
                 target: MoveTarget::User,
                 amount: -1.0,
             }),
+            pp: 12,
+            selfdestruct: true,
             ..Default::default()
         },
     );
@@ -10413,6 +11246,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -10439,8 +11273,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -10465,8 +11301,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: -2,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -10482,6 +11320,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 recharge: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -10498,6 +11337,9 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
+            charge_setup: ChargeSetup::Always { turns: 1 },
+            charge_boosts: Some(StatBoosts { attack: 0, defense: 0, special_attack: 1, special_defense: 0, speed: 0, accuracy: 0, evasion: 0 }),
             ..Default::default()
         },
     );
@@ -10531,8 +11373,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -10561,8 +11405,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -10576,6 +11422,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -10591,6 +11439,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 slicing: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -10608,6 +11457,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 amount: 0.5,
             }),
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -10620,6 +11471,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -10634,6 +11487,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -10646,6 +11500,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -10667,12 +11523,15 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
             volatile_status: Some(VolatileStatus {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::MINIMIZE,
             }),
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -10690,6 +11549,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::MIRACLEEYE,
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -10704,6 +11565,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -10715,6 +11577,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -10740,8 +11604,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: -1,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -10758,6 +11624,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 condition: PokemonSideCondition::Mist,
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -10784,8 +11652,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -10812,8 +11682,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -10829,6 +11701,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
+            selfdestruct: true,
             ..Default::default()
         },
     );
@@ -10840,6 +11714,9 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 12,
+            terrain_id: 3,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -10864,8 +11741,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -10880,6 +11759,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -10897,6 +11777,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 amount: 0.5,
             }),
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -10914,6 +11796,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 amount: 0.5,
             }),
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -10934,6 +11818,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::POISON),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -10954,6 +11839,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -10980,8 +11866,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: -1,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -11013,8 +11901,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: -1,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -11041,8 +11931,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: -1,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -11069,8 +11961,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: -1,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -11095,8 +11989,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: -1,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -11108,6 +12004,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 16,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -11124,6 +12022,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -11140,6 +12039,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -11172,8 +12072,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -11199,8 +12101,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -11227,8 +12131,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -11250,8 +12156,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -11265,6 +12174,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -11276,6 +12186,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -11290,6 +12202,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -11310,6 +12223,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -11335,8 +12249,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: -1,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -11353,6 +12269,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::NIGHTMARE,
             }),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -11366,6 +12283,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -11382,6 +12300,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 slicing: true,
                 ..Default::default()
             },
+            pp: 20,
+            crit_ratio: 2,
             ..Default::default()
         },
     );
@@ -11405,8 +12325,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -11428,12 +12350,15 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 1,
                     speed: 1,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
             volatile_status: Some(VolatileStatus {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::NORETREAT,
             }),
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -11465,6 +12390,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::POISON),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -11485,6 +12411,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -11501,6 +12428,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 ..Default::default()
             },
             drain: Some(0.75),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -11518,6 +12446,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::PROTECT,
             }),
+            pp: 8,
             ..Default::default()
         },
     );
@@ -11544,8 +12473,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: -1,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -11562,6 +12493,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::OCTOLOCK,
             }),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -11579,6 +12511,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::FORESIGHT,
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -11603,8 +12537,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 1,
                     speed: 1,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 8,
             ..Default::default()
         },
     );
@@ -11619,6 +12555,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -11635,6 +12572,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 pulse: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -11655,6 +12593,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::User,
                     volatile_status: PokemonVolatileStatus::LOCKEDMOVE,
                 }),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -11675,6 +12614,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::User,
                     volatile_status: PokemonVolatileStatus::LOCKEDMOVE,
                 }),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -11691,6 +12631,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 sound: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -11721,8 +12662,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     },
                 }),
+                pp: 8,
+                self_boosts: Some(StatBoosts { attack: 0, defense: 0, special_attack: -2, special_defense: 0, speed: 0, accuracy: 0, evasion: 0 }),
                 ..Default::default()
             },
         );
@@ -11748,8 +12692,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     },
                 }),
+                pp: 8,
+                self_boosts: Some(StatBoosts { attack: 0, defense: 0, special_attack: -2, special_defense: 0, speed: 0, accuracy: 0, evasion: 0 }),
                 ..Default::default()
             },
         );
@@ -11763,6 +12710,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -11787,8 +12736,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -11812,6 +12763,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     ..Default::default()
                 },
                 drain: Some(0.5),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -11829,6 +12781,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     ..Default::default()
                 },
                 drain: Some(0.5),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -11854,8 +12807,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -11871,6 +12826,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -11885,6 +12841,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -11900,6 +12857,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -11912,6 +12870,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 sound: true,
                 ..Default::default()
             },
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -11927,6 +12887,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 wind: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -11947,6 +12908,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::User,
                     volatile_status: PokemonVolatileStatus::LOCKEDMOVE,
                 }),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -11968,6 +12930,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::User,
                     volatile_status: PokemonVolatileStatus::LOCKEDMOVE,
                 }),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -11988,6 +12951,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::User,
                     volatile_status: PokemonVolatileStatus::LOCKEDMOVE,
                 }),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -12004,6 +12968,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 contact: true,
                 ..Default::default()
             },
+            pp: 12,
+            charge_setup: ChargeSetup::Always { turns: 1 },
             ..Default::default()
         },
     );
@@ -12018,6 +12984,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -12031,6 +12998,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -12052,6 +13021,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                multihit: 20,
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -12068,6 +13039,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                multihit: 20,
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -12085,6 +13058,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 punch: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -12106,8 +13080,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -12134,8 +13111,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -12151,6 +13130,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -12178,6 +13158,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::TOXIC),
                 }]),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -12200,6 +13181,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::TOXIC),
                 }]),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -12224,6 +13206,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     reflectable: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -12243,6 +13226,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     reflectable: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -12262,6 +13246,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     reflectable: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -12283,6 +13268,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::POISON),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -12302,6 +13288,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 reflectable: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -12322,6 +13309,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::POISON),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -12342,6 +13330,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::POISON),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -12363,6 +13352,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::POISON),
             }]),
+            pp: 20,
+            crit_ratio: 2,
             ..Default::default()
         },
     );
@@ -12378,6 +13369,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -12393,6 +13385,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -12410,6 +13403,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 slicing: true,
                 ..Default::default()
             },
+            multihit: 10,
+            pp: 12,
             ..Default::default()
         },
     );
@@ -12435,8 +13430,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: -1,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -12452,6 +13449,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -12471,6 +13469,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::POWDER,
             }),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -12490,6 +13489,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::FREEZE),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -12510,6 +13510,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -12525,6 +13526,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -12542,6 +13544,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::POWERSHIFT,
             }),
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -12554,6 +13558,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -12566,6 +13572,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -12582,6 +13590,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::POWERTRICK,
             }),
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -12597,6 +13607,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -12623,8 +13634,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -12641,6 +13654,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -12656,6 +13670,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -12670,6 +13685,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -12685,6 +13701,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 recharge: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -12702,6 +13719,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::PROTECT,
             }),
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -12721,6 +13740,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -12737,6 +13757,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 slicing: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -12762,8 +13783,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -12789,8 +13812,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: -1,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -12808,6 +13833,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -12827,6 +13853,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::HEALBLOCK,
             }),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -12838,6 +13865,9 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 12,
+            terrain_id: 2,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -12862,8 +13892,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 8,
+            self_boosts: Some(StatBoosts { attack: 0, defense: 0, special_attack: -2, special_defense: 0, speed: 0, accuracy: 0, evasion: 0 }),
             ..Default::default()
         },
     );
@@ -12879,6 +13912,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 slicing: true,
                 ..Default::default()
             },
+            pp: 20,
+            crit_ratio: 2,
             ..Default::default()
         },
     );
@@ -12898,6 +13933,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -12911,6 +13947,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -12923,6 +13960,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -12949,8 +13988,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -12965,6 +14006,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -12979,6 +14021,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -12999,6 +14042,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -13013,6 +14057,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -13028,6 +14073,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -13042,6 +14088,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 reflectable: true,
                 ..Default::default()
             },
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -13057,6 +14105,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -13078,6 +14127,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
             }]),
+            pp: 8,
             ..Default::default()
         },
     );
@@ -13090,6 +14140,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -13106,6 +14157,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -13123,6 +14175,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 condition: PokemonSideCondition::QuickGuard,
             }),
+            pp: 16,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -13144,8 +14198,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 1,
                     speed: 1,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -13161,6 +14218,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -13177,6 +14235,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 punch: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -13195,6 +14254,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::RAGEPOWDER,
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -13210,6 +14271,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -13228,6 +14290,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::LOCKEDMOVE,
             }),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -13239,6 +14302,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -13266,8 +14331,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 1,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -13285,6 +14352,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     ..Default::default()
                 },
                 secondaries: None,
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -13302,6 +14370,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 slicing: true,
                 ..Default::default()
             },
+            pp: 20,
+            crit_ratio: 2,
             ..Default::default()
         },
     );
@@ -13329,8 +14399,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -13346,6 +14418,9 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
+            crit_ratio: 2,
+            charge_setup: ChargeSetup::Always { turns: 1 },
             ..Default::default()
         },
     );
@@ -13375,6 +14450,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 amount: 0.5,
             }),
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -13387,6 +14464,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -13404,6 +14483,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::User,
                     volatile_status: PokemonVolatileStatus::REFLECT,
                 }),
+                pp: 20,
+                always_hit: true,
                 ..Default::default()
             },
         );
@@ -13421,6 +14502,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::User,
                     condition: PokemonSideCondition::Reflect,
                 }),
+                pp: 20,
+                always_hit: true,
                 ..Default::default()
             },
         );
@@ -13434,6 +14517,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -13446,6 +14531,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -13466,6 +14553,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::SLEEP),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -13481,6 +14569,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 ..Default::default()
             },
             heal: None, // Rest implemented in choice_special_effect()
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -13496,6 +14586,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -13511,6 +14602,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -13540,6 +14632,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -13556,6 +14649,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -13570,6 +14664,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -13583,6 +14678,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 heal: true,
                 ..Default::default()
             },
+            pp: 4,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -13597,6 +14694,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -13612,6 +14710,9 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 sound: true,
                 ..Default::default()
             },
+            pp: 20,
+            force_switch: true,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -13628,6 +14729,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 recharge: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -13649,6 +14751,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                multihit: 20,
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -13666,6 +14770,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                multihit: 20,
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -13688,6 +14794,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -13709,8 +14816,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 2,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -13727,6 +14837,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -13748,6 +14859,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
                 }]),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -13775,8 +14887,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -13803,8 +14917,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -13822,6 +14938,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -13838,6 +14955,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -13870,8 +14988,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: -1,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -13898,8 +15018,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: -1,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -13918,6 +15040,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 recharge: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -13929,6 +15052,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -13950,6 +15075,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -13966,6 +15092,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -13987,6 +15114,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 amount: 0.5,
             }),
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -13998,6 +15127,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -14013,6 +15144,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 sound: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -14027,6 +15159,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -14047,6 +15180,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
             }]),
+            pp: 8,
             ..Default::default()
         },
     );
@@ -14063,6 +15197,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 slicing: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -14079,6 +15214,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 condition: PokemonSideCondition::Safeguard,
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -14097,6 +15234,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::SALTCURE,
             }),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -14120,8 +15258,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: -1,
+                        evasion: 0,
                     },
                 }),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -14145,8 +15285,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: -1,
+                        evasion: 0,
                     },
                 }),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -14169,6 +15311,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -14181,6 +15324,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 wind: true,
                 ..Default::default()
             },
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -14205,6 +15350,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     volatile_status: PokemonVolatileStatus::PARTIALLYTRAPPED,
                 }),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -14225,6 +15371,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     volatile_status: PokemonVolatileStatus::PARTIALLYTRAPPED,
                 }),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -14242,6 +15389,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 reflectable: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -14261,6 +15409,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -14285,8 +15434,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 1,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            multihit: 20,
+            pp: 20,
             ..Default::default()
         },
     );
@@ -14315,8 +15467,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: -2,
                         accuracy: 0,
+                        evasion: 0,
                     },
                 }),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -14340,8 +15494,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: -2,
                         accuracy: 0,
+                        evasion: 0,
                     },
                 }),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -14362,6 +15518,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -14377,6 +15534,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -14401,8 +15559,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -14423,6 +15583,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
             }]),
+            pp: 8,
             ..Default::default()
         },
     );
@@ -14442,6 +15603,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -14457,6 +15619,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 slicing: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -14472,6 +15635,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -14497,8 +15661,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: -2,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 8,
             ..Default::default()
         },
     );
@@ -14513,6 +15679,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -14528,6 +15695,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 8,
+                selfdestruct: true,
                 ..Default::default()
             },
         );
@@ -14543,6 +15712,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 8,
+                selfdestruct: true,
                 ..Default::default()
             },
         );
@@ -14569,8 +15740,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: -1,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -14595,8 +15768,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -14612,6 +15787,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
+            crit_ratio: 2,
             ..Default::default()
         },
     );
@@ -14627,6 +15804,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 contact: true,
                 ..Default::default()
             },
+            pp: 8,
+            charge_setup: ChargeSetup::Always { turns: 1 },
             ..Default::default()
         },
     );
@@ -14643,6 +15822,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 punch: true,
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -14659,6 +15840,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -14685,8 +15867,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -14708,8 +15892,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -14724,6 +15911,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 ..Default::default()
             },
             volatile_status: None, // Shed Tail implemented in choice_special_effect()
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -14738,6 +15927,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
+            ohko: true,
             ..Default::default()
         },
     );
@@ -14757,6 +15948,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::POISON),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -14778,8 +15970,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: -1,
                     speed: 2,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 16,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -14795,6 +15990,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -14816,8 +16012,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -14839,8 +16038,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 2,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -14855,6 +16057,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -14872,6 +16076,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 amount: 0.5,
             }),
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -14891,6 +16097,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -14908,6 +16115,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::SILKTRAP,
             }),
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -14932,8 +16141,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 1,
                     speed: 1,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 8,
             ..Default::default()
         },
     );
@@ -14947,6 +16158,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 reflectable: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -14966,6 +16178,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 sound: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -14986,6 +16199,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -14997,6 +16211,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 4,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -15009,6 +16225,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -15035,8 +16253,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -15059,6 +16279,9 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
+                charge_setup: ChargeSetup::Always { turns: 1 },
+                charge_boosts: Some(StatBoosts { attack: 0, defense: 1, special_attack: 0, special_defense: 0, speed: 0, accuracy: 0, evasion: 0 }),
                 ..Default::default()
             },
         );
@@ -15076,6 +16299,9 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
+                charge_setup: ChargeSetup::Always { turns: 1 },
+                charge_boosts: Some(StatBoosts { attack: 0, defense: 1, special_attack: 0, special_defense: 0, speed: 0, accuracy: 0, evasion: 0 }),
                 ..Default::default()
             },
         );
@@ -15098,6 +16324,9 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
             }]),
+            pp: 8,
+            crit_ratio: 2,
+            charge_setup: ChargeSetup::Always { turns: 1 },
             ..Default::default()
         },
     );
@@ -15114,6 +16343,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
+            charge_setup: ChargeSetup::Always { turns: 1 },
             ..Default::default()
         },
     );
@@ -15131,6 +16362,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 punch: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -15148,6 +16380,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 amount: 0.5,
             }),
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -15164,6 +16398,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -15180,6 +16415,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 slicing: true,
                 ..Default::default()
             },
+            pp: 20,
+            crit_ratio: 2,
             ..Default::default()
         },
     );
@@ -15199,6 +16436,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 reflectable: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -15211,6 +16449,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -15231,6 +16471,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::POISON),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -15251,6 +16492,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::POISON),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -15272,6 +16514,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::POISON),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -15291,6 +16534,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::POISON),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -15309,6 +16553,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::SMACKDOWN,
             }),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -15324,6 +16569,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -15345,6 +16592,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -15361,6 +16609,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -15388,6 +16637,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::POISON),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -15409,6 +16659,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::POISON),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -15432,8 +16683,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: -1,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -15453,6 +16706,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::PARTIALLYTRAPPED,
             }),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -15479,8 +16733,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -15498,6 +16754,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::SNATCH,
             }),
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -15512,6 +16770,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
+            crit_ratio: 2,
             ..Default::default()
         },
     );
@@ -15538,6 +16798,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
                 }]),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -15559,6 +16820,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
                 }]),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -15571,6 +16833,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -15584,6 +16848,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 reflectable: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -15601,6 +16866,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 amount: 0.5,
             }),
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -15616,6 +16883,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
+            charge_setup: ChargeSetup::NotSun { turns: 1 },
             ..Default::default()
         },
     );
@@ -15633,6 +16902,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 slicing: true,
                 ..Default::default()
             },
+            pp: 12,
+            charge_setup: ChargeSetup::NotSun { turns: 1 },
             ..Default::default()
         },
     );
@@ -15647,6 +16918,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -15662,6 +16934,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
+            crit_ratio: 2,
             ..Default::default()
         },
     );
@@ -15682,6 +16956,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -15702,6 +16977,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::SPARKLINGARIA),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -15717,6 +16993,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -15732,6 +17009,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -15744,6 +17022,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -15766,8 +17046,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 16,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -15785,6 +17068,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::TRAPPED,
             }),
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -15799,6 +17084,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            multihit: 20,
+            pp: 16,
             ..Default::default()
         },
     );
@@ -15815,6 +17102,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 condition: PokemonSideCondition::Spikes,
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -15832,6 +17121,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::SPIKYSHIELD,
             }),
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -15856,8 +17147,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: -2,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 12,
+            self_boosts: Some(StatBoosts { attack: 0, defense: 0, special_attack: 0, special_defense: 0, speed: -2, accuracy: 0, evasion: 0 }),
             ..Default::default()
         },
     );
@@ -15883,8 +17177,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -15899,6 +17195,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -15912,6 +17209,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 reflectable: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -15925,6 +17223,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -15937,6 +17236,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -15956,6 +17257,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -15974,6 +17276,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 reflectable: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -15992,6 +17295,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::SPOTLIGHT,
             }),
+            pp: 16,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -16018,8 +17323,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 8,
             ..Default::default()
         },
     );
@@ -16036,6 +17343,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 condition: PokemonSideCondition::Stealthrock,
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -16056,6 +17365,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
             }]),
+            pp: 8,
             ..Default::default()
         },
     );
@@ -16076,6 +17386,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -16095,6 +17406,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 amount: -0.5,
             }),
+            pp: 8,
             ..Default::default()
         },
     );
@@ -16110,6 +17422,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
+            requires_terrain: true,
             ..Default::default()
         },
     );
@@ -16136,8 +17450,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -16154,6 +17470,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 condition: PokemonSideCondition::StickyWeb,
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -16170,6 +17488,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::STOCKPILE,
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -16190,6 +17510,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -16205,6 +17526,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -16226,6 +17548,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 condition: PokemonSideCondition::Stealthrock,
             }),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -16241,6 +17564,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
+            crit_ratio: 2,
             ..Default::default()
         },
     );
@@ -16255,6 +17580,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -16276,6 +17602,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
+                crit_ratio: 3,
                 ..Default::default()
             },
         );
@@ -16292,6 +17620,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
+                crit_ratio: 3,
                 ..Default::default()
             },
         );
@@ -16313,6 +17643,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -16328,6 +17659,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -16342,6 +17674,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 reflectable: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -16365,8 +17698,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: -2,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -16382,6 +17717,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 4,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -16412,8 +17749,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -16439,8 +17778,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 }]),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -16454,6 +17795,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -16473,6 +17816,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 reflectable: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -16490,6 +17834,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 ..Default::default()
             },
             recoil: Some(0.25),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -16506,6 +17851,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 volatile_status: PokemonVolatileStatus::SUBSTITUTE,
             }),
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -16529,6 +17876,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -16546,6 +17894,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -16558,6 +17907,9 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 8,
+            weather_id: 2,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -16573,6 +17925,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -16590,6 +17943,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 ..Default::default()
             },
             crash: Some(0.5),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -16605,6 +17959,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -16629,8 +17984,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 8,
+            self_boosts: Some(StatBoosts { attack: -1, defense: -1, special_attack: 0, special_defense: 0, speed: 0, accuracy: 0, evasion: 0 }),
             ..Default::default()
         },
     );
@@ -16650,6 +18008,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::CONFUSION,
             }),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -16670,6 +18029,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -16685,6 +18045,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -16702,6 +18063,9 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 punch: true,
                 ..Default::default()
             },
+            multihit: 3,
+            pp: 8,
+            crit_ratio: 3,
             ..Default::default()
         },
     );
@@ -16733,12 +18097,14 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     },
                 }),
                 volatile_status: Some(VolatileStatus {
                     target: MoveTarget::Opponent,
                     volatile_status: PokemonVolatileStatus::CONFUSION,
                 }),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -16763,12 +18129,14 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     },
                 }),
                 volatile_status: Some(VolatileStatus {
                     target: MoveTarget::Opponent,
                     volatile_status: PokemonVolatileStatus::CONFUSION,
                 }),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -16783,6 +18151,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 heal: true,
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -16801,6 +18171,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::CONFUSION,
             }),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -16823,8 +18194,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -16839,6 +18212,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -16851,6 +18226,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -16872,8 +18248,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -16894,6 +18273,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -16909,6 +18289,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -16927,6 +18308,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 amount: 0.5,
             }),
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -16948,6 +18331,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::SYRUPBOMB),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -16963,6 +18347,9 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 slicing: true,
                 ..Default::default()
             },
+            multihit: 2,
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -16978,6 +18365,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -17004,8 +18392,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     },
                 }),
+                pp: 20,
+                always_hit: true,
                 ..Default::default()
             },
         );
@@ -17028,8 +18419,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     },
                 }),
+                pp: 20,
+                always_hit: true,
                 ..Default::default()
             },
         );
@@ -17047,6 +18441,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            multihit: 20,
+            pp: 12,
             ..Default::default()
         },
     );
@@ -17069,8 +18465,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -17088,6 +18486,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 condition: PokemonSideCondition::Tailwind,
             }),
+            pp: 16,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -17105,6 +18505,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 ..Default::default()
             },
             recoil: Some(0.33),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -17117,6 +18518,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 16,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -17139,12 +18542,14 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: -1,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
             volatile_status: Some(VolatileStatus {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::TARSHOT,
             }),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -17162,6 +18567,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::TAUNT,
             }),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -17183,8 +18589,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -17196,6 +18605,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -17216,6 +18627,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -17231,6 +18643,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -17248,6 +18661,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::CONFUSION,
             }),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -17265,6 +18679,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::TELEKINESIS,
             }),
+            pp: 16,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -17281,6 +18697,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     pivot: true,
                     ..Default::default()
                 },
+                pp: 20,
+                always_hit: true,
                 ..Default::default()
             },
         );
@@ -17295,6 +18713,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 flags: Flags {
                     ..Default::default()
                 },
+                pp: 20,
+                always_hit: true,
                 ..Default::default()
             },
         );
@@ -17311,6 +18731,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -17325,6 +18746,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -17339,6 +18761,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -17354,6 +18777,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 pulse: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -17375,6 +18799,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -17391,6 +18816,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -17410,6 +18836,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::SMACKDOWN,
             }),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -17424,6 +18851,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -17448,6 +18876,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::User,
                     volatile_status: PokemonVolatileStatus::LOCKEDMOVE,
                 }),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -17468,6 +18897,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::User,
                     volatile_status: PokemonVolatileStatus::LOCKEDMOVE,
                 }),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -17488,6 +18918,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::THROATCHOP,
             }),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -17509,6 +18940,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::PARALYZE),
                 }]),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -17534,6 +18966,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::PARALYZE),
                 }]),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -17555,6 +18988,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::PARALYZE),
                 }]),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -17581,6 +19015,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::PARALYZE),
                 }]),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -17601,6 +19036,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::PARALYZE),
                 }]),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -17621,6 +19057,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::PARTIALLYTRAPPED,
             }),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -17636,6 +19073,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -17665,6 +19103,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
                 },
             ]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -17690,8 +19129,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -17713,6 +19154,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -17732,6 +19174,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -17758,6 +19201,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     reflectable: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -17777,6 +19221,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     reflectable: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -17800,8 +19245,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -17823,8 +19270,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 1,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -17838,6 +19288,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 reflectable: true,
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -17863,8 +19315,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -17882,6 +19336,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::TORMENT,
             }),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -17905,6 +19360,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     reflectable: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -17924,6 +19380,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     reflectable: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -17941,6 +19398,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 condition: PokemonSideCondition::ToxicSpikes,
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -17967,8 +19426,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: -1,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -17994,8 +19455,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 1,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -18007,6 +19470,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -18022,6 +19487,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -18056,6 +19522,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         effect: Effect::Status(PokemonStatus::FREEZE),
                     },
                 ]),
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -18069,6 +19536,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -18082,6 +19550,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 reflectable: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -18094,6 +19563,9 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 8,
+            pseudo_weather_id: 1,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -18119,6 +19591,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         special_defense: 0,
                         speed: 0,
                         accuracy: 0,
+                        evasion: 0,
                     }),
                 },
                 Secondary {
@@ -18127,6 +19600,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
                 },
             ]),
+            pp: 12,
+            crit_ratio: 2,
             ..Default::default()
         },
     );
@@ -18143,6 +19618,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            multihit: 3,
+            pp: 12,
             ..Default::default()
         },
     );
@@ -18159,6 +19636,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            multihit: 3,
+            pp: 12,
             ..Default::default()
         },
     );
@@ -18175,6 +19654,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            multihit: 3,
+            pp: 12,
             ..Default::default()
         },
     );
@@ -18200,8 +19681,10 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -18216,6 +19699,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -18230,6 +19715,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            multihit: 2,
+            pp: 12,
             ..Default::default()
         },
     );
@@ -18249,6 +19736,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::POISON),
             }]),
+            multihit: 2,
+            pp: 20,
             ..Default::default()
         },
     );
@@ -18269,6 +19758,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -18290,6 +19780,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -18310,6 +19801,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     sound: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -18326,6 +19818,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     sound: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -18343,6 +19836,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 pivot: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -18358,6 +19852,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -18383,8 +19878,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: -1,
                     speed: -1,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 8,
+            self_boosts: Some(StatBoosts { attack: 0, defense: -1, special_attack: 0, special_defense: -1, speed: -1, accuracy: 0, evasion: 0 }),
             ..Default::default()
         },
     );
@@ -18399,6 +19897,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -18412,6 +19912,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 reflectable: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -18426,6 +19927,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -18447,8 +19949,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 1,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -18470,6 +19975,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -18486,6 +19992,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -18502,6 +20009,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -18518,6 +20026,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -18533,6 +20043,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 pivot: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -18554,6 +20065,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 effect: Effect::Status(PokemonStatus::PARALYZE),
             }]),
             recoil: Some(0.33),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -18575,6 +20087,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -18591,6 +20104,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -18612,6 +20126,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -18626,6 +20141,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 20,
             ..Default::default()
         },
     );
@@ -18646,6 +20162,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -18661,6 +20178,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 12,
                 ..Default::default()
             },
         );
@@ -18682,6 +20200,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
             }]),
+            pp: 20,
             ..Default::default()
         },
     );
@@ -18705,6 +20224,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                multihit: 20,
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -18721,6 +20242,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                multihit: 20,
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -18734,6 +20257,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 16,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -18748,6 +20273,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -18764,6 +20290,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 ..Default::default()
             },
             recoil: Some(0.33),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -18779,6 +20306,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -18803,6 +20331,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     volatile_status: PokemonVolatileStatus::PARTIALLYTRAPPED,
                 }),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -18823,6 +20352,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     volatile_status: PokemonVolatileStatus::PARTIALLYTRAPPED,
                 }),
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -18839,6 +20369,9 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 wind: true,
                 ..Default::default()
             },
+            pp: 20,
+            force_switch: true,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -18857,6 +20390,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     punch: true,
                     ..Default::default()
                 },
+                pp: 8,
+                crit_ratio: 3,
                 ..Default::default()
             },
         );
@@ -18874,6 +20409,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     punch: true,
                     ..Default::default()
                 },
+                pp: 8,
+                crit_ratio: 3,
                 ..Default::default()
             },
         );
@@ -18895,6 +20432,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::SLEEP),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -18912,6 +20450,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::User,
                 condition: PokemonSideCondition::WideGuard,
             }),
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -18933,6 +20473,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -18949,6 +20490,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 ..Default::default()
             },
             recoil: Some(0.25),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -18973,6 +20515,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     reflectable: true,
                     ..Default::default()
                 },
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -18992,6 +20535,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     reflectable: true,
                     ..Default::default()
                 },
+                pp: 16,
                 ..Default::default()
             },
         );
@@ -19009,6 +20553,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -19025,6 +20570,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     protect: true,
                     ..Default::default()
                 },
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -19039,6 +20585,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 heal: true,
                 ..Default::default()
             },
+            pp: 8,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -19060,8 +20608,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -19073,6 +20624,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             flags: Flags {
                 ..Default::default()
             },
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -19089,6 +20642,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 ..Default::default()
             },
             recoil: Some(0.33),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -19110,8 +20664,11 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 },
             }),
+            pp: 20,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -19125,6 +20682,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 reflectable: true,
                 ..Default::default()
             },
+            pp: 12,
             ..Default::default()
         },
     );
@@ -19150,6 +20708,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     volatile_status: PokemonVolatileStatus::PARTIALLYTRAPPED,
                 }),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -19171,6 +20730,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     volatile_status: PokemonVolatileStatus::PARTIALLYTRAPPED,
                 }),
+                pp: 20,
                 ..Default::default()
             },
         );
@@ -19186,6 +20746,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 protect: true,
                 ..Default::default()
             },
+            pp: 8,
             ..Default::default()
         },
     );
@@ -19202,6 +20763,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 slicing: true,
                 ..Default::default()
             },
+            pp: 16,
             ..Default::default()
         },
     );
@@ -19219,6 +20781,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 volatile_status: PokemonVolatileStatus::YAWN,
             }),
+            pp: 12,
+            always_hit: true,
             ..Default::default()
         },
     );
@@ -19241,6 +20805,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::PARALYZE),
                 }]),
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -19263,6 +20828,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::PARALYZE),
                 }]),
+                pp: 8,
                 ..Default::default()
             },
         );
@@ -19285,6 +20851,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
             }]),
+            pp: 16,
             ..Default::default()
         },
     );
@@ -19305,6 +20872,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
             }]),
+            pp: 12,
             ..Default::default()
         },
     );
@@ -19331,11 +20899,13 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     special_defense: 0,
                     speed: 0,
                     accuracy: 0,
+                    evasion: 0,
                 }),
             }]),
             ..Default::default()
         },
     );
+
 
     #[cfg(any(feature = "gen1", feature = "gen2", feature = "gen3"))]
     undo_physical_special_split(&mut moves);
@@ -19358,6 +20928,33 @@ pub enum MoveCategory {
 pub enum MoveTarget {
     User,
     Opponent,
+    /// The adjacent ally (PS target `adjacentAlly`); in doubles the one other
+    /// active slot.
+    Ally,
+}
+
+/// Two-turn charge behavior, mirroring pokemon-showdown's `onTryMove` +
+/// `addVolatile('twoturnmove')` pattern (data/moves.ts). `turns` is the
+/// number of charge turns before the move fires (1 for Dig/Fly/..., 2 for
+/// Geomancy).
+#[derive(PartialEq, Debug, Clone, Copy)]
+pub enum ChargeSetup {
+    /// Not a two-turn move.
+    None,
+    /// Always charges (Dig, Fly, Bounce, Dive, Shadow Force, ...).
+    Always { turns: u8 },
+    /// Charges unless the weather is harsh sun (Solar Beam, Solar Blade).
+    NotSun { turns: u8 },
+    /// Charges only in heavy rain (Electro Shot).
+    OnlyRain { turns: u8 },
+    /// Charges only in snow (Freeze Shock, Ice Burn).
+    OnlySnow { turns: u8 },
+}
+
+impl Default for ChargeSetup {
+    fn default() -> Self {
+        ChargeSetup::None
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -19398,6 +20995,7 @@ pub struct StatBoosts {
     pub special_defense: i8,
     pub speed: i8,
     pub accuracy: i8,
+    pub evasion: i8,
 }
 
 impl Default for StatBoosts {
@@ -19409,6 +21007,7 @@ impl Default for StatBoosts {
             special_defense: 0,
             speed: 0,
             accuracy: 0,
+            evasion: 0,
         }
     }
 }
@@ -19510,6 +21109,13 @@ pub enum Effect {
     Status(PokemonStatus),
     Heal(f32),
     RemoveItem,
+    /// The target flinches and cannot move next turn (PS secondary
+    /// `volatileStatus: 'flinch'`).
+    Flinch,
+    /// Gated on the target having raised a stat this turn (PS
+    /// `statsRaisedThisTurn`): Alluring Voice (confusion; not modeled) and
+    /// Burning Jealousy (burn). The PRNG roll is consumed regardless.
+    IfStatsRaised { status: Option<PokemonStatus> },
 }
 
 #[derive(PartialEq)]
@@ -20543,6 +22149,42 @@ pub struct Choice {
 
     pub first_move: bool,
     pub sleep_talk_move: bool,
+
+    // PS-derived execution data (see fuzz generator; 0/None/false = absent):
+    /// Hit count: 0 = single hit, 2/3 = fixed, 20 = 2-5 hits (PRNG sample),
+    /// 100 = 10 hits (Population Bomb).
+    pub multihit: u8,
+    /// Initial PP (champions: `(base_pp / 5 + 1) * 4`, capped at 20 base).
+    pub pp: u8,
+    /// Self stat boosts applied after the move (PS `self.boosts`).
+    pub self_boosts: Option<StatBoosts>,
+    /// Chance (0-100) gating `self_boosts`; 0.0 means "no roll, always apply".
+    pub self_boost_chance: f32,
+    /// Forces the target to switch next turn (Roar / Whirlwind / Drag-On).
+    pub force_switch: bool,
+    /// Faints the user after dealing damage (Explosion / Self-Destruct / Mind Blown).
+    pub selfdestruct: bool,
+    /// OHKO move (Fissure / Horn Drill / Thunder): 30% accuracy, full KO.
+    pub ohko: bool,
+    /// Ignores the target's defenses (Assurance / Punishment / ...).
+    pub ignores_defenses: bool,
+    /// Always hits, bypassing the accuracy roll entirely (PS `alwaysHit`).
+    pub always_hit: bool,
+    /// Weather set by this move: 0 = none, 1 = rain, 2 = sun, 3 = sandstorm, 4 = hail.
+    pub weather_id: u8,
+    /// Pseudo-weather: 0 = none, 1 = trick room, 2 = tailwind.
+    pub pseudo_weather_id: u8,
+    /// Terrain: 0 = none, 1 = electric, 2 = psychic, 3 = misty, 4 = grassy.
+    pub terrain_id: u8,
+    /// Critical ratio: 0 = never, 1 = 1/24 (standard), 2 = 1/8, 3 = guaranteed.
+    pub crit_ratio: i32,
+    /// Two-turn charge setup (PS `onTryMove` + `twoturnmove`).
+    pub charge_setup: ChargeSetup,
+    /// Self stat boosts applied on the FIRST charge turn (PS `onTryMove`
+    /// `this.boost(...)`: Meteor Beam +1 SpA, Skull Bash +1 Def).
+    pub charge_boosts: Option<StatBoosts>,
+    /// Fails when no terrain is active (Gen 9 Steel Roller, PS `onTry`).
+    pub requires_terrain: bool,
 }
 
 impl fmt::Debug for Choice {
@@ -20672,6 +22314,22 @@ impl Default for Choice {
             target: MoveTarget::Opponent,
             first_move: true,
             sleep_talk_move: false,
+            multihit: 0,
+            pp: 32,
+            self_boosts: None,
+            self_boost_chance: 0.0,
+            force_switch: false,
+            selfdestruct: false,
+            ohko: false,
+            ignores_defenses: false,
+            always_hit: false,
+            weather_id: 0,
+            pseudo_weather_id: 0,
+            terrain_id: 0,
+            crit_ratio: 1,
+            charge_setup: ChargeSetup::None,
+            charge_boosts: None,
+            requires_terrain: false,
         }
     }
 }
@@ -20709,7 +22367,8 @@ fn apply_champions_modifiers(moves: &mut HashMap<Choices, Choice>) {
     moves.get_mut(&Choices::BLOODMOON).unwrap().base_power = 130.0;
     moves.get_mut(&Choices::BOLTBEAK).unwrap().base_power = 80.0;
     moves.get_mut(&Choices::BONERUSH).unwrap().base_power = 30.0;
-    moves.get_mut(&Choices::CRABHAMMER).unwrap().base_power = 95.0;
+    moves.get_mut(&Choices::CRABHAMMER).unwrap().base_power = 100.0;
+    moves.get_mut(&Choices::CRABHAMMER).unwrap().accuracy = 95.0;
     moves.get_mut(&Choices::DRAGONCLAW).unwrap().flags.slicing = true;
     moves.get_mut(&Choices::DRAGONHAMMER).unwrap().base_power = 90.0;
     moves.get_mut(&Choices::FIRELASH).unwrap().base_power = 90.0;
@@ -20725,7 +22384,8 @@ fn apply_champions_modifiers(moves: &mut HashMap<Choices, Choice>) {
         target: MoveTarget::Opponent,
         effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
     }]);
-    moves.get_mut(&Choices::MAKEITRAIN).unwrap().base_power = 95.0;
+    moves.get_mut(&Choices::MAKEITRAIN).unwrap().base_power = 120.0;
+    moves.get_mut(&Choices::MAKEITRAIN).unwrap().accuracy = 95.0;
     moves.get_mut(&Choices::MAKEITRAIN).unwrap().boost = Some(Boost {
         target: MoveTarget::User,
         boosts: StatBoosts {
@@ -20735,6 +22395,7 @@ fn apply_champions_modifiers(moves: &mut HashMap<Choices, Choice>) {
             special_defense: 0,
             speed: 0,
             accuracy: 0,
+            evasion: 0,
         },
     });
     moves.get_mut(&Choices::MOONBLAST).unwrap().secondaries = Some(vec![Secondary {
@@ -20746,7 +22407,7 @@ fn apply_champions_modifiers(moves: &mut HashMap<Choices, Choice>) {
             special_attack: -1,
             special_defense: 0,
             speed: 0,
-            accuracy: 0,
+            accuracy: 0, evasion: 0,
         }),
     }]);
     moves.get_mut(&Choices::MOUNTAINGALE).unwrap().base_power = 120.0;
@@ -20757,7 +22418,8 @@ fn apply_champions_modifiers(moves: &mut HashMap<Choices, Choice>) {
     moves.get_mut(&Choices::SNAPTRAP).unwrap().move_type = PokemonType::STEEL;
     moves.get_mut(&Choices::SNIPESHOT).unwrap().base_power = 85.0;
     moves.get_mut(&Choices::SPIRITSHACKLE).unwrap().base_power = 90.0;
-    moves.get_mut(&Choices::SYRUPBOMB).unwrap().base_power = 90.0;
+    moves.get_mut(&Choices::SYRUPBOMB).unwrap().base_power = 60.0;
+    moves.get_mut(&Choices::SYRUPBOMB).unwrap().accuracy = 90.0;
     moves.get_mut(&Choices::TOXICTHREAD).unwrap().boost = Some(Boost {
         target: MoveTarget::Opponent,
         boosts: StatBoosts {
@@ -20767,8 +22429,17 @@ fn apply_champions_modifiers(moves: &mut HashMap<Choices, Choice>) {
             special_defense: 0,
             speed: -2,
             accuracy: 0,
+            evasion: 0,
         },
     });
     moves.get_mut(&Choices::TRIPLEDIVE).unwrap().base_power = 35.0;
     moves.get_mut(&Choices::TROPKICK).unwrap().base_power = 85.0;
+    // Values pokemon-showdown's champions mod (data/mods/champions/moves.ts)
+    // changed after the list above was written.
+    moves.get_mut(&Choices::SWAGGER).unwrap().accuracy = 85.0;
+    moves.get_mut(&Choices::SLASH).unwrap().base_power = 80.0;
+    moves.get_mut(&Choices::METEORASSAULT).unwrap().base_power = 170.0;
+    moves.get_mut(&Choices::DRAGONCHEER).unwrap().base_power = 0.0;
+    moves.get_mut(&Choices::GROWTH).unwrap().move_type = PokemonType::GRASS;
+    moves.get_mut(&Choices::FREEZEDRY).unwrap().secondaries = None;
 }

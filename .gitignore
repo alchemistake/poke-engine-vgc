@@ -5,3 +5,6 @@
 *.so
 **__pycache**
 poke-engine-py/docs/build/
+
+# fuzz harness output (per-run artifacts, never committed)
+fuzz/work/

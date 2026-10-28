@@ -2391,7 +2391,7 @@ pub fn ability_modify_attack_against(
                         special_attack: 1,
                         special_defense: 0,
                         speed: 0,
-                        accuracy: 0,
+                        accuracy: 0, evasion: 0,
                     },
                     target: MoveTarget::Opponent,
                 });
@@ -2409,76 +2409,19 @@ pub fn ability_modify_attack_against(
                 attacker_choice.category = MoveCategory::Status;
             }
         }
-        Abilities::STEAMENGINE => {
-            if attacker_choice.move_type == PokemonType::WATER
-                || attacker_choice.move_type == PokemonType::FIRE
+        // Defender self-boosts on being hit (shared with the doubles engine).
+        Abilities::WEAKARMOR
+        | Abilities::STEAMENGINE
+        | Abilities::THERMALEXCHANGE
+        | Abilities::WATERCOMPACTION
+        | Abilities::JUSTIFIED => {
+            if let Some(boosts) =
+                super::mechanics::on_damaging_hit_boosts(target_pkmn.ability, attacker_choice)
             {
                 attacker_choice.add_or_create_secondaries(Secondary {
                     chance: 100.0,
                     target: MoveTarget::Opponent,
-                    effect: Effect::Boost(StatBoosts {
-                        attack: 0,
-                        defense: 0,
-                        special_attack: 0,
-                        special_defense: 0,
-                        speed: 6,
-                        accuracy: 0,
-                    }),
-                });
-            }
-        }
-        Abilities::THERMALEXCHANGE => {
-            if attacker_choice.move_type == PokemonType::FIRE {
-                attacker_choice.add_or_create_secondaries(Secondary {
-                    chance: 100.0,
-                    target: MoveTarget::Opponent,
-                    effect: Effect::Boost(StatBoosts {
-                        attack: 1,
-                        defense: 0,
-                        special_attack: 0,
-                        special_defense: 0,
-                        speed: 0,
-                        accuracy: 0,
-                    }),
-                });
-            }
-        }
-        #[cfg(any(
-            feature = "champions",
-            feature = "gen9",
-            feature = "gen8",
-            feature = "gen7"
-        ))]
-        Abilities::WEAKARMOR => {
-            if attacker_choice.category == MoveCategory::Physical {
-                attacker_choice.add_or_create_secondaries(Secondary {
-                    chance: 100.0,
-                    target: MoveTarget::Opponent,
-                    effect: Effect::Boost(StatBoosts {
-                        attack: 0,
-                        defense: -1,
-                        special_attack: 0,
-                        special_defense: 0,
-                        speed: 2,
-                        accuracy: 0,
-                    }),
-                });
-            }
-        }
-        #[cfg(any(feature = "gen6", feature = "gen5", feature = "gen4"))]
-        Abilities::WEAKARMOR => {
-            if attacker_choice.category == MoveCategory::Physical {
-                attacker_choice.add_or_create_secondaries(Secondary {
-                    chance: 100.0,
-                    target: MoveTarget::Opponent,
-                    effect: Effect::Boost(StatBoosts {
-                        attack: 0,
-                        defense: -1,
-                        special_attack: 0,
-                        special_defense: 0,
-                        speed: 1,
-                        accuracy: 0,
-                    }),
+                    effect: Effect::Boost(boosts),
                 });
             }
         }
@@ -2500,7 +2443,7 @@ pub fn ability_modify_attack_against(
                         special_attack: 0,
                         special_defense: 0,
                         speed: 0,
-                        accuracy: 0,
+                        accuracy: 0, evasion: 0,
                     },
                     target: MoveTarget::Opponent,
                 });
@@ -2568,7 +2511,7 @@ pub fn ability_modify_attack_against(
                         special_attack: 0,
                         special_defense: 0,
                         speed: -1,
-                        accuracy: 0,
+                        accuracy: 0, evasion: 0,
                     }),
                 })
             }
@@ -2585,7 +2528,7 @@ pub fn ability_modify_attack_against(
                         special_attack: 0,
                         special_defense: 0,
                         speed: 1,
-                        accuracy: 0,
+                        accuracy: 0, evasion: 0,
                     },
                     target: MoveTarget::Opponent,
                 });
@@ -2604,7 +2547,7 @@ pub fn ability_modify_attack_against(
                         special_attack: 0,
                         special_defense: 0,
                         speed: 0,
-                        accuracy: 0,
+                        accuracy: 0, evasion: 0,
                     },
                     target: MoveTarget::Opponent,
                 });
@@ -2675,7 +2618,7 @@ pub fn ability_modify_attack_against(
                         special_attack: 0,
                         special_defense: 0,
                         speed: 0,
-                        accuracy: 0,
+                        accuracy: 0, evasion: 0,
                     },
                     target: MoveTarget::Opponent,
                 });
@@ -2738,7 +2681,7 @@ pub fn ability_modify_attack_against(
                         special_attack: 0,
                         special_defense: 0,
                         speed: -1,
-                        accuracy: 0,
+                        accuracy: 0, evasion: 0,
                     }),
                 })
             }
@@ -2775,43 +2718,11 @@ pub fn ability_modify_attack_against(
                         special_attack: 1,
                         special_defense: 0,
                         speed: 0,
-                        accuracy: 0,
+                        accuracy: 0, evasion: 0,
                     },
                     target: MoveTarget::Opponent,
                 });
                 attacker_choice.category = MoveCategory::Status;
-            }
-        }
-        Abilities::WATERCOMPACTION => {
-            if attacker_choice.move_type == PokemonType::WATER {
-                attacker_choice.add_or_create_secondaries(Secondary {
-                    chance: 100.0,
-                    target: MoveTarget::Opponent,
-                    effect: Effect::Boost(StatBoosts {
-                        attack: 0,
-                        defense: 2,
-                        special_attack: 0,
-                        special_defense: 0,
-                        speed: 0,
-                        accuracy: 0,
-                    }),
-                });
-            }
-        }
-        Abilities::JUSTIFIED => {
-            if attacker_choice.move_type == PokemonType::DARK {
-                attacker_choice.add_or_create_secondaries(Secondary {
-                    chance: 100.0,
-                    target: MoveTarget::Opponent,
-                    effect: Effect::Boost(StatBoosts {
-                        attack: 1,
-                        defense: 0,
-                        special_attack: 0,
-                        special_defense: 0,
-                        speed: 0,
-                        accuracy: 0,
-                    }),
-                })
             }
         }
         Abilities::ICESCALES => {
@@ -2922,7 +2833,7 @@ pub fn ability_modify_attack_against(
                         special_attack: 0,
                         special_defense: 0,
                         speed: 1,
-                        accuracy: 0,
+                        accuracy: 0, evasion: 0,
                     }),
                 });
             }

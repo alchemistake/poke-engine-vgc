@@ -1015,7 +1015,7 @@ pub fn item_modify_attack_against(
                         special_attack: 1,
                         special_defense: 0,
                         speed: 0,
-                        accuracy: 0,
+                        accuracy: 0, evasion: 0,
                     }),
                     target: MoveTarget::Opponent,
                 });
@@ -1059,7 +1059,7 @@ pub fn item_modify_attack_against(
                         special_attack: 0,
                         special_defense: 0,
                         speed: 0,
-                        accuracy: 0,
+                        accuracy: 0, evasion: 0,
                     }),
                     target: MoveTarget::Opponent,
                 });
@@ -1097,7 +1097,7 @@ pub fn item_modify_attack_against(
                         special_attack: 2,
                         special_defense: 0,
                         speed: 0,
-                        accuracy: 0,
+                        accuracy: 0, evasion: 0,
                     }),
                     target: MoveTarget::Opponent,
                 });
@@ -1357,7 +1357,7 @@ pub fn item_modify_attack_being_used(
                         special_attack: 1,
                         special_defense: 0,
                         speed: 0,
-                        accuracy: 0,
+                        accuracy: 0, evasion: 0,
                     }),
                     target: MoveTarget::User,
                 });

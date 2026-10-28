@@ -466,7 +466,7 @@ pub fn ability_modify_attack_against(
                         special_attack: 1,
                         special_defense: 0,
                         speed: 0,
-                        accuracy: 0,
+                        accuracy: 0, evasion: 0,
                     },
                     target: MoveTarget::Opponent,
                 });

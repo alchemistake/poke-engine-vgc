@@ -5,4 +5,5 @@ pub mod damage_calc;
 pub mod evaluate;
 pub mod generate_instructions;
 pub mod items;
+pub mod mechanics;
 pub mod state;

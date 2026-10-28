@@ -38,6 +38,9 @@ enum SubCommand {
     MonteCarloTreeSearch(MonteCarloTreeSearch),
     CalculateDamage(CalculateDamage),
     GenerateInstructions(GenerateInstructions),
+    DoublesBattle(DoublesBattleArgs),
+    DoublesReplay(DoublesReplayArgs),
+    DoublesFuzzBattle(DoublesFuzzBattleArgs),
 }
 
 #[derive(Parser)]
@@ -101,6 +104,38 @@ struct GenerateInstructions {
 
     #[clap(short = 't', long, required = true)]
     side_two_move: String,
+}
+
+#[derive(Parser)]
+struct DoublesBattleArgs {
+    /// Path to the battle input JSON (teams, seed, leads).
+    #[clap(short, long, required = true)]
+    input: String,
+
+    /// Optional path to write the result JSON. Prints to stdout if omitted.
+    #[clap(short, long)]
+    output: Option<String>,
+}
+
+#[derive(Parser)]
+struct DoublesReplayArgs {
+    /// Path to the extracted battle JSON (teams + ground-truth moves).
+    #[clap(short, long, required = true)]
+    input: String,
+    /// Optional path to write the full replay result JSON (per-turn HP, etc.).
+    #[clap(short, long)]
+    output: Option<String>,
+}
+
+#[derive(Parser)]
+struct DoublesFuzzBattleArgs {
+    /// Path to the battle input JSON (teams, seed, leads, explicit choices).
+    #[clap(short, long, required = true)]
+    input: String,
+
+    /// Optional path to write the result JSON. Prints to stdout if omitted.
+    #[clap(short, long)]
+    output: Option<String>,
 }
 
 impl Default for IOData {
@@ -378,6 +413,100 @@ pub fn main() {
                     true,
                 );
                 pprint_state_instruction_vector(&instructions);
+            }
+            #[cfg(not(any(feature = "gen1", feature = "gen2", feature = "gen3")))]
+            SubCommand::DoublesBattle(args) => {
+                let json = std::fs::read_to_string(&args.input)
+                    .unwrap_or_else(|e| panic!("failed to read {}: {}", args.input, e));
+                let input: crate::doubles::state::BattleInput =
+                    serde_json::from_str(&json).unwrap_or_else(|e| panic!("bad JSON: {}", e));
+                let mut dstate = crate::doubles::state::DoublesState::from_input(&input);
+                let leads = input
+                    .leads
+                    .clone()
+                    .unwrap_or(crate::doubles::state::Leads {
+                        a: vec![0, 1],
+                        b: vec![0, 1],
+                    });
+                dstate.send_out_leads(&leads.a, &leads.b);
+                let mut rng = crate::doubles::rng::Gen5Rng::new(input.seed);
+                let result = crate::doubles::battle::run_battle(&mut dstate, &mut rng);
+                let out_json = serde_json::to_string_pretty(&result)
+                    .unwrap_or_else(|e| panic!("serialize: {}", e));
+                if let Some(path) = &args.output {
+                    std::fs::write(path, &out_json)
+                        .unwrap_or_else(|e| panic!("write {}: {}", path, e));
+                    println!("Wrote {}", path);
+                } else {
+                    println!("{}", out_json);
+                }
+            }
+            SubCommand::DoublesFuzzBattle(args) => {
+                let json = std::fs::read_to_string(&args.input)
+                    .unwrap_or_else(|e| panic!("failed to read {}: {}", args.input, e));
+                let input: crate::doubles::state::BattleInput =
+                    serde_json::from_str(&json).unwrap_or_else(|e| panic!("bad JSON: {}", e));
+                let choices = input
+                    .choices
+                    .clone()
+                    .unwrap_or_else(|| panic!("doubles-fuzz-battle requires `choices` in the input"));
+                let mut dstate = crate::doubles::state::DoublesState::from_input(&input);
+                let leads = input
+                    .leads
+                    .clone()
+                    .unwrap_or(crate::doubles::state::Leads {
+                        a: vec![0, 1],
+                        b: vec![0, 1],
+                    });
+                dstate.send_out_leads(&leads.a, &leads.b);
+                let mut rng = crate::doubles::rng::Gen5Rng::new(input.seed);
+                rng.trace = true;
+                let result = crate::doubles::battle::run_battle_fuzz(
+                    &mut dstate,
+                    &mut rng,
+                    &choices,
+                    input.stop_after,
+                );
+                let out_json = serde_json::to_string_pretty(&result)
+                    .unwrap_or_else(|e| panic!("serialize: {}", e));
+                if let Some(path) = &args.output {
+                    std::fs::write(path, &out_json)
+                        .unwrap_or_else(|e| panic!("write {}: {}", path, e));
+                    println!("Wrote {}", path);
+                } else {
+                    println!("{}", out_json);
+                }
+            }
+            #[cfg(not(any(feature = "gen1", feature = "gen2", feature = "gen3")))]
+            SubCommand::DoublesReplay(args) => {
+                let json = std::fs::read_to_string(&args.input)
+                    .unwrap_or_else(|e| panic!("failed to read {}: {}", args.input, e));
+                let input: crate::doubles::state::ReplayInput =
+                    serde_json::from_str(&json).unwrap_or_else(|e| panic!("bad JSON: {}", e));
+                let mut dstate =
+                    crate::doubles::state::DoublesState::from_teams(&input.teams);
+                let leads = input
+                    .leads
+                    .clone()
+                    .unwrap_or(crate::doubles::state::Leads {
+                        a: vec![0, 1],
+                        b: vec![0, 1],
+                    });
+                dstate.send_out_leads(&leads.a, &leads.b);
+                let result = crate::doubles::battle::run_battle_replay(&mut dstate, &input.moves);
+                println!("replay winner: {}", result.winner);
+                println!("ps   winner: {}", input.winner);
+                if result.winner == input.winner {
+                    println!("REPLAY MATCH: winner agrees");
+                } else {
+                    println!("REPLAY MISMATCH: winner differs");
+                }
+                if let Some(out_path) = &args.output {
+                    let out_json = serde_json::to_string_pretty(&result)
+                        .unwrap_or_else(|e| panic!("failed to serialize: {}", e));
+                    std::fs::write(out_path, out_json)
+                        .unwrap_or_else(|e| panic!("failed to write {}: {}", out_path, e));
+                }
             }
         },
     }

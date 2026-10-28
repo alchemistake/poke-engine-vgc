@@ -1364,17 +1364,14 @@ fn execute_action(
                 damage = fd;
             } else {
                 // Boosted stats, with crit rules (crit ignores negative attack /
-                // positive defense boosts).
+                // positive defense boosts) applied inside `calculate_damage`
+                // after the crit roll.
                 let att_boost = state.side(side).slot_boosts(slot).cloned().unwrap_or_default();
                 let def_boost = state
                     .side(target_side)
                     .slot_boosts(target_slot)
                     .cloned()
                     .unwrap_or_default();
-                // We don't know crit yet; compute both and pick after the roll.
-                // (calculate_damage draws crit internally, so pass base stats and
-                // let it apply boosts via ctx; crit boost-ignoring is handled by
-                // passing boosted values — a minor deviation noted below.)
                 let is_physical = choice.category == MoveCategory::Physical;
                 // Which stats the move uses (PS `getDamage`): physical ->
                 // Atk/Def, special -> SpA/SpD, except Psyshock (SpA vs Def)
@@ -1390,11 +1387,11 @@ fn execute_action(
                     _ if is_physical => (defender.defense, def_boost.def),
                     _ => (defender.special_defense, def_boost.spd),
                 };
-                let atk = multiply_boost(atk_boost_stat, base_atk).max(1);
-                let def = multiply_boost(def_boost_stat, base_def).max(1);
                 let ctx = DamageCtx {
-                    attack: atk,
-                    defense: def,
+                    attack_base: base_atk,
+                    attack_boost: atk_boost_stat,
+                    defense_base: base_def,
+                    defense_boost: def_boost_stat,
                     weather: state.weather.weather_type,
                     reflect: state.side(target_side).side_conditions.reflect > 0,
                     light_screen: state.side(target_side).side_conditions.light_screen > 0,
@@ -2942,17 +2939,31 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
                     .slot_pokemon(target_slot)
                     .expect("target must be present");
                 let is_physical = action.choice.category == MoveCategory::Physical;
+                let att_boost = state
+                    .side(action.side)
+                    .slot_boosts(action.slot)
+                    .cloned()
+                    .unwrap_or_default();
+                let def_boost = state
+                    .side(target_side)
+                    .slot_boosts(target_slot)
+                    .cloned()
+                    .unwrap_or_default();
+                let (attack_base, attack_boost) = if is_physical {
+                    (attacker.attack, att_boost.atk)
+                } else {
+                    (attacker.special_attack, att_boost.spa)
+                };
+                let (defense_base, defense_boost) = if is_physical {
+                    (defender.defense, def_boost.def)
+                } else {
+                    (defender.special_defense, def_boost.spd)
+                };
                 let ctx = DamageCtx {
-                    attack: if is_physical {
-                        attacker.attack
-                    } else {
-                        attacker.special_attack
-                    },
-                    defense: if is_physical {
-                        defender.defense
-                    } else {
-                        defender.special_defense
-                    },
+                    attack_base,
+                    attack_boost,
+                    defense_base,
+                    defense_boost,
                     weather: state.weather.weather_type,
                     reflect: false,
                     light_screen: false,

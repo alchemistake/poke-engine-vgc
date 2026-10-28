@@ -198,6 +198,27 @@ pub fn target_hp_power(max_power: i64, hp: i16, maxhp: i16) -> f32 {
     bp.max(1) as f32
 }
 
+/// Apply a stat stage to a base stat, matching pokemon-showdown's
+/// `calculateStat` stage multipliers (integer, truncating).
+pub fn boost_stat(boost: i8, base: i16) -> i16 {
+    match boost {
+        -6 => base * 2 / 8,
+        -5 => base * 2 / 7,
+        -4 => base * 2 / 6,
+        -3 => base * 2 / 5,
+        -2 => base * 2 / 4,
+        -1 => base * 2 / 3,
+        0 => base,
+        1 => base * 3 / 2,
+        2 => base * 4 / 2,
+        3 => base * 5 / 2,
+        4 => base * 6 / 2,
+        5 => base * 7 / 2,
+        6 => base * 8 / 2,
+        _ => base,
+    }
+}
+
 /// Defiant / Competitive (`onAfterEachBoost`): the stat raised by +2 when a
 /// foe lowers any of the holder's stats.
 pub fn stat_drop_reaction(ability: Abilities) -> Option<(PokemonBoostableStat, i8)> {

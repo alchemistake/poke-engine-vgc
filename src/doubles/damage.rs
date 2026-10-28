@@ -70,12 +70,16 @@ pub struct DamageOutcome {
 /// `modifyDamage`.
 #[derive(Debug, Clone, Copy)]
 pub struct DamageCtx {
-    /// Effective offensive stat (boosts applied; negative boosts dropped on a
-    /// crit).
-    pub attack: i16,
-    /// Effective defensive stat (boosts applied; positive boosts dropped on a
-    /// crit).
-    pub defense: i16,
+    /// Base offensive stat (boosts applied in `calculate_damage`; negative
+    /// boosts dropped on a crit).
+    pub attack_base: i16,
+    /// Offensive stat stage.
+    pub attack_boost: i8,
+    /// Base defensive stat (boosts applied in `calculate_damage`; positive
+    /// boosts dropped on a crit).
+    pub defense_base: i16,
+    /// Defensive stat stage.
+    pub defense_boost: i8,
     pub weather: Weather,
     /// Defender side has Reflect active (halves physical damage).
     pub reflect: bool,
@@ -117,8 +121,6 @@ pub fn calculate_damage(
 
     let level = attacker.level;
     let is_physical = choice.category == MoveCategory::Physical;
-    let attack = ctx.attack.max(1);
-    let defense = ctx.defense.max(1);
 
     // critical roll (drawn in getDamage, before the damage roll).
     // Standard moves have critRatio 1 (1/24); crit-boosting moves (1/8) are
@@ -128,6 +130,23 @@ pub fn calculate_damage(
     if !crit && cm > 0 {
         crit = rng.label("crit").random_chance(1, cm as u32);
     }
+
+    // Effective stats. A crit ignores negative offensive boosts and positive
+    // defensive boosts (PS `getDamage`: `ignoreNegativeOffensive` /
+    // `ignorePositiveDefensive`), so the boosts are applied here, after the
+    // crit roll.
+    let mut atk_b = ctx.attack_boost;
+    let mut def_b = ctx.defense_boost;
+    if crit {
+        if atk_b < 0 {
+            atk_b = 0;
+        }
+        if def_b > 0 {
+            def_b = 0;
+        }
+    }
+    let attack = crate::engine::mechanics::boost_stat(atk_b, ctx.attack_base).max(1);
+    let defense = crate::engine::mechanics::boost_stat(def_b, ctx.defense_base).max(1);
 
     // Fickle Beam (PS `onBasePower`, drawn in the BasePower event after
     // the crit roll): 30% chance of double power.

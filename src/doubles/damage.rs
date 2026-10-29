@@ -114,6 +114,11 @@ pub struct DamageCtx {
     pub defense_mod: i64,
     /// Extra critical-hit stages (Focus Energy +2).
     pub crit_bonus: i32,
+    /// Number of screen side conditions (Reflect / Light Screen / Aurora
+    /// Veil, both sides) on the field. Each has an `onAnyModifyDamage`
+    /// handler; they tie in the `ModifyDamage` event's `speedSort`, which
+    /// shuffles (n - 1 draws).
+    pub screen_handlers: u8,
     /// Effective base power after multiplier effects (Helping Hand);
     /// 0.0 = use `choice.base_power`.
     pub base_power_override: f32,
@@ -181,6 +186,14 @@ pub fn calculate_damage(
         }
     }
     let mut attack = crate::engine::mechanics::boost_stat(atk_b, ctx.attack_base).max(1);
+    // Hustle `onModifyAtk` (priority 5): `this.modify(atk, 1.5)` applied
+    // directly to the stat, before the chained modifiers. PS data/abilities.ts.
+    if attacker.ability == crate::engine::abilities::Abilities::HUSTLE
+        && choice.category == crate::choices::MoveCategory::Physical
+        && choice.move_id != crate::choices::Choices::BODYPRESS
+    {
+        attack = ((attack as i64 * 6144 + 2047) / 4096) as i16;
+    }
     // PS `runEvent('ModifyAtk'/'ModifySpA')`: chained modifier applied once.
     if ctx.attack_mod != 4096 {
         attack = ((attack as i64 * ctx.attack_mod + 2047) / 4096) as i16;
@@ -273,6 +286,11 @@ pub fn calculate_damage(
     let mut chain_in = |m: i64| chain = (chain * m + 2048) >> 12;
     if ctx.defender_mod != 4096 {
         chain_in(ctx.defender_mod);
+    }
+    // PS `runEvent('ModifyDamage')` -> `speedSort` over the handlers; the
+    // screens share order / priority / subOrder (4) / speed, so they shuffle.
+    for m in (2..=ctx.screen_handlers as u32).rev() {
+        let _ = rng.label("speed tie (move order)").random(m);
     }
     if !crit && ((ctx.reflect && is_physical) || (ctx.light_screen && !is_physical)) {
         chain_in(2732);

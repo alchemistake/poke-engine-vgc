@@ -124,6 +124,12 @@ pub struct ActiveSlot {
     /// `leechseed` volatile: the source's slot (side, slot) — PS
     /// `effectState.sourceSlot`, resolved with `getAtSlot` at residual time.
     pub leech_seed: Option<(Side, usize)>,
+    /// `dragoncheer` volatile: `Some(hasDragonType)` fixed at start
+    /// (crit ratio +2 if Dragon, else +1). PS data/moves.ts dragoncheer.
+    pub dragon_cheer: Option<bool>,
+    /// `roost` volatile (duration 1): the pokemon's types before Flying was
+    /// filtered out (`onType`); restored at residual / switch-out / faint.
+    pub roost_orig: Option<(PokemonType, PokemonType)>,
     /// `aquaring` volatile: heals 1/16 max HP each residual (order 6).
     pub aqua_ring: bool,
     /// `counter` / `mirrorcoat` volatiles (duration 1): the last foe slot that
@@ -226,6 +232,8 @@ impl ActiveSlot {
             focus_energy: false,
             attract: None,
             leech_seed: None,
+            dragon_cheer: None,
+            roost_orig: None,
             aqua_ring: false,
             counter_vol: None,
             mirror_coat_vol: None,
@@ -304,6 +312,8 @@ pub struct DoublesSide {
     /// Supersweet Syrup already triggered (PS `syrupTriggered`, once per
     /// battle per pokemon).
     pub syrup_triggered: [bool; 6],
+    /// PS `moveSlot.used` per team member / move slot (set by `deductPP`).
+    pub moves_used: [[bool; 4]; 6],
 }
 
 impl DoublesSide {
@@ -889,6 +899,7 @@ impl DoublesState {
             future_move: [None, None],
             sc_order: Vec::new(),
             syrup_triggered: [false; 6],
+            moves_used: [[false; 4]; 6],
         };
         let mut side_two = DoublesSide {
             team: std::array::from_fn(|_| Pokemon::default()),
@@ -905,6 +916,7 @@ impl DoublesState {
             future_move: [None, None],
             sc_order: Vec::new(),
             syrup_triggered: [false; 6],
+            moves_used: [[false; 4]; 6],
         };
         for (i, m) in teams.a.iter().enumerate().take(6) {
             side_one.team[i] = build_pokemon(m);

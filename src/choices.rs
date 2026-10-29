@@ -22370,6 +22370,13 @@ fn apply_champions_modifiers(moves: &mut HashMap<Choices, Choice>) {
     moves.get_mut(&Choices::CRABHAMMER).unwrap().base_power = 100.0;
     moves.get_mut(&Choices::CRABHAMMER).unwrap().accuracy = 95.0;
     moves.get_mut(&Choices::DRAGONCLAW).unwrap().flags.slicing = true;
+    // data/mods/champions/moves.ts flag overrides.
+    moves.get_mut(&Choices::CRUSHCLAW).unwrap().flags.slicing = true;
+    moves.get_mut(&Choices::DIRECLAW).unwrap().flags.slicing = true;
+    moves.get_mut(&Choices::METALCLAW).unwrap().flags.slicing = true;
+    moves.get_mut(&Choices::DOUBLESHOCK).unwrap().flags.punch = true;
+    moves.get_mut(&Choices::DRAGONCHEER).unwrap().flags.sound = true;
+    moves.get_mut(&Choices::HOWL).unwrap().flags.sound = true;
     moves.get_mut(&Choices::DRAGONHAMMER).unwrap().base_power = 90.0;
     moves.get_mut(&Choices::FIRELASH).unwrap().base_power = 90.0;
     moves.get_mut(&Choices::FIRSTIMPRESSION).unwrap().base_power = 100.0;

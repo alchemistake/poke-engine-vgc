@@ -1020,6 +1020,15 @@ pub fn run_battle_fuzz(
                 if let Some((i, sw)) = found {
                     used_switches[i] = true;
                     if let Some(position) = sw.position {
+                        // PS `runPursuitActivation` (sim/battle-actions.ts, called
+                        // from `Battle.runAction` for a live pokemon with a
+                        // `switchFlag`): `eachEvent('Update')` (gen >= 5).
+                        // Baton Pass / Shed Tail set `skipPursuit` in `self.onHit`
+                        // (PS data/moves.ts), so they skip it.
+                        // TODO(PS parity): Shed Tail (not in the engine yet).
+                        if !state.side(side).active[slot].baton_passing {
+                            each_event_update(state, rng);
+                        }
                         // The switch answer (`commitChoices` -> `updateSpeed`),
                         // the `instaswitch` action, then the `runSwitch` action.
                         update_speed(state);
@@ -1061,6 +1070,7 @@ pub fn run_battle_fuzz(
                         }
                         each_event_update(state, rng);
                         let _ = sorted_actives(state, rng, "speed tie (switch-in)");
+                        apply_sticky_web(state, side, slot);
                         // TODO(PS parity): `fieldEvent('SwitchIn')` handler ties.
                         if apply_on_switch_abilities(state, side, slot, rng) {
                             let _ = sorted_actives(state, rng, "speed tie (switch-in)");
@@ -1337,6 +1347,7 @@ fn drag_in_all(state: &mut DoublesState, rng: &mut Gen5Rng) {
             let pick = options[rng.label("drag in").random(options.len() as u32) as usize];
             switch_in(state, side, slot, pick);
             let _ = sorted_actives(state, rng, "speed tie (switch-in)");
+            apply_sticky_web(state, side, slot);
             if apply_on_switch_abilities(state, side, slot, rng) {
                 let _ = sorted_actives(state, rng, "speed tie (switch-in)");
             }
@@ -4425,6 +4436,17 @@ fn execute_action_inner(
                         false,
                     );
                 }
+                // Sand Spit `onDamagingHit`: `field.setWeather('sandstorm')`;
+                // fails if already up, else `eachEvent('WeatherChange')`.
+                // PS data/abilities.ts sandspit.
+                // TODO(PS parity): Smooth Rock duration, primal weather.
+                if ability == Abilities::SANDSPIT && state.weather.weather_type != Weather::SAND {
+                    state.weather = crate::state::StateWeather {
+                        weather_type: Weather::SAND,
+                        turns_remaining: 5,
+                    };
+                    let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+                }
                 // Gooey / Tangling Hair (`onDamagingHit`): a contact hit lowers
                 // the attacker's Speed by 1 stage.
                 // TODO(PS parity): `checkMoveMakesContact` (Long Reach, Protective Pads).
@@ -4834,6 +4856,15 @@ fn base_power_with_modifiers(
 /// callback; use `choice.base_power`). Reversal / Flail scale with the
 /// user's remaining HP; Hard Press / Crush Grip / Wring Out with the
 /// target's.
+/// Residual / weather / status damage: PS `Magic Guard` `onDamage` returns
+/// false for any non-Move effect (data/abilities.ts magicguard).
+fn apply_indirect_damage(state: &mut DoublesState, side: Side, slot: usize, dmg: i16) -> bool {
+    if state.side(side).slot_pokemon(slot).map(|p| p.ability == Abilities::MAGICGUARD).unwrap_or(false) {
+        return false;
+    }
+    apply_damage(state, side, slot, dmg)
+}
+
 /// PS `side.totalFainted`: fainted members of the battle team.
 fn side_total_fainted(state: &DoublesState, side: Side) -> u32 {
     let sd = state.side(side);
@@ -6235,6 +6266,22 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
     }
 }
 
+/// Sticky Web `onSwitchIn` (runs in the `runSwitch` action, after the
+/// switch-in speed sort): boost spe -1, sourced from the foe so Clear Body /
+/// Defiant react. PS data/moves.ts stickyweb.condition.onSwitchIn.
+fn apply_sticky_web(state: &mut DoublesState, side: Side, slot: usize) {
+    let s = state.side(side);
+    let Some(p) = s.slot_pokemon(slot) else { return };
+    if p.hp <= 0 || s.side_conditions.sticky_web == 0 || !p.is_grounded() {
+        return;
+    }
+    if p.item == crate::engine::items::Items::HEAVYDUTYBOOTS {
+        return;
+    }
+    let Some(idx) = s.active[slot].pokemon_index else { return };
+    apply_boosts(state, side, idx, &StatBoosts { speed: -1, ..Default::default() }, true);
+}
+
 /// `comparePriority` order value for a handler with no `on...Order`.
 const NO_ORDER: i64 = 4294967296;
 
@@ -6778,7 +6825,7 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
                         .iter()
                         .any(|t| types.0 == *t || types.1 == *t);
                     if !immune {
-                        apply_damage(state, side, slot, (p2.maxhp / 16) as i16);
+                        apply_indirect_damage(state, side, slot, (p2.maxhp / 16) as i16);
                     }
                 }
                 each_event_update(state, rng);
@@ -6807,7 +6854,7 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
                 }
             }
             if dmg > 0 {
-                apply_damage(state, side, slot, dmg);
+                apply_indirect_damage(state, side, slot, dmg);
             }
             }
             ResidualKind::ThroatChop(side, slot) => {
@@ -6954,7 +7001,7 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
                 if !src_alive {
                     continue;
                 }
-                apply_damage(state, side, slot, (maxhp / 8).max(1));
+                apply_indirect_damage(state, side, slot, (maxhp / 8).max(1));
                 // After a faint the slot is empty: the target took all its HP.
                 let dealt = hp0 - state.side(side).slot_pokemon(slot).map(|q| q.hp).unwrap_or(0);
                 if dealt > 0 {
@@ -6974,7 +7021,7 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
                 if let Some(p) = state.side(side).slot_pokemon(slot) {
                     if p.hp > 0 {
                         let q = (p.maxhp / 4).max(1);
-                        apply_damage(state, side, slot, q);
+                        apply_indirect_damage(state, side, slot, q);
                     }
                 }
             }
@@ -7148,14 +7195,14 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
                     continue;
                 }
                 let maxhp = state.side(side).slot_pokemon(slot).map(|p| p.maxhp).unwrap_or(0);
-                apply_damage(state, side, slot, (maxhp / t.divisor).max(1));
+                apply_indirect_damage(state, side, slot, (maxhp / t.divisor).max(1));
             }
             ResidualKind::SaltCure(side, slot) => {
                 if let Some(p) = state.side(side).slot_pokemon(slot) {
                     let has = |t| p.types.0 == t || p.types.1 == t;
                     let div = if has(PokemonType::WATER) || has(PokemonType::STEEL) { 8 } else { 16 };
                     let dmg = (p.maxhp / div).max(1);
-                    apply_damage(state, side, slot, dmg);
+                    apply_indirect_damage(state, side, slot, dmg);
                 }
             }
             ResidualKind::GrassyHeal(side, slot) => {
@@ -7237,6 +7284,9 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
     if !pending_switches.is_empty() {
         each_event_update(state, rng);
         let _ = sorted_actives(state, rng, "speed tie (switch-in)");
+        for (side, slot, _) in pending_switches {
+            apply_sticky_web(state, *side, *slot);
+        }
     }
 
     // On-switch abilities (Intimidate) for each newly switched-in pokemon.

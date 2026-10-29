@@ -159,6 +159,8 @@ pub struct ActiveSlot {
     pub syrup_bomb: Option<(Side, PokemonIndex, u8)>,
     /// PS `pokemon.hurtThisTurn`: lost HP earlier this turn (Assurance).
     pub hurt_this_turn: bool,
+    /// PS `pokemon.newlySwitched`: switched in since the turn started (Payback).
+    pub newly_switched: bool,
     /// The `twoturnmove` volatile (duration 2) is still around for this
     /// turn's residual after the charged move fired.
     pub twoturn_fired: bool,
@@ -289,6 +291,7 @@ impl ActiveSlot {
             heal_block: 0,
             syrup_bomb: None,
             hurt_this_turn: false,
+            newly_switched: false,
             twoturn_fired: false,
             encore: None,
             torment: false,

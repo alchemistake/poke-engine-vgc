@@ -2087,16 +2087,20 @@ fn execute_action_inner(
         }
         // Sucker Punch / Thunderclap `onTry`: fails unless the target still has
         // a queued attacking move (`queue.willMove(target)`) and is not
-        // recharging. PS data/moves.ts suckerpunch / thunderclap.
+        // recharging. PS data/moves.ts suckerpunch / thunderclap. `willMove`
+        // matches the pokemon, not its slot (an Ally Switch may have moved it).
         Choices::SUCKERPUNCH | Choices::THUNDERCLAP
             if !is_self
                 && !is_field
                 && (state.side(target_side).active[target_slot].recharging
-                    || !queue.iter().any(|a| {
-                        a.side == target_side
-                            && a.slot == target_slot
-                            && a.choice.category != MoveCategory::Status
-                    })) =>
+                    || {
+                        let tidx = state.side(target_side).active[target_slot].pokemon_index;
+                        !queue.iter().any(|a| {
+                            a.side == target_side
+                                && Some(a.pokemon_index) == tidx
+                                && a.choice.category != MoveCategory::Status
+                        })
+                    }) =>
         {
             push_order();
             return;
@@ -2295,7 +2299,6 @@ fn execute_action_inner(
 
     // Payback `basePowerCallback`: doubled unless the target is newly switched
     // in or still has a queued move (`queue.willMove(target)`).
-    // TODO(PS parity): `newlySwitched`.
     state.side_mut(side).active[slot].bp_double = false;
     // Assurance `basePowerCallback`: doubled if the target was hurt earlier this turn.
     if choice.move_id == Choices::ASSURANCE && !is_self && !is_field {
@@ -2304,7 +2307,8 @@ fn execute_action_inner(
     if choice.move_id == Choices::PAYBACK && !is_self && !is_field {
         let tidx = state.side(target_side).active[target_slot].pokemon_index;
         let will_move = queue.iter().any(|a| a.side == target_side && Some(a.pokemon_index) == tidx);
-        state.side_mut(side).active[slot].bp_double = !will_move;
+        let newly = state.side(target_side).active[target_slot].newly_switched;
+        state.side_mut(side).active[slot].bp_double = !will_move && !newly;
     }
 
     // Future Sight / Doom Desire `onTry`: queue the delayed hit on the target's
@@ -2365,23 +2369,41 @@ fn execute_action_inner(
     // the single-target pre-hit checks (no draws), then rolls its own accuracy.
     // TODO(PS parity): invulnerability exceptions (Earthquake vs Dig, ...).
     let move_ty = crate::doubles::move_targets::ps_move_target(&choice.move_id.to_string().to_lowercase());
-    let is_spread = matches!(move_ty, "allAdjacentFoes" | "allAdjacent") && !is_self && !is_field;
+    // PS `smartTarget` (Dragon Darts, multihit 2): `getSmartTargets` pairs the
+    // chosen foe with its adjacent ally, chosen first. Both are accuracy-rolled
+    // up front; hit N then hits `targets[N - 1]` only (`hitStepMoveHitLoop`).
+    // No spread damage modifier (`spreadHit` is not set for smartTarget).
+    let smart_target = choice.move_id == Choices::DRAGONDARTS
+        && !is_self
+        && !is_ally
+        && !is_field
+        && slot_alive(state, target_side, target_slot)
+        && slot_alive(state, target_side, 1 - target_slot);
+    let is_spread = (matches!(move_ty, "allAdjacentFoes" | "allAdjacent") || smart_target) && !is_self && !is_field;
     let mut spread_list: Vec<(Side, usize)> = Vec::new();
     // PS `trySpreadMoveHit`: `spreadHit` is set from the original target list.
     let mut spread_count = 0usize;
+    // Set when the smartTarget pair survives the accuracy step (PS clears
+    // `smartTarget` on any failure, and the hits then go to the whole list).
+    let mut smart_hits = false;
     // Flash Fire `onTryHit` sets `move.accuracy = true` for the rest of the move.
     let mut flash_fire_used = false;
     if is_spread {
         let mut cands: Vec<(Side, usize)> = Vec::new();
-        if move_ty == "allAdjacent" && slot_alive(state, side, 1 - slot) {
-            cands.push((side, 1 - slot));
-        }
-        for sl in 0..2 {
-            if slot_alive(state, side.other(), sl) {
-                cands.push((side.other(), sl));
+        if smart_target {
+            cands.push((target_side, target_slot));
+            cands.push((target_side, 1 - target_slot));
+        } else {
+            if move_ty == "allAdjacent" && slot_alive(state, side, 1 - slot) {
+                cands.push((side, 1 - slot));
+            }
+            for sl in 0..2 {
+                if slot_alive(state, side.other(), sl) {
+                    cands.push((side.other(), sl));
+                }
             }
         }
-        spread_count = cands.len();
+        spread_count = if smart_target { 1 } else { cands.len() };
         let damaging = matches!(choice.category, MoveCategory::Physical | MoveCategory::Special);
         for (ts, tsl) in cands {
             // PS checkMoveBypassesProtect: only moves with the `protect` flag are blocked.
@@ -3010,6 +3032,7 @@ fn execute_action_inner(
                 roll_accuracy_boosted(choice.accuracy, ab, eb, accuracy_ability_mods(st, side, idx, ts, tsl, choice), rng)
             });
         }
+        smart_hits = smart_target && spread_list.len() == 2;
         if spread_list.is_empty() {
             push_order();
             return;
@@ -3200,8 +3223,16 @@ fn execute_action_inner(
               a.bp_fixed = a.beat_up_queue.remove(0);
           }
       }
-      let hit_targets: Vec<(Side, usize)> =
-          if is_spread { spread_list.clone() } else { vec![(target_side, target_slot)] };
+      let hit_targets: Vec<(Side, usize)> = if smart_hits {
+          vec![spread_list[hit_idx as usize]]
+      } else if is_spread {
+          spread_list.clone()
+      } else {
+          vec![(target_side, target_slot)]
+      };
+      if smart_hits {
+          (target_side, target_slot) = hit_targets[0];
+      }
       // `multiaccuracy` (Triple Axel / Triple Kick): hits after the first roll
       // accuracy again; a miss ends the loop. PS sim/battle-actions.ts
       // hitStepMoveHitLoop. The loop top checks `targets.every(!hp)` before the
@@ -5310,8 +5341,10 @@ fn execute_action_inner(
 
       }
         // PS `hitStepMoveHitLoop`: `eachEvent('Update')` after every hit that
-        // did something. Field moves (`tryMoveHit`) have no hit loop.
-        if is_field || move_failed {
+        // did something. Field moves (`tryMoveHit`) have no hit loop; neither
+        // do `target: 'all'` moves (Haze), which PS runs through `tryMoveHit`
+        // (sim/battle-actions.ts useMoveInner).
+        if is_field || move_failed || move_ty == "all" {
             break;
         }
         hits_done += 1;
@@ -7304,6 +7337,8 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
             p.special_defense = st[3];
         }
         s.active[slot].pokemon_index = Some(idx);
+        // PS `clearVolatile` (switch-in): `newlySwitched = true`.
+        s.active[slot].newly_switched = true;
         s.active[slot].illusion_target = if s.team_member(idx).ability == Abilities::ILLUSION {
             Some(illusion_disguise(s, idx))
         } else {
@@ -8072,11 +8107,12 @@ fn end_of_turn(
                         state.side_mut(side).team_member_mut(idx).status = PokemonStatus::NONE;
                     }
                 } else {
-                    // Healer: 3/10 per statused adjacent ally.
+                    // Healer: 1/2 per statused adjacent ally (champions mod
+                    // `abilities.ts` healer `onResidual`; generic PS is 3/10).
                     let al = 1 - slot;
                     if let Some(aidx) = state.side(side).active[al].pokemon_index {
                         let a = state.side(side).team_member(aidx);
-                        if a.hp > 0 && a.status != PokemonStatus::NONE && rng.label("residual roll").random_chance(3, 10) {
+                        if a.hp > 0 && a.status != PokemonStatus::NONE && rng.label("residual roll").random_chance(1, 2) {
                             state.side_mut(side).team_member_mut(aidx).status = PokemonStatus::NONE;
                         }
                     }
@@ -8636,6 +8672,8 @@ fn end_of_turn(
             a.flinched = false;
             a.electrify = false;
             a.hurt_this_turn = false;
+            // PS `battle.ts` turn start: `pokemon.newlySwitched = false`.
+            a.newly_switched = false;
             a.protected = false;
             a.twoturn_fired = false;
             a.endure = false;

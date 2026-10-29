@@ -132,6 +132,8 @@ pub struct ActiveSlot {
     /// `glaiverush` volatile: moves against it always hit and deal x2 damage
     /// until its holder next tries to move (PS data/moves.ts glaiverush).
     pub glaive_rush: bool,
+    /// `ingrain` volatile: heals 1/16 max HP each residual (order 7).
+    pub ingrain: bool,
     /// `encore` volatile: the forced move and remaining duration.
     pub encore: Option<(crate::choices::Choices, u8)>,
     /// `roost` volatile (duration 1): the pokemon's types before Flying was
@@ -242,6 +244,7 @@ impl ActiveSlot {
             dragon_cheer: None,
             last_move: None,
             glaive_rush: false,
+            ingrain: false,
             encore: None,
             roost_orig: None,
             aqua_ring: false,
@@ -324,6 +327,12 @@ pub struct DoublesSide {
     pub syrup_triggered: [bool; 6],
     /// PS `moveSlot.used` per team member / move slot (set by `deductPP`).
     pub moves_used: [[bool; 4]; 6],
+    /// PS `pokemon.attackedBy` entries with damage (`getLastDamagedBy`), per
+    /// team member: (attacker side, attacker slot, damage, turn).
+    pub damaged_by: [Vec<(Side, usize, i16, u32)>; 6],
+    /// Original (atk, def, spa, spd) of a team member whose `storedStats` were
+    /// changed (Guard / Power Split); restored by `setSpecies` on switch-in.
+    pub saved_stats: [Option<[i16; 4]>; 6],
 }
 
 impl DoublesSide {
@@ -914,6 +923,8 @@ impl DoublesState {
             sc_order: Vec::new(),
             syrup_triggered: [false; 6],
             moves_used: [[false; 4]; 6],
+            damaged_by: std::array::from_fn(|_| Vec::new()),
+            saved_stats: [None; 6],
         };
         let mut side_two = DoublesSide {
             team: std::array::from_fn(|_| Pokemon::default()),
@@ -931,6 +942,8 @@ impl DoublesState {
             sc_order: Vec::new(),
             syrup_triggered: [false; 6],
             moves_used: [[false; 4]; 6],
+            damaged_by: std::array::from_fn(|_| Vec::new()),
+            saved_stats: [None; 6],
         };
         for (i, m) in teams.a.iter().enumerate().take(6) {
             side_one.team[i] = build_pokemon(m);

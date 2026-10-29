@@ -56,6 +56,12 @@ pub fn type_mod(attacking_type: &PokemonType, defender: &Pokemon) -> Option<i32>
     if mult == 0.0 {
         return None;
     }
+    // Ground moves miss airborne targets (Levitate, Air Balloon): PS
+    // `runImmunity('Ground')` -> `isGrounded`.
+    // TODO(PS parity): Gravity, Smack Down / Ingrain, Thousand Arrows.
+    if *attacking_type == PokemonType::GROUND && !defender.is_grounded() {
+        return None;
+    }
     Some(mult.log2().round() as i32)
 }
 

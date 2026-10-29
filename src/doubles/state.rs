@@ -82,6 +82,19 @@ pub struct ActiveSlot {
     /// `partiallytrapped` volatile (Whirlpool, Fire Spin, ...): remaining
     /// duration, the binder (side, team index) and the damage divisor.
     pub partial_trap: Option<PartialTrap>,
+    /// `yawn` volatile: remaining duration (0 = none) and the user who
+    /// applied it (for the sleep `trySetStatus` when it ends).
+    pub yawn: u8,
+    /// `disable` volatile: the disabled move and remaining duration.
+    pub disabled: Option<(Choices, u8)>,
+    /// BeforeMove aborted the locked charge turn: PS `twoturnmove` is gone
+    /// (`onMoveAborted`) but the move's own condition (Dive, ...) lasts to
+    /// the end of the turn.
+    pub charge_aborted: bool,
+    pub yawn_source: Option<(Side, PokemonIndex)>,
+    /// Libero / Protean already used this switch-in (PS `effectState.libero`);
+    /// holds the original types, restored on switch-out.
+    pub type_change: Option<(crate::state::PokemonType, crate::state::PokemonType)>,
 }
 
 /// PS `partiallytrapped` effectState (data/conditions.ts).
@@ -130,6 +143,11 @@ impl ActiveSlot {
             helping_hand_mult: 1.0,
             stats_raised_this_turn: false,
             partial_trap: None,
+            yawn: 0,
+            disabled: None,
+            charge_aborted: false,
+            yawn_source: None,
+            type_change: None,
         }
     }
 

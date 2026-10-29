@@ -7772,7 +7772,8 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
             0
         };
         let spikes_dmg = spikes_dmg + rock_dmg;
-        let new_status = if grounded && toxic_spikes > 0 {
+        // Safeguard `onSetStatus` blocks the hazard's status (source is a foe).
+        let new_status = if grounded && toxic_spikes > 0 && s.side_conditions.safeguard == 0 {
             let cur = s.team_member(idx).status;
             if cur == PokemonStatus::NONE {
                 if types.0 == PokemonType::POISON || types.1 == PokemonType::POISON {

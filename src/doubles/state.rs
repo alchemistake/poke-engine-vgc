@@ -174,6 +174,9 @@ pub struct ActiveSlot {
     /// Forest's Curse added Grass to a single-typed pokemon (PS `addedType`):
     /// the second type slot is restored on switch-out / faint.
     pub added_grass: bool,
+    /// PS `addedType` on a dual-typed pokemon (Trick-or-Treat Ghost, Forest's
+    /// Curse Grass): a third type, reset on switch-out / faint. TYPELESS = none.
+    pub added_type: PokemonType,
     /// `roost` volatile (duration 1): the pokemon's types before Flying was
     /// filtered out (`onType`); restored at residual / switch-out / faint.
     pub roost_orig: Option<(PokemonType, PokemonType)>,
@@ -300,6 +303,7 @@ impl ActiveSlot {
             encore: None,
             torment: false,
             added_grass: false,
+            added_type: PokemonType::TYPELESS,
             roost_orig: None,
             aqua_ring: false,
             counter_vol: None,

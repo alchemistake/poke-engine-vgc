@@ -920,6 +920,22 @@ pub fn run_battle_fuzz(
             }
             let _ = ps_get_target(state, rng, a);
         }
+        // Beak Blast (PS data/moves.ts beakblast.priorityChargeCallback): its
+        // `priorityChargeMove` action has no target location, so `resolveAction`
+        // draws a random foe. TODO(PS parity): the burn on contact (`condition.onHit`).
+        let beak_blasters: Vec<(Side, usize, PokemonIndex)> = actions
+            .iter()
+            .filter(|a| a.choice.move_id == Choices::BEAKBLAST && !state.side(a.side).active[a.slot].recharging)
+            .map(|a| (a.side, a.slot, a.pokemon_index))
+            .collect();
+        for &(bs, bsl, bidx) in &beak_blasters {
+            if state.side(bs).active[bsl].pokemon_index == Some(bidx) {
+                let foes = (0..2).filter(|&sl| state.side(bs.other()).slot_pokemon(sl).is_some_and(|p| p.hp > 0)).count();
+                if foes > 0 {
+                    let _ = rng.label("retarget").random(foes as u32);
+                }
+            }
+        }
         speed_sort(&mut actions, rng);
         // `beforeTurn` action: `eachEvent('BeforeTurn')`, then the action's
         // closing `eachEvent('Update')`; each is a speed sort of the actives.
@@ -937,15 +953,16 @@ pub fn run_battle_fuzz(
         // `beforeTurn` is not followed by a move, so its re-sort is skipped;
         // each charge action ends with `eachEvent('Update')`, the last with
         // the re-sort.
-        let chargers: Vec<(Side, usize, PokemonIndex)> = actions
+        let chargers: Vec<(Side, usize, PokemonIndex, bool)> = actions
             .iter()
             .filter(|a| {
-                a.choice.move_id == Choices::FOCUSPUNCH && !state.side(a.side).active[a.slot].recharging
+                matches!(a.choice.move_id, Choices::FOCUSPUNCH | Choices::BEAKBLAST)
+                    && !state.side(a.side).active[a.slot].recharging
             })
-            .map(|a| (a.side, a.slot, a.pokemon_index))
+            .map(|a| (a.side, a.slot, a.pokemon_index, a.choice.move_id == Choices::FOCUSPUNCH))
             .collect();
-        for &(cs, csl, cidx) in &chargers {
-            if state.side(cs).active[csl].pokemon_index == Some(cidx) {
+        for &(cs, csl, cidx, is_focus) in &chargers {
+            if state.side(cs).active[csl].pokemon_index == Some(cidx) && is_focus {
                 let a = &mut state.side_mut(cs).active[csl];
                 a.focus_punch = true;
                 a.lost_focus = false;
@@ -1981,15 +1998,14 @@ fn execute_action_inner(
     // The move fires when the same move is chosen again after the last
     // charge turn (PS locks the move via `twoturnmove.onLockMove`).
     {
+        // PS `attacker.effectiveWeather()` (Cloud Nine / Air Lock suppress it).
+        let effective_weather = if weather_suppressed(state) { Weather::NONE } else { state.weather.weather_type };
         let needs_charge = match choice.charge_setup {
             ChargeSetup::None => false,
             ChargeSetup::Always { .. } => true,
-            ChargeSetup::NotSun { .. } => state.weather.weather_type != Weather::SUN,
-            ChargeSetup::OnlyRain { .. } => state.weather.weather_type == Weather::RAIN,
-            ChargeSetup::OnlySnow { .. } => matches!(
-                state.weather.weather_type,
-                Weather::HAIL | Weather::SNOW
-            ),
+            ChargeSetup::NotSun { .. } => effective_weather != Weather::SUN,
+            ChargeSetup::OnlyRain { .. } => effective_weather == Weather::RAIN,
+            ChargeSetup::OnlySnow { .. } => matches!(effective_weather, Weather::HAIL | Weather::SNOW),
         };
         let charged = state.side_mut(side).active[slot].charging.take();
         match charged {
@@ -2994,9 +3010,9 @@ fn execute_action_inner(
     // PS data/moves.ts thunder / hurricane (rain: true, sun: 50),
     // bleakwindstorm / sandsearstorm / wildboltstorm (rain: true),
     // blizzard (hail / snow: true).
-    // TODO(PS parity): `effectiveWeather` (Cloud Nine / Air Lock).
+    let effective_weather = if weather_suppressed(state) { Weather::NONE } else { state.weather.weather_type };
     let weather_guaranteed = matches!(
-        (choice.move_id, state.weather.weather_type),
+        (choice.move_id, effective_weather),
         (
             Choices::THUNDER
                 | Choices::HURRICANE
@@ -4364,8 +4380,7 @@ fn execute_action_inner(
         }
 
         // Forest's Curse (PS data/moves.ts forestscurse.onHit): fails on a Grass
-        // type, else `addType('Grass')`.
-        // TODO(PS parity): a dual-typed target gets a third type (`addedType`).
+        // type, else `addType('Grass')` (a dual-typed target gets it as `added_type`).
         if choice.move_id == Choices::FORESTSCURSE && ti == 0 && !move_failed {
             let tidx = state.side(target_side).active[target_slot].pokemon_index;
             match tidx {
@@ -4376,6 +4391,29 @@ fn execute_action_inner(
                     } else if t.1 == PokemonType::TYPELESS {
                         state.side_mut(target_side).team_member_mut(tidx).types.1 = PokemonType::GRASS;
                         state.side_mut(target_side).active[target_slot].added_grass = true;
+                    } else {
+                        state.side_mut(target_side).active[target_slot].added_type = PokemonType::GRASS;
+                    }
+                }
+                None => move_failed = true,
+            }
+        }
+
+        // Trick-or-Treat `onHit` (PS data/moves.ts trickortreat): fails if the
+        // target has Ghost (`hasType`, counting `addedType`), else `addType('Ghost')`.
+        // TODO(PS parity): Curse Glitch (a target in slot 1 with a queued Curse).
+        if choice.move_id == Choices::TRICKORTREAT && ti == 0 && !move_failed {
+            let tidx = state.side(target_side).active[target_slot].pokemon_index;
+            match tidx {
+                Some(tidx) => {
+                    let t = state.side(target_side).team_member(tidx).types;
+                    let has_ghost = t.0 == PokemonType::GHOST
+                        || t.1 == PokemonType::GHOST
+                        || state.side(target_side).active[target_slot].added_type == PokemonType::GHOST;
+                    if has_ghost {
+                        move_failed = true;
+                    } else {
+                        state.side_mut(target_side).active[target_slot].added_type = PokemonType::GHOST;
                     }
                 }
                 None => move_failed = true,
@@ -6113,9 +6151,39 @@ fn try_set_status(
     src_side: Side,
     src_idx: PokemonIndex,
 ) {
+    try_set_status_with(state, rng, ts, tslot, st, src_side, src_idx, true);
+}
+
+/// A status from a contact ability (Effect Spore, Static, ...). PS
+/// `onDamagingHit` -> `trySetStatus` with an Ability effect: Substitute only
+/// blocks move effects (its `onTryHit` / `onTryPrimaryHit`), so it does not
+/// stop this status. Safeguard / Misty / Uproar still do.
+fn try_set_status_from_ability(
+    state: &mut DoublesState,
+    rng: &mut Gen5Rng,
+    ts: Side,
+    tslot: usize,
+    st: PokemonStatus,
+    src_side: Side,
+    src_idx: PokemonIndex,
+) {
+    try_set_status_with(state, rng, ts, tslot, st, src_side, src_idx, false);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn try_set_status_with(
+    state: &mut DoublesState,
+    rng: &mut Gen5Rng,
+    ts: Side,
+    tslot: usize,
+    st: PokemonStatus,
+    src_side: Side,
+    src_idx: PokemonIndex,
+    substitute_blocks: bool,
+) {
     let Some(tidx) = state.side(ts).active[tslot].pokemon_index else { return };
     let src_slot = (0..2).find(|&sl| state.side(src_side).active[sl].pokemon_index == Some(src_idx));
-    if status_immune(state, ts, tslot, st, ts != src_side, src_side, src_slot.unwrap_or(0)) {
+    if status_immune_ex(state, ts, tslot, st, ts != src_side, src_side, src_slot.unwrap_or(0), substitute_blocks) {
         return;
     }
     set_status(state, rng, ts, tidx, st);
@@ -6133,6 +6201,20 @@ fn status_immune(
     from_opponent: bool,
     src_side: Side,
     src_slot: usize,
+) -> bool {
+    status_immune_ex(state, ts, tslot, status, from_opponent, src_side, src_slot, true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn status_immune_ex(
+    state: &DoublesState,
+    ts: Side,
+    tslot: usize,
+    status: PokemonStatus,
+    from_opponent: bool,
+    src_side: Side,
+    src_slot: usize,
+    substitute_blocks: bool,
 ) -> bool {
     let Some(target) = state.side(ts).slot_pokemon(tslot) else { return true };
     // Safeguard / Substitute block statuses from any other pokemon, allies
@@ -6160,7 +6242,7 @@ fn status_immune(
         misty_terrain: state.terrain.terrain_type == crate::engine::state::Terrain::MISTYTERRAIN,
         electric_terrain: state.terrain.terrain_type == crate::engine::state::Terrain::ELECTRICTERRAIN,
         safeguard: state.side(ts).side_conditions.safeguard > 0,
-        substitute: state.side(ts).active[tslot].substitute_health > 0,
+        substitute: substitute_blocks && state.side(ts).active[tslot].substitute_health > 0,
         from_opponent,
         sleep_clause: false,
         source_ability: state
@@ -6265,6 +6347,7 @@ fn compute_hit_damage(
         };
         let def_boost_stat = if attacker.ability == Abilities::UNAWARE { 0 } else { def_boost_stat };
         let ctx = DamageCtx {
+            added_type: state.side(target_side).active[target_slot].added_type,
             attack_base: base_atk,
             attack_boost: atk_boost_stat,
             defense_base: base_def,
@@ -6585,7 +6668,7 @@ fn contact_abilities(
     match contact_ability(ability) {
         Some(ContactAbility::Status30(st)) => {
             if rng.label("ability").random_chance(3, 10) {
-                try_set_status(state, rng, side, slot, st, target_side, def_idx);
+                try_set_status_from_ability(state, rng, side, slot, st, target_side, def_idx);
             }
         }
         Some(ContactAbility::EffectSpore) => {
@@ -6602,7 +6685,7 @@ fn contact_abilities(
                     None
                 };
                 if let Some(st) = st {
-                    try_set_status(state, rng, side, slot, st, target_side, def_idx);
+                    try_set_status_from_ability(state, rng, side, slot, st, target_side, def_idx);
                 }
             }
         }
@@ -8977,6 +9060,7 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
                     (defender.special_defense, def_boost.spd)
                 };
                 let ctx = DamageCtx {
+                    added_type: state.side(target_side).active[target_slot].added_type,
                     attack_base,
                     attack_boost,
                     defense_base,

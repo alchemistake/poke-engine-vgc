@@ -12,6 +12,7 @@ function psDrawPurpose(fns) {
   if (has('insertChoice')) return 'speed tie (queue insert)';
   if (has('onFractionalPriority')) return 'fractional priority';
   if (has('getRandomSwitchable')) return 'drag in';
+  if (has('onUpdate') && has('sample')) return 'trace';
   if (has('setStatus')) return 'sleep duration';
   if (has('addVolatile')) return 'volatile duration';
   if (has('onBasePower')) return 'fickle beam';

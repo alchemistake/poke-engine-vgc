@@ -356,6 +356,7 @@ const DRAW_HINTS = {
   'volatile duration': 'A volatile drew its duration when added (`addVolatile` -> `onStart`, e.g. confusion `random(2, 6)`). Engine: `try_confuse`.',
   'fractional priority': 'Quick Draw `onFractionalPriority` 30% roll when the queue is built (`resolveAction`). Engine: the resolve loop in `run_battle_fuzz` + `mechanics::fractional_priority`.',
   'drag in': 'Roar / Whirlwind / Dragon Tail / Circle Throw pick a random replacement (`dragIn` -> `getRandomSwitchable`, PS `side.pokemon` order). Engine: `drag_in_all`, `possible_switches`.',
+  trace: 'Trace `onUpdate` picks a random valid adjacent foe (`sample`). Engine: the Trace branch of `apply_on_switch_abilities`.',
   ability: 'An ability `onDamagingHit` roll (Static, Flame Body, Effect Spore, ...) in data/abilities.ts.',
   sample: 'A `sample()` inside a move effect (Tri Attack / Dire Claw status pick, ...).',
   'fickle beam': 'Fickle Beam `onBasePower` 30% roll.',

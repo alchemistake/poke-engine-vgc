@@ -1763,11 +1763,10 @@ fn execute_action(
                 if let Some(b) = crate::engine::mechanics::on_damaging_hit_boosts(ability, choice) {
                     apply_boosts(state, target_side, didx, &b, false);
                 }
-                // Gooey (defender's ability): the attacker's Speed drops by 1 on
-                // a contact hit (PS `gooey.onDamagingHit`; this build uses a stage
-                // drop, not the standard stat halving).
-                // TODO(PS parity): `checkMoveMakesContact` (Long Reach, Substitute).
-                if ability == Abilities::GOOEY && choice.flags.contact {
+                // Gooey / Tangling Hair (`onDamagingHit`): a contact hit lowers
+                // the attacker's Speed by 1 stage.
+                // TODO(PS parity): `checkMoveMakesContact` (Long Reach, Protective Pads).
+                if matches!(ability, Abilities::GOOEY | Abilities::TANGLINGHAIR) && choice.flags.contact {
                     apply_boosts(
                         state,
                         side,
@@ -2198,8 +2197,9 @@ fn skill_swap(
     }
     state.side_mut(src_side).team_member_mut(si).ability = tgt_ability;
     state.side_mut(tgt_side).team_member_mut(ti).ability = src_ability;
-    // TODO(PS parity): terrain / Trace set via Skill Swap need their speed sort /
-    // sample draw, handled by the `rng` passed to `apply_on_switch_abilities`.
+    // The new abilities' Start events (Trace's draw included) run through
+    // `apply_on_switch_abilities`.
+    // TODO(PS parity): the TerrainChange speed sort after a swapped-in Surge.
     let _ = apply_on_switch_abilities(state, tgt_side, tgt_slot, rng);
     let _ = apply_on_switch_abilities(state, src_side, src_slot, rng);
     true
@@ -2311,9 +2311,16 @@ fn apply_boosts(
 fn has_notrace(a: Abilities) -> bool {
     matches!(
         a,
-        Abilities::BATTLEBOND
+        Abilities::ASONEGLASTRIER
+            | Abilities::ASONESPECTRIER
+            | Abilities::BATTLEBOND
             | Abilities::COMATOSE
+            | Abilities::COMMANDER
             | Abilities::DISGUISE
+            | Abilities::EMBODYASPECTCORNERSTONE
+            | Abilities::EMBODYASPECTHEARTHFLAME
+            | Abilities::EMBODYASPECTTEAL
+            | Abilities::EMBODYASPECTWELLSPRING
             | Abilities::FLOWERGIFT
             | Abilities::FORECAST
             | Abilities::HUNGERSWITCH
@@ -2321,25 +2328,31 @@ fn has_notrace(a: Abilities) -> bool {
             | Abilities::ILLUSION
             | Abilities::IMPOSTER
             | Abilities::MULTITYPE
+            | Abilities::NEUTRALIZINGGAS
             | Abilities::POISONPUPPETEER
             | Abilities::POWERCONSTRUCT
             | Abilities::POWEROFALCHEMY
+            | Abilities::PROTOSYNTHESIS
+            | Abilities::QUARKDRIVE
             | Abilities::RECEIVER
+            | Abilities::RKSSYSTEM
             | Abilities::SCHOOLING
             | Abilities::SHIELDSDOWN
             | Abilities::STANCECHANGE
+            | Abilities::TERAFORMZERO
             | Abilities::TERASHELL
+            | Abilities::TERASHIFT
             | Abilities::TRACE
             | Abilities::ZENMODE
+            | Abilities::ZEROTOHERO
     )
 }
 
-/// Add / refresh a side condition with its pokemon-showdown duration.
-/// Apply on-switch-in ability effects for the Pokémon now in `side`'s
-/// `active[slot]`. Currently only Intimidate: lowers the Attack of every foe
-/// active by -1 (PS `intimidate.onStart`, data/abilities.ts:2194). Targets
-/// behind a Substitute are immune.
-// TODO(PS parity): other on-switch abilities (Aura Veil, etc.).
+/// Run the Start effects of the ability of the pokemon in `side`'s
+/// `active[slot]` (switch-in, Skill Swap): Trace, weather / terrain setters,
+/// Curious Medicine, Intimidate, Supersweet Syrup. Returns true when it set a
+/// terrain (the caller runs PS's TerrainChange speed sort).
+// TODO(PS parity): other Start abilities (Download, Frisk, ...).
 fn apply_on_switch_abilities(
     state: &mut DoublesState,
     side: Side,
@@ -2358,22 +2371,21 @@ fn apply_on_switch_abilities(
     // flag or No Ability are excluded. Must happen before the copied
     // ability's own on-switch effects run.
     if ability == Abilities::TRACE {
-        let foes = [side.other(), side.other()];
-        let mut targets: Vec<(Side, PokemonIndex)> = Vec::new();
-        for f in 0..2 {
-            let fs = foes[f];
-            let Some(fidx) = state.side(fs).active[f].pokemon_index else { continue };
-            let fab = state.side(fs).team_member(fidx).ability;
-            if fab == Abilities::NOABILITY || has_notrace(fab) {
-                continue;
-            }
-            targets.push((fs, fidx));
-        }
-        // `possibleTargets` is `adjacentFoes()` filtered; in doubles both foes
-        // are adjacent, in slot order [0, 1].
-        if !targets.is_empty() {
-            let pick = targets[rng.label("other: onUpdate").random(targets.len() as u32) as usize];
-            let copied = state.side(pick.0).team_member(pick.1).ability;
+        // `onStart`: a foe with No Ability stops Trace (`seek = false`).
+        // TODO(PS parity): `onUpdate` keeps seeking while no foe is valid
+        // (e.g. Trace activates later when a valid foe switches in).
+        let foe = side.other();
+        let foes: Vec<PokemonIndex> = (0..2).filter_map(|f| state.side(foe).active[f].pokemon_index).collect();
+        let blocked = foes
+            .iter()
+            .any(|&fidx| state.side(foe).team_member(fidx).ability == Abilities::NOABILITY);
+        let targets: Vec<PokemonIndex> = foes
+            .into_iter()
+            .filter(|&fidx| !has_notrace(state.side(foe).team_member(fidx).ability))
+            .collect();
+        if !blocked && !targets.is_empty() {
+            let pick = targets[rng.label("trace").random(targets.len() as u32) as usize];
+            let copied = state.side(foe).team_member(pick).ability;
             if let Some(idx) = state.side(side).active[slot].pokemon_index {
                 state.side_mut(side).team_member_mut(idx).ability = copied;
             }

@@ -210,7 +210,12 @@ pub fn calculate_damage(
     }
 
     // burn halving for physical moves (Guts prevents it)
-    if attacker.status == crate::state::PokemonStatus::BURN && is_physical && !ctx.guts {
+    // (Facade ignores it in gen 6+.)
+    if attacker.status == crate::state::PokemonStatus::BURN
+        && is_physical
+        && !ctx.guts
+        && choice.move_id != crate::choices::Choices::FACADE
+    {
         base = modify(base, 0.5, 1.0);
     }
 

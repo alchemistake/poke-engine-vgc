@@ -482,6 +482,9 @@ pub struct DoublesState {
     pub queue_prioritize: Option<(Side, usize)>,
     /// Gravity `onFieldStart`: queued moves cancelled (`queue.cancelMove`).
     pub queue_cancel: Vec<(Side, usize)>,
+    /// Wonder Room's `onModifyMove` has run since it started (PS fixes the
+    /// handler's subOrder only once `state.target` is set).
+    pub wonder_room_seen: bool,
 }
 
 impl DoublesState {
@@ -1012,6 +1015,7 @@ impl DoublesState {
             queue_change: None,
             queue_prioritize: None,
             queue_cancel: Vec::new(),
+            wonder_room_seen: false,
             side_one,
             side_two,
             weather: StateWeather {

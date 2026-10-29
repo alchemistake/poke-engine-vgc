@@ -2109,6 +2109,18 @@ fn execute_action_inner(
         }
     }
 
+    // `runEvent('ModifyMove')` in `useMoveInner`: Gravity and Wonder Room both
+    // have an `onModifyMove` handler with identical sort keys, so the two
+    // tie and shuffle (one draw) while both are active.
+    // Wonder Room's subOrder is 2 until its handler has run once (`state.target`
+    // unset), so the very first event after it starts does not tie.
+    if state.gravity.active && state.wonder_room.active {
+        if state.wonder_room_seen {
+            let _ = rng.label("speed tie (move order)").random(2);
+        }
+        state.wonder_room_seen = true;
+    }
+
     // Quick Guard `onTry`: `!!this.queue.willAct()` (PS data/moves.ts quickguard).
     if matches!(choice.move_id, Choices::QUICKGUARD | Choices::WIDEGUARD) && !will_act {
         state.side_mut(side).active[slot].move_result_this_turn = Some(false);
@@ -3404,7 +3416,25 @@ fn execute_action_inner(
         }
 
         // Healing (Moonlight, Synthesis, etc.) — no draw.
-        if let Some(h) = &choice.heal {
+        // Life Dew: `target: allies`, `heal: [1, 4]` for the user and its ally
+        // (floor of maxhp / 4); fails only if nobody could be healed.
+        // PS data/moves.ts lifedew, sim/battle.ts heal.
+        if choice.move_id == Choices::LIFEDEW && ti == 0 {
+            let mut healed = false;
+            for sl in [slot, ally_slot] {
+                if let Some(tidx) = state.side(side).active[sl].pokemon_index {
+                    let pm = state.side_mut(side).team_member_mut(tidx);
+                    if pm.hp > 0 && pm.hp < pm.maxhp {
+                        pm.hp = (pm.hp + (pm.maxhp / 4).max(1)).min(pm.maxhp);
+                        healed = true;
+                    }
+                }
+            }
+            if !healed {
+                move_failed = true;
+            }
+        }
+        if let Some(h) = choice.heal.as_ref().filter(|_| choice.move_id != Choices::LIFEDEW) {
             let (ts, tslot) = if h.target == MoveTarget::User || is_self {
                 (side, slot)
             } else if h.target == MoveTarget::Ally {
@@ -4444,6 +4474,7 @@ fn execute_action_inner(
             };
         }
         if choice.move_id == Choices::WONDERROOM {
+            state.wonder_room_seen = false;
             // Same toggle; duration 5 (7 with Persistent).
             state.wonder_room = if state.wonder_room.active {
                 crate::state::StateTrickRoom { active: false, turns_remaining: 0 }

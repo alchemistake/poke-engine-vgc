@@ -192,6 +192,8 @@ fn apply_damage(state: &mut DoublesState, side: Side, slot: usize, amount: i16) 
     if let Some(idx) = s.active[slot].pokemon_index {
         let p = s.team_member_mut(idx);
         p.hp -= amount;
+        s.active[slot].hurt_this_turn = true;
+        let p = s.team_member_mut(idx);
         if p.hp <= 0 {
             p.hp = 0;
             faint_pokemon(state, side, slot);
@@ -1226,6 +1228,13 @@ fn resort_queue(state: &mut DoublesState, rng: &mut Gen5Rng, queue: &mut [Action
             if let Some(sp) = effective_speed(state, a.side, a.slot) {
                 a.speed = sp;
             }
+        } else {
+            // A fainted pokemon's queued action: PS `getActionSpeed` recomputes
+            // from its stats; `clearVolatile` on faint reset its boosts.
+            let sd = state.side(a.side);
+            let p = sd.team_member(a.pokemon_index);
+            let sp = multiply_boost(sd.team_boosts[a.pokemon_index as usize].spe, p.speed);
+            a.speed = if state.trick_room.active { -sp } else { sp };
         }
         let _ = ps_get_target(state, rng, a);
     }
@@ -1730,6 +1739,7 @@ fn execute_action_inner(
                 // turns_left == 0 (fire this turn) or a different move was
                 // chosen while charging (charge wasted; PS charge volatiles
                 // expire at end of turn).
+                state.side_mut(side).active[slot].twoturn_fired = true;
             }
             None if needs_charge => {
                 // Start charging.
@@ -1775,6 +1785,10 @@ fn execute_action_inner(
                 a.stockpile += 1;
                 a.stockpile_def += after.def - before.def;
                 a.stockpile_spd += after.spd - before.spd;
+                // PS `hitStepMoveHitLoop`: `eachEvent('Update')` after the hit,
+                // and once more after the loop.
+                each_event_update(state, rng);
+                each_event_update(state, rng);
             }
             push_order();
             return;
@@ -1796,6 +1810,12 @@ fn execute_action_inner(
                 t.0 != need && t.1 != need
             } =>
         {
+            push_order();
+            return;
+        }
+        // Healing Wish / Lunar Dance `onTryHit`: fail when nobody can switch in
+        // (`!canSwitch(source.side)`). PS data/moves.ts healingwish.
+        Choices::HEALINGWISH | Choices::LUNARDANCE if possible_switches(state, side).is_empty() => {
             push_order();
             return;
         }
@@ -1856,6 +1876,8 @@ fn execute_action_inner(
             };
             p.hp = (p.hp + heal).min(p.maxhp);
             end_stockpile(state, side, slot);
+            each_event_update(state, rng);
+            each_event_update(state, rng);
             push_order();
             return;
         }
@@ -1978,6 +2000,10 @@ fn execute_action_inner(
     // in or still has a queued move (`queue.willMove(target)`).
     // TODO(PS parity): `newlySwitched`.
     state.side_mut(side).active[slot].bp_double = false;
+    // Assurance `basePowerCallback`: doubled if the target was hurt earlier this turn.
+    if choice.move_id == Choices::ASSURANCE && !is_self && !is_field {
+        state.side_mut(side).active[slot].bp_double = state.side(target_side).active[target_slot].hurt_this_turn;
+    }
     if choice.move_id == Choices::PAYBACK && !is_self && !is_field {
         let tidx = state.side(target_side).active[target_slot].pokemon_index;
         let will_move = queue.iter().any(|a| a.side == target_side && Some(a.pokemon_index) == tidx);
@@ -2306,9 +2332,19 @@ fn execute_action_inner(
 
     if matches!(choice.category, MoveCategory::Physical | MoveCategory::Special)
         && (effective_power > 0.0
+            || choice.ohko
             || matches!(
                 choice.move_id,
-                Choices::COUNTER | Choices::MIRRORCOAT | Choices::METALBURST | Choices::COMEUPPANCE
+                Choices::COUNTER
+                    | Choices::MIRRORCOAT
+                    | Choices::METALBURST
+                    | Choices::COMEUPPANCE
+                    | Choices::SEISMICTOSS
+                    | Choices::NIGHTSHADE
+                    | Choices::SUPERFANG
+                    | Choices::NATURESMADNESS
+                    | Choices::RUINATION
+                    | Choices::FINALGAMBIT
             ))
         && !is_self
         && !is_field
@@ -2345,6 +2381,39 @@ fn execute_action_inner(
         let user_hp = state.side(side).team_member(idx).hp;
         let target_hp = state.side(target_side).slot_pokemon(target_slot).map(|p| p.hp).unwrap_or(0);
         if user_hp >= target_hp {
+            state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+            push_order();
+            return;
+        }
+    }
+
+    // Worry Seed `onTryImmunity` / `onTryHit`: fails (before the accuracy roll) on
+    // Truant / Insomnia holders and on abilities that can't be suppressed.
+    if choice.move_id == Choices::WORRYSEED && !is_self && !is_field {
+        let bad = state
+            .side(target_side)
+            .slot_pokemon(target_slot)
+            .map(|p| {
+                matches!(
+                    p.ability,
+                    Abilities::TRUANT
+                        | Abilities::INSOMNIA
+                        | Abilities::MULTITYPE
+                        | Abilities::STANCECHANGE
+                        | Abilities::DISGUISE
+                        | Abilities::ZENMODE
+                        | Abilities::SCHOOLING
+                        | Abilities::SHIELDSDOWN
+                        | Abilities::POWERCONSTRUCT
+                        | Abilities::COMATOSE
+                        | Abilities::ICEFACE
+                        | Abilities::GULPMISSILE
+                        | Abilities::HUNGERSWITCH
+                        | Abilities::BATTLEBOND
+                )
+            })
+            .unwrap_or(false);
+        if bad {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
             push_order();
             return;
@@ -2668,8 +2737,24 @@ fn execute_action_inner(
                     Choices::FICKLEBEAM => 0,
                     _ => choice.secondaries.as_ref().map(|v| v.len()).unwrap_or(0),
                 } };
-                for _ in 0..rolls {
-                    let _ = rng.label("secondary").random(100);
+                for k in 0..rolls {
+                    let r = rng.label("secondary").random(100) as f32;
+                    // A secondary with `self` (Flame Charge's +1 Speed) still
+                    // applies to the user when the hit lands on a Substitute.
+                    if !matches!(
+                        choice.move_id,
+                        Choices::TRIATTACK | Choices::DIRECLAW | Choices::SALTCURE | Choices::SPIRITSHACKLE
+                            | Choices::THROATCHOP | Choices::EERIESPELL | Choices::PSYCHICNOISE
+                            | Choices::CEASELESSEDGE | Choices::STONEAXE
+                    ) {
+                        if let Some(sec) = choice.secondaries.as_ref().and_then(|v| v.get(k)) {
+                            if sec.target == MoveTarget::User && (sec.chance <= 0.0 || r < sec.chance) {
+                                if let Effect::Boost(b) = &sec.effect {
+                                    apply_boosts(state, side, idx, b, false);
+                                }
+                            }
+                        }
+                    }
                 }
                 continue;
             }
@@ -3418,6 +3503,17 @@ fn execute_action_inner(
             }
         }
 
+        // Worry Seed `onHit`: the target's ability becomes Insomnia (cures sleep).
+        if choice.move_id == Choices::WORRYSEED && ti == 0 && !move_failed {
+            if let Some(tidx) = state.side(target_side).active[target_slot].pokemon_index {
+                let pm = state.side_mut(target_side).team_member_mut(tidx);
+                pm.ability = Abilities::INSOMNIA;
+                if pm.status == PokemonStatus::SLEEP {
+                    pm.status = PokemonStatus::NONE;
+                }
+            }
+        }
+
         // Recycle `onHit`: fails without a consumed item (`lastItem`).
         // TODO(PS parity): items are not modeled, so `lastItem` is always empty.
         if choice.move_id == Choices::RECYCLE && ti == 0 {
@@ -3879,6 +3975,27 @@ fn execute_action_inner(
                 }
             }
             contact_abilities(state, rng, side, slot, idx, target_side, target_slot, choice);
+            // Poison Touch `onSourceDamagingHit`: a contact hit has a 3/10 chance to
+            // poison the target (Shield Dust blocks). PS data/abilities.ts poisontouch.
+            if state.side(side).team_member(idx).ability == Abilities::POISONTOUCH
+                && choice.flags.contact
+                && (side, slot) != (target_side, target_slot)
+            {
+                let shield = state
+                    .side(target_side)
+                    .slot_pokemon(target_slot)
+                    .map(|p| p.ability == Abilities::SHIELDDUST)
+                    .unwrap_or(false);
+                let tidx = state.side(target_side).active[target_slot].pokemon_index;
+                if !shield {
+                    if let Some(tidx) = tidx {
+                        if rng.label("other: onSourceDamagingHit").random_chance(3, 10) {
+                            try_set_status(state, rng, target_side, target_slot, PokemonStatus::POISON, side, idx);
+                            let _ = tidx;
+                        }
+                    }
+                }
+            }
             cursed_body(state, rng, side, slot, target_side, target_slot, choice);
             // Weak Armor, Steam Engine, ... (shared with the singles engine).
             if let Some(didx) = state.side(target_side).active[target_slot].pokemon_index {
@@ -5758,6 +5875,9 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
                     push(NO_ORDER, speed, 2, ResidualKind::Marker); // the move's own condition
                 }
             }
+            if a.twoturn_fired && a.charging.is_none() {
+                push(NO_ORDER, speed, 2, ResidualKind::Marker); // twoturnmove (duration 2, last turn)
+            }
             if a.protected || a.endure {
                 push(NO_ORDER, speed, 2, ResidualKind::Marker); // protect / endure
             }
@@ -6541,7 +6661,9 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
             a.move_result_last_turn = a.move_result_this_turn;
             a.move_result_this_turn = None;
             a.flinched = false;
+            a.hurt_this_turn = false;
             a.protected = false;
+            a.twoturn_fired = false;
             a.endure = false;
             a.follow_me = 0;
             a.helping_hand_mult = 1.0;

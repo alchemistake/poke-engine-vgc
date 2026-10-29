@@ -134,6 +134,11 @@ pub struct ActiveSlot {
     pub glaive_rush: bool,
     /// `ingrain` volatile: heals 1/16 max HP each residual (order 7).
     pub ingrain: bool,
+    /// PS `pokemon.hurtThisTurn`: lost HP earlier this turn (Assurance).
+    pub hurt_this_turn: bool,
+    /// The `twoturnmove` volatile (duration 2) is still around for this
+    /// turn's residual after the charged move fired.
+    pub twoturn_fired: bool,
     /// `encore` volatile: the forced move and remaining duration.
     pub encore: Option<(crate::choices::Choices, u8)>,
     /// `roost` volatile (duration 1): the pokemon's types before Flying was
@@ -245,6 +250,8 @@ impl ActiveSlot {
             last_move: None,
             glaive_rush: false,
             ingrain: false,
+            hurt_this_turn: false,
+            twoturn_fired: false,
             encore: None,
             roost_orig: None,
             aqua_ring: false,

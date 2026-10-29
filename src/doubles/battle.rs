@@ -2061,6 +2061,13 @@ fn execute_action_inner(
         }
     }
 
+    // Quick Guard `onTry`: `!!this.queue.willAct()` (PS data/moves.ts quickguard).
+    if choice.move_id == Choices::QUICKGUARD && !will_act {
+        state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+        push_order();
+        return;
+    }
+
     // Stalling moves (Protect / Detect / Endure) `onPrepareHit`:
     // `!!this.queue.willAct() && this.runEvent('StallMove', pokemon)`; the
     // `stall` volatile rolls `randomChance(1, counter)` and is dropped on a
@@ -2341,6 +2348,20 @@ fn execute_action_inner(
         t.stall = None;
     }
 
+    // Quick Guard `onTryHit` (priority 4, before Protect's): blocks moves with
+    // positive priority that Protect would block. PS data/moves.ts quickguard.
+    // TODO(PS parity): Outrage counter reset, Feint-style bypasses.
+    if !is_self
+        && !is_field
+        && action.priority > 0
+        && choice.flags.protect
+        && state.side(target_side).side_conditions.quick_guard > 0
+    {
+        state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+        push_order();
+        return;
+    }
+
     // Protect: incoming non-priority moves fail before the accuracy roll.
     // (Charge turns happen before this check: Protect does not block a
     // charging Dig, only its hitting turn.)
@@ -2396,6 +2417,7 @@ fn execute_action_inner(
         false,
         false,
         side_total_fainted(state, side),
+        1,
     ) > 0.0
         // `damageCallback` moves (Endeavor, ...) are attacks: type immunity applies.
         || (!is_self
@@ -2576,6 +2598,7 @@ fn execute_action_inner(
     // Worry Seed `onTryImmunity` / `onTryHit`: fails (before the accuracy roll) on
     // Truant / Insomnia holders and on abilities that can't be suppressed.
     if choice.move_id == Choices::WORRYSEED && !is_self && !is_field {
+        let own = Abilities::INSOMNIA;
         let bad = state
             .side(target_side)
             .slot_pokemon(target_slot)
@@ -2583,7 +2606,6 @@ fn execute_action_inner(
                 matches!(
                     p.ability,
                     Abilities::TRUANT
-                        | Abilities::INSOMNIA
                         | Abilities::MULTITYPE
                         | Abilities::STANCECHANGE
                         | Abilities::DISGUISE
@@ -2596,7 +2618,7 @@ fn execute_action_inner(
                         | Abilities::GULPMISSILE
                         | Abilities::HUNGERSWITCH
                         | Abilities::BATTLEBOND
-                )
+                ) || p.ability == own
             })
             .unwrap_or(false);
         if bad {
@@ -2807,7 +2829,24 @@ fn execute_action_inner(
     let mut copy_move: Option<Choices> = None;
     let mut berserk_before: Vec<(Side, usize, i16)> = Vec::new();
 
-    for _ in 0..hit_count {
+    state.side_mut(side).active[slot].hit_number = 1;
+    for hit_idx in 0..hit_count {
+      state.side_mut(side).active[slot].hit_number = hit_idx as u8 + 1;
+      // `multiaccuracy` (Triple Axel / Triple Kick): hits after the first roll
+      // accuracy again; a miss ends the loop. PS sim/battle-actions.ts
+      // hitStepMoveHitLoop.
+      // TODO(PS parity): ModifyAccuracy / Accuracy events (abilities, items).
+      if hit_idx > 0 && matches!(choice.move_id, Choices::TRIPLEAXEL | Choices::TRIPLEKICK) {
+          let table = [1.0f64, 4.0 / 3.0, 5.0 / 3.0, 2.0, 7.0 / 3.0, 8.0 / 3.0, 3.0];
+          let mut acc = choice.accuracy as f64;
+          let ab = state.side(side).slot_boosts(slot).map(|b| b.acc).unwrap_or(0).clamp(-6, 6) as i32;
+          if ab > 0 { acc *= table[ab as usize]; } else if ab < 0 { acc /= table[(-ab) as usize]; }
+          let eb = state.side(target_side).slot_boosts(target_slot).map(|b| b.eva).unwrap_or(0).clamp(-6, 6) as i32;
+          if eb > 0 { acc /= table[eb as usize]; } else if eb < 0 { acc *= table[(-eb) as usize]; }
+          if (rng.label("multiaccuracy").random(100) as f64) >= acc {
+              break;
+          }
+      }
       if choice.move_id == Choices::BEATUP {
           let a = &mut state.side_mut(side).active[slot];
           if !a.beat_up_queue.is_empty() {
@@ -3372,7 +3411,11 @@ fn execute_action_inner(
                         Some((c, _)) => Some((if c < 729 { c * 3 } else { c }, 2)),
                     };
                 }
-                PokemonVolatileStatus::CONFUSION => try_confuse(state, rng, ts, tslot),
+                PokemonVolatileStatus::CONFUSION => {
+                    if !safeguard_blocks_confusion(state, side, slot, idx, ts, tslot) {
+                        try_confuse(state, rng, ts, tslot)
+                    }
+                }
                 PokemonVolatileStatus::SUBSTITUTE => {
                     // PS substitute `onTryHit` (fails if already up or hp <=
                     // maxhp/4), `onHit` (directDamage maxhp/4), `onStart`
@@ -3840,6 +3883,36 @@ fn execute_action_inner(
         }
 
         // Worry Seed `onHit`: the target's ability becomes Insomnia (cures sleep).
+        // Simple Beam `onHit`: `setAbility('simple')` (PS data/moves.ts simplebeam).
+        // Its `onTryHit` runs after the accuracy roll: it fails on Simple /
+        // Truant / unsuppressable abilities.
+        if choice.move_id == Choices::SIMPLEBEAM && ti == 0 && !move_failed {
+            if let Some(tidx) = state.side(target_side).active[target_slot].pokemon_index {
+                let a = state.side(target_side).team_member(tidx).ability;
+                if a == Abilities::SIMPLE
+                    || a == Abilities::TRUANT
+                    || matches!(
+                        a,
+                        Abilities::MULTITYPE
+                            | Abilities::STANCECHANGE
+                            | Abilities::DISGUISE
+                            | Abilities::ZENMODE
+                            | Abilities::SCHOOLING
+                            | Abilities::SHIELDSDOWN
+                            | Abilities::POWERCONSTRUCT
+                            | Abilities::COMATOSE
+                            | Abilities::ICEFACE
+                            | Abilities::GULPMISSILE
+                            | Abilities::HUNGERSWITCH
+                            | Abilities::BATTLEBOND
+                    )
+                {
+                    move_failed = true;
+                } else {
+                    state.side_mut(target_side).team_member_mut(tidx).ability = Abilities::SIMPLE;
+                }
+            }
+        }
         if choice.move_id == Choices::WORRYSEED && ti == 0 && !move_failed {
             if let Some(tidx) = state.side(target_side).active[target_slot].pokemon_index {
                 let pm = state.side_mut(target_side).team_member_mut(tidx);
@@ -3847,6 +3920,13 @@ fn execute_action_inner(
                 if pm.status == PokemonStatus::SLEEP {
                     pm.status = PokemonStatus::NONE;
                 }
+            }
+        }
+
+        // Clear Smog `onHit`: `target.clearBoosts()` (PS data/moves.ts clearsmog).
+        if choice.move_id == Choices::CLEARSMOG && ti == 0 && !move_failed {
+            if let Some(tidx) = state.side(target_side).active[target_slot].pokemon_index {
+                state.side_mut(target_side).clear_member_boosts(tidx);
             }
         }
 
@@ -4050,6 +4130,13 @@ fn execute_action_inner(
                 }
             } else if !apply_side_condition(state, cs, sc.condition) {
                 move_failed = true;
+            } else if choice.move_id == Choices::QUICKGUARD {
+                // quickguard `onHitSide`: `source.addVolatile('stall')`.
+                let a = &mut state.side_mut(side).active[slot];
+                a.stall = match a.stall {
+                    None => Some((3, 2)),
+                    Some((c, _)) => Some((if c < 729 { c * 3 } else { c }, 2)),
+                };
             }
         }
 
@@ -4305,7 +4392,9 @@ fn execute_action_inner(
                         }
                     }
                     Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION) => {
-                        try_confuse(state, rng, ts, tslot);
+                        if !safeguard_blocks_confusion(state, side, slot, idx, ts, tslot) {
+                            try_confuse(state, rng, ts, tslot);
+                        }
                     }
                     Effect::VolatileStatus(vv) => {
                         if *vv == PokemonVolatileStatus::PROTECT {
@@ -4447,10 +4536,23 @@ fn execute_action_inner(
                     };
                     let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
                 }
-                // Gooey / Tangling Hair (`onDamagingHit`): a contact hit lowers
-                // the attacker's Speed by 1 stage.
-                // TODO(PS parity): `checkMoveMakesContact` (Long Reach, Protective Pads).
-                if matches!(ability, Abilities::GOOEY | Abilities::TANGLINGHAIR) && choice.flags.contact {
+            }
+            // Gooey / Tangling Hair (`onDamagingHit`, also when the hit KO'd the
+            // holder): a contact hit lowers the attacker's Speed by 1 stage.
+            // PS data/abilities.ts gooey; Long Reach removes contact.
+            let holder = state.side(target_side).active[target_slot].pokemon_index.or_else(|| {
+                state
+                    .unresolved_faints
+                    .iter()
+                    .find(|(s, sl, _)| *s == target_side && *sl == target_slot)
+                    .map(|&(_, _, i)| i)
+            });
+            if let Some(h) = holder {
+                let ability = state.side(target_side).team_member(h).ability;
+                if matches!(ability, Abilities::GOOEY | Abilities::TANGLINGHAIR)
+                    && choice.flags.contact
+                    && state.side(side).team_member(idx).ability != Abilities::LONGREACH
+                {
                     apply_boosts(
                         state,
                         side,
@@ -4732,6 +4834,7 @@ fn base_power_with_modifiers(
     steely_spirits: u8,
     avalanche_boosted: bool,
     total_fainted: u32,
+    hit_number: u32,
     state: &DoublesState,
 ) -> f32 {
     let dynamic = dynamic_base_power(
@@ -4742,6 +4845,7 @@ fn base_power_with_modifiers(
         avalanche_boosted,
         state.terrain.terrain_type == crate::engine::state::Terrain::ELECTRICTERRAIN,
         total_fainted,
+        hit_number,
     );
     let bp = if dynamic > 0.0 { dynamic } else { choice.base_power };
     // (onBasePowerPriority, 4096-based modifier); PS runs higher priority
@@ -4889,6 +4993,8 @@ fn dynamic_base_power(
     electric_terrain: bool,
     // PS `side.totalFainted`: Last Respects.
     total_fainted: u32,
+    // PS `move.hit`: Triple Axel / Triple Kick.
+    hit_number: u32,
 ) -> f32 {
     use crate::engine::mechanics as m;
     let (att_spe, def_spe) = speeds;
@@ -4916,6 +5022,9 @@ fn dynamic_base_power(
         }
         // PS lastrespects.basePowerCallback: 50 + 50 * side.totalFainted.
         Choices::LASTRESPECTS => 50.0 + 50.0 * total_fainted as f32,
+        // PS tripleaxel / triplekick basePowerCallback: 20 (10) * move.hit.
+        Choices::TRIPLEAXEL => 20.0 * hit_number as f32,
+        Choices::TRIPLEKICK => 10.0 * hit_number as f32,
         // PS hex.basePowerCallback: doubled on a statused target (or Comatose).
         Choices::HEX => {
             let hit = defender.map(|d| d.status != PokemonStatus::NONE || d.ability == Abilities::COMATOSE);
@@ -5005,6 +5114,21 @@ fn confusion_damage(state: &DoublesState, rng: &mut Gen5Rng, side: Side, slot: u
 /// a draw if already confused or Own Tempo; otherwise draws its duration
 /// `random(2, 6)`.
 // TODO(PS parity): Misty Terrain, Safeguard.
+/// Safeguard `onTryAddVolatile` (PS data/moves.ts safeguard): blocks a
+/// confusion added by another pokemon's move, unless the move infiltrates.
+fn safeguard_blocks_confusion(
+    state: &DoublesState,
+    side: Side,
+    slot: usize,
+    idx: PokemonIndex,
+    ts: Side,
+    tslot: usize,
+) -> bool {
+    state.side(ts).side_conditions.safeguard > 0
+        && (side, slot) != (ts, tslot)
+        && state.side(side).team_member(idx).ability != Abilities::INFILTRATOR
+}
+
 fn try_confuse(state: &mut DoublesState, rng: &mut Gen5Rng, ts: Side, tslot: usize) {
     let Some(p) = state.side(ts).slot_pokemon(tslot) else { return };
     if p.hp <= 0 || p.ability == Abilities::OWNTEMPO || state.side(ts).active[tslot].confusion > 0 {
@@ -5319,6 +5443,7 @@ fn compute_hit_damage(
                         })
                         .unwrap_or(false),
                 side_total_fainted(state, side),
+                state.side(side).active[slot].hit_number as u32,
                 state,
             ),
         };
@@ -6113,6 +6238,7 @@ fn apply_side_condition(state: &mut DoublesState, side: Side, c: PokemonSideCond
         PokemonSideCondition::ToxicSpikes if sc.toxic_spikes < 2 => sc.toxic_spikes += 1,
         PokemonSideCondition::Stealthrock if sc.stealth_rock == 0 => sc.stealth_rock = 1,
         PokemonSideCondition::StickyWeb if sc.sticky_web == 0 => sc.sticky_web = 1,
+        PokemonSideCondition::QuickGuard if sc.quick_guard == 0 => sc.quick_guard = 1,
         PokemonSideCondition::Reflect
         | PokemonSideCondition::LightScreen
         | PokemonSideCondition::AuroraVeil
@@ -6123,6 +6249,7 @@ fn apply_side_condition(state: &mut DoublesState, side: Side, c: PokemonSideCond
         | PokemonSideCondition::Spikes
         | PokemonSideCondition::ToxicSpikes
         | PokemonSideCondition::Stealthrock
+        | PokemonSideCondition::QuickGuard
         | PokemonSideCondition::StickyWeb => return false,
         _ => {}
     }
@@ -6410,6 +6537,10 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             if active {
                 push(26, 0, sub, ResidualKind::Marker);
             }
+        }
+        // quickguard (duration 1, side condition: subOrder 4, no order).
+        if state.side(side).side_conditions.quick_guard > 0 {
+            push(NO_ORDER, 0, 4, ResidualKind::Marker);
         }
         for slot in 0..2 {
             let s = state.side(side);
@@ -7325,6 +7456,7 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
             &mut sc.safeguard,
             &mut sc.lucky_chant,
             &mut sc.mist,
+            &mut sc.quick_guard,
         ] {
             if *d > 0 {
                 *d -= 1;

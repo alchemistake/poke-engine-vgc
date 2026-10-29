@@ -40,6 +40,8 @@ pub struct ActiveSlot {
     pub force_trapped: bool,
     pub slow_uturn_move: bool,
     pub baton_passing: bool,
+    /// PS `move.hit` (1-based) of the current hit of a multi-hit move.
+    pub hit_number: u8,
     pub shed_tailing: bool,
     /// Flinched by the previous move's secondary effect; cannot act this turn.
     pub flinched: bool,
@@ -221,6 +223,7 @@ impl ActiveSlot {
             force_trapped: false,
             slow_uturn_move: false,
             baton_passing: false,
+            hit_number: 1,
             shed_tailing: false,
             flinched: false,
             recharging: false,

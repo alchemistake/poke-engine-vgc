@@ -924,6 +924,16 @@ pub fn run_battle_fuzz(
             if let Some((es, esl, em)) = state.queue_change.take() {
                 apply_queue_change(state, rng, &mut actions, i, es, esl, em);
             }
+            // After You `onHit` -> `queue.prioritizeAction(action)`.
+            // PS sim/battle-queue.ts prioritizeAction.
+            if let Some((ts, tsl)) = state.queue_prioritize.take() {
+                if let Some(tidx) = state.side(ts).active[tsl].pokemon_index {
+                    if let Some(j) = (i + 1..actions.len()).find(|&j| actions[j].side == ts && actions[j].pokemon_index == tidx) {
+                        let a = actions.remove(j);
+                        actions.insert(i + 1, a);
+                    }
+                }
+            }
             // Phazing (PS `runAction`: `forceSwitchFlag` -> `dragIn`) happens
             // before faints are resolved.
             drag_in_all(state, rng);
@@ -3509,6 +3519,19 @@ fn execute_action_inner(
             }
         }
 
+        // After You (PS data/moves.ts afteryou.onHit): fails when the target
+        // has no queued action; otherwise it moves next.
+        if choice.move_id == Choices::AFTERYOU && ti == 0 {
+            let tidx = state.side(target_side).active[target_slot].pokemon_index;
+            let will_move = tidx.is_some()
+                && queue.iter().skip(1).any(|q| q.side == target_side && Some(q.pokemon_index) == tidx);
+            if will_move {
+                state.queue_prioritize = Some((target_side, target_slot));
+            } else {
+                move_failed = true;
+            }
+        }
+
         // Dragon Cheer: `addVolatile('dragoncheer')` on the ally; `onStart`
         // fails if the target has Focus Energy (or already has the volatile).
         if choice.move_id == Choices::DRAGONCHEER && ti == 0 {
@@ -3642,6 +3665,27 @@ fn execute_action_inner(
                 let tb = &mut state.side_mut(target_side).team_boosts[tidx as usize];
                 tb.def = d1;
                 tb.spd = s1;
+            }
+        }
+
+        // Power Swap `onHit`: swap Atk / SpA stat stages with the target.
+        // PS data/moves.ts powerswap.
+        if choice.move_id == Choices::POWERSWAP && ti == 0 {
+            if let Some(tidx) = state.side(target_side).active[target_slot].pokemon_index {
+                let (a1, s1) = {
+                    let sb = &state.side(side).team_boosts[idx as usize];
+                    (sb.atk, sb.spa)
+                };
+                let (a2, s2) = {
+                    let sb = &state.side(target_side).team_boosts[tidx as usize];
+                    (sb.atk, sb.spa)
+                };
+                let sb = &mut state.side_mut(side).team_boosts[idx as usize];
+                sb.atk = a2;
+                sb.spa = s2;
+                let tb = &mut state.side_mut(target_side).team_boosts[tidx as usize];
+                tb.atk = a1;
+                tb.spa = s1;
             }
         }
 
@@ -4789,6 +4833,18 @@ fn compute_hit_damage(
         } else {
             defender.special_defense
         };
+        // Unaware `onAnyModifyBoost` (PS data/abilities.ts unaware): an
+        // Unaware defender ignores the attacker's offensive boosts (breakable);
+        // an Unaware attacker ignores the defender's defensive boosts.
+        let atk_boost_stat = if defender.ability == Abilities::UNAWARE
+            && choice.move_id != Choices::FOULPLAY
+            && !crate::engine::abilities::ignores_target_ability(attacker, choice, &defender.ability)
+        {
+            0
+        } else {
+            atk_boost_stat
+        };
+        let def_boost_stat = if attacker.ability == Abilities::UNAWARE { 0 } else { def_boost_stat };
         let ctx = DamageCtx {
             attack_base: base_atk,
             attack_boost: atk_boost_stat,
@@ -5476,6 +5532,48 @@ fn apply_on_switch_abilities(
                 state.side_mut(side).team_member_mut(idx).ability = copied;
             }
             ability = copied;
+        }
+    }
+    // Forewarn `onStart` (PS data/abilities.ts forewarn): `sample` of the
+    // foes' highest-power moves (one draw when any candidate exists).
+    if ability == Abilities::FOREWARN {
+        let foe = side.other();
+        let mut count = 0u32;
+        let mut warn_bp = 1.0f32;
+        for f in 0..2 {
+            let Some(fidx) = state.side(foe).active[f].pokemon_index else { continue };
+            let p = state.side(foe).team_member(fidx);
+            if p.hp <= 0 {
+                continue;
+            }
+            for m in [&p.moves.m0, &p.moves.m1, &p.moves.m2, &p.moves.m3] {
+                if m.id == Choices::NONE {
+                    continue;
+                }
+                let c = &m.choice;
+                let mut bp = c.base_power;
+                if c.ohko {
+                    bp = 150.0;
+                }
+                if matches!(m.id, Choices::COUNTER | Choices::METALBURST | Choices::MIRRORCOAT) {
+                    bp = 120.0;
+                }
+                if bp == 1.0 {
+                    bp = 80.0;
+                }
+                if bp == 0.0 && c.category != MoveCategory::Status {
+                    bp = 80.0;
+                }
+                if bp > warn_bp {
+                    count = 1;
+                    warn_bp = bp;
+                } else if bp == warn_bp {
+                    count += 1;
+                }
+            }
+        }
+        if count > 0 {
+            let _ = rng.label("sample").random(count);
         }
     }
     // Weather / terrain setters (shared table with the singles engine).

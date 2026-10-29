@@ -456,6 +456,9 @@ pub struct DoublesState {
     /// this move (`queue.changeAction`), applied by the battle loop:
     /// (side, slot, move).
     pub queue_change: Option<(Side, usize, crate::choices::Choices)>,
+    /// After You `onHit`: the target's queued action moves to the front
+    /// (`queue.prioritizeAction`), applied by the battle loop.
+    pub queue_prioritize: Option<(Side, usize)>,
 }
 
 impl DoublesState {
@@ -980,6 +983,7 @@ impl DoublesState {
         let state = Self {
             last_move: None,
             queue_change: None,
+            queue_prioritize: None,
             side_one,
             side_two,
             weather: StateWeather {

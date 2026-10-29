@@ -31,7 +31,7 @@ fi
 
 # 2. Protected files. Compared against HEAD (staged + unstaged).
 PROTECTED=(
-  fuzz/fuzz.js fuzz/fuzz_purpose.js fuzz/teams.js fuzz/ps_trace.js
+  fuzz/fuzz.js fuzz/fuzz_purpose.js fuzz/teams.js fuzz/ps_trace.js fuzz/ps_lookup.sh
   fuzz/guard.sh fuzz/install-hooks.sh fuzz/SCORE
   src/doubles/species_types.rs src/doubles/species_weights.rs src/doubles/move_targets.rs
 )

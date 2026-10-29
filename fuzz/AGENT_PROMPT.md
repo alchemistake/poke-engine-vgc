@@ -44,12 +44,18 @@ cargo build --release --features champions --no-default-features
    score did not drop; it raises `fuzz/SCORE`. If it prints `GUARD: FAILED`,
    fix what it says before anything else.
 4. **Commit** (section 6 lists the files): one commit per fixed battle,
-   message `fuzz: seed <N> passes (<mechanic>)`. The hook re-runs the guard.
+   message `fuzz: seed <N> passes (<mechanic>)`. The body lists, for each
+   mechanic, the PS file and function you copied it from. The hook re-runs
+   the guard.
 5. Go back to step 1.
 
 **Stop and ask the user** (use the notify skill) when:
 - the report says `PS ERROR`, or the choices in the report do not match the
-  PS battle log (harness bug: never edit `fuzz/fuzz.js` and co.);
+  PS battle log (harness bug: never edit `fuzz/fuzz.js` and co.). A
+  difference in PRNG draws or damage is **never** a harness bug: both
+  simulators share one PRNG stream, so it is always an engine gap. Before
+  you call something a harness bug, quote the PS code and the report line
+  that prove the harness recorded something PS did not do;
 - a fix needs a protected file (guard check 2);
 - you are stuck on one battle for 3 attempts that do not move the failure
   later — say what you tried in your report.
@@ -99,6 +105,28 @@ residual | eachEvent | switch-in | queue insert)`). It says one of:
   (section 4).
 
 ---
+
+## 2b. Look it up in PS — never guess (mandatory)
+
+Every engine change copies PS code you have **read**. Do not infer a
+mechanic from damage numbers, from the move's name, or from memory of the
+games, and never write "this build seems to …". The steps:
+
+1. `node fuzz/ps_trace.js --seed <S> --turn <T>`: what PS did, which draws,
+   which modifiers (with the ability / item / condition that applied them).
+2. `fuzz/ps_lookup.sh <id>` for every move / ability / condition involved
+   (e.g. `focuspunch`, `punkrock`, `slp`): prints the champions override
+   first, then the generic entry.
+3. `fuzz/ps_lookup.sh <function>` for every PS function in the draw's call
+   stack (e.g. `resolveAction`, `hitStepAccuracy`, `getRandomTarget`) and
+   read where the draw or the value comes from.
+4. Write the engine code to do the same thing in the same order, and put
+   the PS location in a comment: `// PS: data/moves.ts focuspunch.priorityChargeCallback`.
+
+Example of what goes wrong without this: seed 8 was reported as a
+"queue-build speed-tie draw count difference". `ps_trace` plus
+`ps_lookup.sh resolveAction` showed the real cause in minutes: Focus Punch's
+`priorityChargeMove` action, which makes a `getRandomTarget` draw.
 
 ## 3. Fixing PRNG misalignment
 
@@ -300,7 +328,7 @@ When the fuzzer needs a mechanic:
 **Never:**
 - modify `pokemon-showdown/` (guard check 1);
 - edit protected files without the user: `fuzz/fuzz.js`, `fuzz/fuzz_purpose.js`,
-  `fuzz/teams.js`, `fuzz/ps_trace.js`, `fuzz/guard.sh`, `fuzz/install-hooks.sh`,
+  `fuzz/teams.js`, `fuzz/ps_trace.js`, `fuzz/ps_lookup.sh`, `fuzz/guard.sh`, `fuzz/install-hooks.sh`,
   and the generated tables `src/doubles/species_types.rs`,
   `src/doubles/species_weights.rs`, `src/doubles/move_targets.rs` (guard check 2);
 - regenerate or bulk-rewrite `src/choices.rs` (guard check 3);
@@ -340,6 +368,7 @@ Facts the harness already handles:
 | tool | use |
 |---|---|
 | `node fuzz/ps_trace.js --seed S --turn T` | PS's protocol lines, draws, modifiers and value changes for one turn |
+| `fuzz/ps_lookup.sh <id or function>` | PS source of a move / ability / condition / item (champions override first) or a sim function |
 | `PE_DEBUG_DMG=1 PE_DEBUG_RNG=1 ./target/release/poke-engine doubles-fuzz-battle --input fuzz/work/test-1/input.json --output /tmp/pe.json` | engine trace on stderr: each action, damage calc inputs, every draw |
 | `fuzz/guard.sh [--update]` | all guard rails + score; run before every commit |
 | `fuzz/work/test-1/pe.json` → `prng_draw_ctx` | engine purpose of every draw (`"crit\|turn 2: B1 Weavile ICESHARD"`) |

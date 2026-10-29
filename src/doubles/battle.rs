@@ -3718,7 +3718,8 @@ fn execute_action_inner(
                 // the first target's pass applies it.
             } else if let Some(tidx) = state.side(ts).active[tslot].pokemon_index {
                 let before = state.side(ts).team_boosts[tidx as usize].clone();
-                apply_boosts(state, ts, tidx, &b.boosts, ts != side);
+                let boosts = if ts != side { mirror_armor_bounce(state, side, slot, ts, tidx, &b.boosts) } else { b.boosts.clone() };
+                apply_boosts(state, ts, tidx, &boosts, ts != side);
                 let after = &state.side(ts).team_boosts[tidx as usize];
                 if (before.atk, before.def, before.spa, before.spd, before.spe, before.acc, before.eva)
                     != (after.atk, after.def, after.spa, after.spd, after.spe, after.acc, after.eva)
@@ -5204,7 +5205,8 @@ fn execute_action_inner(
                     }
                     Effect::Boost(b) => {
                         if let Some(tidx) = state.side(ts).active[tslot].pokemon_index {
-                            apply_boosts(state, ts, tidx, b, ts != side);
+                            let b = if ts != side { mirror_armor_bounce(state, side, slot, ts, tidx, b) } else { b.clone() };
+                            apply_boosts(state, ts, tidx, &b, ts != side);
                         }
                     }
                     Effect::Status(st) => {
@@ -7073,6 +7075,54 @@ fn maybe_synchronize(
 /// `source_is_foe` = true when the boost was caused by a Pokémon on the
 /// opposing side. If a foe lowers at least one stat of a Defiant user, its
 /// Attack rises by +2 (PS `defiant.onAfterEachBoost`, data/abilities.ts:901).
+/// Mirror Armor `onTryBoost` (PS data/abilities.ts mirrorarmor): a stat drop
+/// from another pokemon is bounced onto its source while the holder's stat is
+/// above -6; the bounced part does not apply to the holder. Returns what still
+/// applies to the holder.
+fn mirror_armor_bounce(
+    state: &mut DoublesState,
+    side: Side,
+    slot: usize,
+    ts: Side,
+    tidx: PokemonIndex,
+    b: &StatBoosts,
+) -> StatBoosts {
+    let holder = state.side(ts).team_member(tidx).ability;
+    let Some(sidx) = state.side(side).active[slot].pokemon_index else { return b.clone() };
+    if holder != Abilities::MIRRORARMOR || state.side(side).team_member(sidx).hp <= 0 {
+        return b.clone();
+    }
+    let cur = state.side(ts).team_boosts[tidx as usize].clone();
+    let now = [cur.atk, cur.def, cur.spa, cur.spd, cur.spe, cur.acc, cur.eva];
+    let mut rest = [b.attack, b.defense, b.special_attack, b.special_defense, b.speed, b.accuracy, b.evasion];
+    let mut bounced = [0i8; 7];
+    for n in 0..7 {
+        if rest[n] < 0 && now[n] > -6 {
+            bounced[n] = rest[n];
+            rest[n] = 0;
+        }
+    }
+    let bounced = StatBoosts {
+        attack: bounced[0],
+        defense: bounced[1],
+        special_attack: bounced[2],
+        special_defense: bounced[3],
+        speed: bounced[4],
+        accuracy: bounced[5],
+        evasion: bounced[6],
+    };
+    apply_boosts(state, side, sidx, &bounced, true);
+    StatBoosts {
+        attack: rest[0],
+        defense: rest[1],
+        special_attack: rest[2],
+        special_defense: rest[3],
+        speed: rest[4],
+        accuracy: rest[5],
+        evasion: rest[6],
+    }
+}
+
 fn apply_boosts(
     state: &mut DoublesState,
     side: Side,

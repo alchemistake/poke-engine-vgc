@@ -682,7 +682,8 @@ pub fn run_battle_fuzz(
                     vol.mirror_coat_vol = Some((None, 0));
                 }
             }
-            if a.choice.move_id == Choices::FOCUSPUNCH {
+            // A recharging pokemon's action is `recharge`, not the chosen move.
+            if a.choice.move_id == Choices::FOCUSPUNCH && !state.side(a.side).active[a.slot].recharging {
                 let mut charge = a.clone();
                 charge.target_loc = 0;
                 let _ = ps_get_target(state, rng, &charge);
@@ -724,7 +725,9 @@ pub fn run_battle_fuzz(
         // the re-sort.
         let chargers: Vec<(Side, usize, PokemonIndex)> = actions
             .iter()
-            .filter(|a| a.choice.move_id == Choices::FOCUSPUNCH)
+            .filter(|a| {
+                a.choice.move_id == Choices::FOCUSPUNCH && !state.side(a.side).active[a.slot].recharging
+            })
             .map(|a| (a.side, a.slot, a.pokemon_index))
             .collect();
         for &(cs, csl, cidx) in &chargers {
@@ -1178,6 +1181,32 @@ fn execute_action(
             }
         }
     }
+    // lockedmove `onAfterMove` (any move the holder used, including one that
+    // missed or was blocked early): removed when duration is 1; `onEnd` then
+    // confuses the user unless trueDuration > 1. PS data/conditions.ts.
+    if move_order.len() > order_len && state.side(action.side).slot_pokemon(action.slot).is_some() {
+        if let Some((1, t)) = state.side(action.side).active[action.slot].locked_move {
+            state.side_mut(action.side).active[action.slot].locked_move = None;
+            if t <= 1 {
+                try_confuse(state, rng, action.side, action.slot);
+            }
+        }
+    }
+    // Crash damage (Jump Kick, High Jump Kick, Axe Kick, Supercell Slam):
+    // `onMoveFail` after `useMoveInner` found `moveResult` false (a miss,
+    // Protect, an immunity, ...). PS data/moves.ts jumpkick / supercellslam
+    // (`damage(baseMaxhp / 2)`), sim/battle-actions.ts useMoveInner.
+    if action.choice.crash.is_some()
+        && move_order.len() > order_len
+        && state.side(action.side).active[action.slot].move_result_this_turn == Some(false)
+    {
+        if let Some(p) = state.side(action.side).slot_pokemon(action.slot) {
+            if p.hp > 0 {
+                let dmg = (p.maxhp / 2).max(1);
+                apply_damage(state, action.side, action.slot, dmg);
+            }
+        }
+    }
     // PS `runMove`: a failed BeforeMove runs `MoveAborted`, which removes
     // `twoturnmove` (data/conditions.ts). The charge was not consumed.
     let a = &mut state.side_mut(action.side).active[action.slot];
@@ -1473,6 +1502,12 @@ fn execute_action_inner(
     if state.side(side).team_member(idx).ability == Abilities::LIQUIDVOICE && modified.flags.sound {
         modified.move_type = PokemonType::WATER;
     }
+    // Thunder / Hurricane `onModifyMove`: accuracy 50 in harsh sunlight.
+    if matches!(modified.move_id, Choices::THUNDER | Choices::HURRICANE)
+        && matches!(state.weather.weather_type, Weather::SUN | Weather::HARSHSUN)
+    {
+        modified.accuracy = 50.0;
+    }
     let choice = &modified;
     let mut target_side = side.other();
 
@@ -1610,6 +1645,18 @@ fn execute_action_inner(
         Choices::SNORE
             if state.side(side).team_member(idx).status != PokemonStatus::SLEEP
                 && state.side(side).team_member(idx).ability != Abilities::COMATOSE =>
+        {
+            push_order();
+            return;
+        }
+        // Double Shock / Burn Up `onTryMove`: fail unless the user still has
+        // the move's type (no draw). PS data/moves.ts doubleshock / burnup.
+        Choices::DOUBLESHOCK | Choices::BURNUP
+            if {
+                let t = state.side(side).team_member(idx).types;
+                let need = if choice.move_id == Choices::DOUBLESHOCK { PokemonType::ELECTRIC } else { PokemonType::FIRE };
+                t.0 != need && t.1 != need
+            } =>
         {
             push_order();
             return;
@@ -1946,6 +1993,7 @@ fn execute_action_inner(
                     .map(|p| p.ability == Abilities::NOGUARD)
                     .unwrap_or(false);
             if !hits_anyway && !no_guard && choice.move_id != Choices::HELPINGHAND {
+                state.side_mut(side).active[slot].move_result_this_turn = Some(false);
                 push_order();
                 return;
             }
@@ -1977,6 +2025,17 @@ fn execute_action_inner(
                 }
                 4 => apply_boosts(state, side, idx, &StatBoosts { speed: -1, ..Default::default() }, true),
                 _ => {}
+            }
+        }
+        // Protect's `onTryHit` returns NOT_FAIL: `moveThisTurnResult` becomes
+        // null (not false), but `moveResult` is false so `onMoveFail` still
+        // runs (crash damage). PS sim/battle-actions.ts trySpreadMoveHit.
+        if choice.crash.is_some() {
+            if let Some(p) = state.side(side).slot_pokemon(slot) {
+                if p.hp > 0 {
+                    let dmg = (p.maxhp / 2).max(1);
+                    apply_damage(state, side, slot, dmg);
+                }
             }
         }
         push_order();
@@ -2193,10 +2252,20 @@ fn execute_action_inner(
 
     // Weather `onModifyAccuracy`: Thunder always hits in rain, Fire Blast in
     // sun (accuracy becomes `true`: no roll at all).
+    // PS data/moves.ts thunder / hurricane (rain: true, sun: 50),
+    // bleakwindstorm / sandsearstorm / wildboltstorm (rain: true),
+    // blizzard (hail / snow: true).
+    // TODO(PS parity): `effectiveWeather` (Cloud Nine / Air Lock).
     let weather_guaranteed = matches!(
         (choice.move_id, state.weather.weather_type),
-        (Choices::THUNDER, Weather::RAIN | Weather::HEAVYRAIN)
-            | (Choices::FIREBLAST, Weather::SUN | Weather::HARSHSUN)
+        (
+            Choices::THUNDER
+                | Choices::HURRICANE
+                | Choices::BLEAKWINDSTORM
+                | Choices::SANDSEARSTORM
+                | Choices::WILDBOLTSTORM,
+            Weather::RAIN | Weather::HEAVYRAIN
+        ) | (Choices::BLIZZARD, Weather::HAIL | Weather::SNOW)
     );
 
     // Accuracy roll (drawn even at 100%; skipped for always-hit / 0.0).
@@ -3513,6 +3582,20 @@ fn execute_action_inner(
 
         // DamagingHit (after secondaries, PS `spreadMoveHit`).
         if hit_damage.is_some() {
+            // Double Shock / Burn Up `self.onHit`: the user loses the type
+            // (`setType(types.map(t => t === X ? '???' : t))`).
+            if matches!(choice.move_id, Choices::DOUBLESHOCK | Choices::BURNUP) && ti == 0 {
+                let lose = if choice.move_id == Choices::DOUBLESHOCK { PokemonType::ELECTRIC } else { PokemonType::FIRE };
+                if state.side(side).team_member(idx).hp > 0 {
+                    let orig = state.side(side).team_member(idx).types;
+                    let f = |x: PokemonType| if x == lose { PokemonType::TYPELESS } else { x };
+                    let s = state.side_mut(side);
+                    s.team_member_mut(idx).types = (f(orig.0), f(orig.1));
+                    if s.active[slot].type_change.is_none() {
+                        s.active[slot].type_change = Some(orig);
+                    }
+                }
+            }
             contact_abilities(state, rng, side, slot, idx, target_side, target_slot, choice);
             cursed_body(state, rng, side, slot, target_side, target_slot, choice);
             // Weak Armor, Steam Engine, ... (shared with the singles engine).
@@ -3520,6 +3603,14 @@ fn execute_action_inner(
                 let ability = state.side(target_side).team_member(didx).ability;
                 if let Some(b) = crate::engine::mechanics::on_damaging_hit_boosts(ability, choice) {
                     apply_boosts(state, target_side, didx, &b, false);
+                }
+                // Electromorphosis `onDamagingHit` / Wind Power (wind moves only):
+                // `addVolatile('charge')`. PS data/abilities.ts.
+                if (ability == Abilities::ELECTROMORPHOSIS
+                    || (ability == Abilities::WINDPOWER && choice.flags.wind))
+                    && state.side(target_side).team_member(didx).hp > 0
+                {
+                    state.side_mut(target_side).active[target_slot].charge = true;
                 }
                 // Stamina `onDamagingHit`: +1 Def (PS data/abilities.ts stamina).
                 if ability == Abilities::STAMINA && state.side(target_side).team_member(didx).hp > 0 {
@@ -4678,7 +4769,7 @@ fn apply_boosts(
     } else {
         None
     };
-    let requested = [
+    let mut requested = [
         b.attack,
         b.defense,
         b.special_attack,
@@ -4687,6 +4778,36 @@ fn apply_boosts(
         b.accuracy,
         b.evasion,
     ];
+    // PS `runEvent('ChangeBoost')`: Contrary inverts, Simple doubles
+    // (data/abilities.ts contrary / simple `onChangeBoost`).
+    // TODO(PS parity): Mold Breaker bypass.
+    let holder_ability = state.side(side).team_member(idx).ability;
+    match holder_ability {
+        Abilities::CONTRARY => requested.iter_mut().for_each(|r| *r = -*r),
+        Abilities::SIMPLE => requested.iter_mut().for_each(|r| *r *= 2),
+        _ => {}
+    }
+    // PS `runEvent('TryBoost')`: stat-drop blockers, only for boosts from
+    // another pokemon (`if (source && target === source) return`).
+    if source_is_foe {
+        let blocks_all = matches!(
+            holder_ability,
+            Abilities::CLEARBODY | Abilities::WHITESMOKE | Abilities::FULLMETALBODY
+        );
+        for (n, r) in requested.iter_mut().enumerate() {
+            let blocked = blocks_all
+                || (n == 0 && holder_ability == Abilities::HYPERCUTTER)
+                || (n == 1 && holder_ability == Abilities::BIGPECKS)
+                || (n == 5
+                    && matches!(
+                        holder_ability,
+                        Abilities::KEENEYE | Abilities::ILLUMINATE | Abilities::MINDSEYE
+                    ));
+            if *r < 0 && blocked {
+                *r = 0;
+            }
+        }
+    }
     for (n, &req) in requested.iter().enumerate() {
         if req == 0 {
             continue;
@@ -4717,13 +4838,7 @@ fn apply_boosts(
     }
     // statsRaisedThisTurn (PS `boost`): set when any applied boost is
     // positive.
-    let raised = b.attack > 0
-        || b.defense > 0
-        || b.special_attack > 0
-        || b.special_defense > 0
-        || b.speed > 0
-        || b.accuracy > 0
-        || b.evasion > 0;
+    let raised = requested.iter().any(|&r| r > 0);
     if raised {
         let s = state.side_mut(side);
         for a in &mut s.active {

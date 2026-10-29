@@ -4094,6 +4094,20 @@ fn execute_action_inner(
         }
 
         // Worry Seed `onHit`: the target's ability becomes Insomnia (cures sleep).
+        // Trick / Switcheroo `onHit`: fail when neither pokemon holds an item
+        // (items are not exchanged otherwise yet). PS data/moves.ts trick.
+        // TODO(PS parity): item swap, Sticky Hold, Klutz-style restrictions.
+        if matches!(choice.move_id, Choices::TRICK | Choices::SWITCHEROO) && ti == 0 && !move_failed {
+            let mine = state.side(side).team_member(idx).item;
+            let theirs = state
+                .side(target_side)
+                .slot_pokemon(target_slot)
+                .map(|d| d.item)
+                .unwrap_or(crate::engine::items::Items::NONE);
+            if mine == crate::engine::items::Items::NONE && theirs == crate::engine::items::Items::NONE {
+                move_failed = true;
+            }
+        }
         // Gastro Acid: `volatileStatus: 'gastroacid'` suppresses the target's
         // ability until it switches out (modelled as No Ability, which the
         // switch-out reset undoes). Fails on unsuppressable abilities.
@@ -4943,6 +4957,20 @@ fn execute_action_inner(
         }
     }
 
+    // PS `useMoveInner`: `selfdestruct: 'always'` faints the user (HP 0); the
+    // faint is resolved right after the hit loop, so the loop's closing
+    // `eachEvent` no longer counts the user.
+    if choice.selfdestruct {
+        let hp = state.side(side).slot_pokemon(slot).map(|p| p.hp).unwrap_or(0);
+        let before = state.faint_log.len();
+        apply_damage(state, side, slot, hp);
+        // PS queues the user's faint before its victims' (`faintQueue` order).
+        if state.faint_log.len() > before && before >= faint_mark {
+            let f = state.faint_log.pop().unwrap();
+            state.faint_log.insert(faint_mark, f);
+        }
+    }
+
     // Healing Wish / Lunar Dance (slot-condition moves) make exactly one
     // hit-loop `eachEvent('Update')` in PS, while the user still counts as
     // active (faints are resolved afterwards).
@@ -4963,18 +4991,6 @@ fn execute_action_inner(
     // faints (PS data/moves.ts healingwish `slotCondition`).
     if matches!(choice.move_id, Choices::HEALINGWISH | Choices::LUNARDANCE) {
         state.side_mut(side).healing_wish_slot[slot] = true;
-    }
-
-    // PS `useMoveInner`: `selfdestruct: 'always'` faints the user (HP 0).
-    if choice.selfdestruct {
-        let hp = state.side(side).slot_pokemon(slot).map(|p| p.hp).unwrap_or(0);
-        let before = state.faint_log.len();
-        apply_damage(state, side, slot, hp);
-        // PS queues the user's faint before its victims' (`faintQueue` order).
-        if state.faint_log.len() > before && before >= faint_mark {
-            let f = state.faint_log.pop().unwrap();
-            state.faint_log.insert(faint_mark, f);
-        }
     }
 
     // Spit Up: `onAfterMove` removes the Stockpile volatile.

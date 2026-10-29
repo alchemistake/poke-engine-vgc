@@ -44,6 +44,9 @@ struct Action {
     /// A locked move that is not one of the user's own (Copycat -> Dive):
     /// no PP is deducted (PS `deductPP` finds no matching move slot).
     no_pp: bool,
+    /// The user's queued action is the `recharge` pseudo-move (no target
+    /// type). Kept on the action so it survives the user fainting.
+    recharge: bool,
 }
 
 impl Action {
@@ -575,6 +578,7 @@ fn apply_queue_change(
         fractional: 0,
         prioritized: false,
         no_pp: false,
+        recharge: state.side(side).active[slot].recharging,
     };
     // `resolveAction`: no target location -> `getRandomTarget` (a draw), then
     // `getActionSpeed` -> `getTarget`.
@@ -826,6 +830,7 @@ pub fn run_battle_fuzz(
                                 fractional: 0,
                                 prioritized: false,
                                 no_pp,
+                                recharge: s.active[slot].recharging,
                             });
                         }
                     }
@@ -1272,7 +1277,7 @@ fn ps_get_target_inner(state: &DoublesState, rng: &mut Gen5Rng, action: &Action)
     // which has no target type.
     let move_id = action.choice.move_id.to_string().to_lowercase();
     let user_types = state.side(side).team_member(action.pokemon_index).types;
-    let ty = if a.recharging {
+    let ty = if action.recharge {
         ""
     } else if action.choice.move_id == Choices::CURSE
         && user_types.0 != PokemonType::GHOST
@@ -1812,7 +1817,7 @@ fn execute_action_inner(
     let mut modified = action.choice.clone();
     match modified.move_id {
         Choices::TERRAINPULSE => {
-            let grounded = (state.side(side).team_member(idx).is_grounded() || state.gravity.active);
+            let grounded = (slot_grounded(state.side(side).team_member(idx), &state.side(side).active[slot]) || state.gravity.active);
             if let Some(t) = crate::engine::mechanics::terrain_pulse_type(state.terrain.terrain_type, grounded) {
                 modified.move_type = t;
                 modified.base_power *= 2.0;
@@ -2573,7 +2578,7 @@ fn execute_action_inner(
         && action.priority > 0
         && target_side != side
         && state.terrain.terrain_type == crate::engine::state::Terrain::PSYCHICTERRAIN
-        && state.side(target_side).slot_pokemon(target_slot).is_some_and(|d| (d.is_grounded() || state.gravity.active))
+        && state.side(target_side).slot_pokemon(target_slot).is_some_and(|d| (slot_grounded(d, &state.side(target_side).active[target_slot]) || state.gravity.active))
     {
         state.side_mut(side).active[slot].move_result_this_turn = Some(false);
         push_order();
@@ -3913,6 +3918,15 @@ fn execute_action_inner(
                         Some((c, _)) => Some((if c < 729 { c * 3 } else { c }, 2)),
                     };
                 }
+                PokemonVolatileStatus::MAGNETRISE => {
+                    // PS data/moves.ts magnetrise.onTry: fails with Ingrain or
+                    // Gravity (`cant`). TODO(PS parity): Smack Down.
+                    if state.side(ts).active[tslot].ingrain || state.gravity.active {
+                        move_failed = true;
+                    } else {
+                        state.side_mut(ts).active[tslot].magnet_rise = 5;
+                    }
+                }
                 PokemonVolatileStatus::CONFUSION => {
                     if !safeguard_blocks_confusion(state, side, slot, idx, ts, tslot) {
                         try_confuse(state, rng, ts, tslot)
@@ -4201,6 +4215,23 @@ fn execute_action_inner(
                     }
                     apply_boosts(state, ts, tidx, &b, false);
                 }
+            }
+        }
+
+        // Role Play `onTryHit` / `onHit` (PS data/moves.ts roleplay): fails when
+        // both share an ability, otherwise the user takes the target's ability
+        // (`setAbility`, no draw; the switch-out reset restores the base one).
+        // TODO(PS parity): failroleplay / cantsuppress ability flags.
+        if choice.move_id == Choices::ROLEPLAY && ti == 0 {
+            let user_idx = state.side(side).active[slot].pokemon_index;
+            let target_ability = state.side(target_side).active[target_slot]
+                .pokemon_index
+                .map(|t| state.side(target_side).team_member(t).ability);
+            match (user_idx, target_ability) {
+                (Some(u), Some(ta)) if state.side(side).team_member(u).ability != ta => {
+                    state.side_mut(side).team_member_mut(u).ability = ta;
+                }
+                _ => move_failed = true,
             }
         }
 
@@ -5686,6 +5717,8 @@ fn base_power_with_modifiers(
     avalanche_boosted: bool,
     total_fainted: u32,
     hit_number: u32,
+    // Rivalry: 1 same gender, -1 opposite, 0 when either is genderless.
+    rivalry: i8,
     state: &DoublesState,
 ) -> f32 {
     let dynamic = dynamic_base_power(
@@ -5730,7 +5763,10 @@ fn base_power_with_modifiers(
         }
         // sheerforce.onBasePower (priority 21), when it removed the secondaries.
         Abilities::SHEERFORCE if has_secondaries(choice) => mods.push((21, 5325)),
-        // TODO(PS parity): Rivalry (genders), Sand Force (weather), Analytic,
+        // rivalry.onBasePower (priority 24): x1.25 same gender, x0.75 opposite.
+        Abilities::RIVALRY if rivalry > 0 => mods.push((24, 5120)),
+        Abilities::RIVALRY if rivalry < 0 => mods.push((24, 3072)),
+        // TODO(PS parity): Sand Force (weather), Analytic,
         // Sheer Force, Supreme Overlord.
         _ => {}
     }
@@ -5811,6 +5847,12 @@ fn base_power_with_modifiers(
 /// callback; use `choice.base_power`). Reversal / Flail scale with the
 /// user's remaining HP; Hard Press / Crush Grip / Wring Out with the
 /// target's.
+/// PS `pokemon.isGrounded()` for a slot: Magnet Rise (`magnetrise` volatile)
+/// makes the holder airborne; the item / ability / type checks are on `Pokemon`.
+fn slot_grounded(p: &crate::state::Pokemon, a: &ActiveSlot) -> bool {
+    a.magnet_rise == 0 && p.is_grounded()
+}
+
 /// Grassy Glide `onModifyPriority`: +1 in Grassy Terrain for a grounded user
 /// (PS data/moves.ts grassyglide).
 fn grassy_glide_boost(state: &DoublesState, p: &crate::state::Pokemon, choice: &Choice) -> i8 {
@@ -6360,6 +6402,21 @@ fn compute_hit_damage(
                         .unwrap_or(false),
                 side_total_fainted(state, side),
                 state.side(side).active[slot].hit_number as u32,
+                // PS `rivalry.onBasePower`: both genders must be set (`M` / `F`).
+                {
+                    let gendered = |g: Option<&str>| matches!(g, Some("M") | Some("F"));
+                    let ag = state.side(side).genders[idx as usize].as_deref();
+                    let dg = state
+                        .side(target_side)
+                        .active[target_slot]
+                        .pokemon_index
+                        .and_then(|di| state.side(target_side).genders[di as usize].as_deref());
+                    match (gendered(ag), gendered(dg)) {
+                        (true, true) if ag == dg => 1,
+                        (true, true) => -1,
+                        _ => 0,
+                    }
+                },
                 state,
             ),
         };
@@ -7535,6 +7592,8 @@ enum ResidualKind {
     ThroatChop(Side, usize),
     /// `taunt` duration countdown (order 15).
     Taunt(Side, usize),
+    /// `magnetrise` duration countdown (order 18, PS data/moves.ts magnetrise).
+    MagnetRise(Side, usize),
     /// Healer / Shed Skin `onResidual` (order 5, subOrder 3).
     CureStatus(Side, usize),
     /// Moody `onResidual` (order 28, subOrder 2).
@@ -7766,6 +7825,9 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             }
             if a.taunt > 0 {
                 push(15, speed, 2, ResidualKind::Taunt(side, slot));
+            }
+            if a.magnet_rise > 0 {
+                push(18, speed, 2, ResidualKind::MagnetRise(side, slot));
             }
             if a.cursed {
                 push(12, speed, 2, ResidualKind::Curse(side, slot));
@@ -8169,6 +8231,10 @@ fn end_of_turn(
                 let a = &mut state.side_mut(side).active[slot];
                 a.taunt = a.taunt.saturating_sub(1);
             }
+            ResidualKind::MagnetRise(side, slot) => {
+                let a = &mut state.side_mut(side).active[slot];
+                a.magnet_rise = a.magnet_rise.saturating_sub(1);
+            }
             ResidualKind::CureStatus(side, slot) => {
                 let Some(idx) = state.side(side).active[slot].pokemon_index else { continue };
                 let (ab, hp) = {
@@ -8571,7 +8637,7 @@ fn end_of_turn(
                             _
                         ))
                     );
-                    if (p.is_grounded() || state.gravity.active) && !semi_invulnerable && p.hp < p.maxhp && s.active[slot].heal_block == 0 {
+                    if (slot_grounded(p, &s.active[slot]) || state.gravity.active) && !semi_invulnerable && p.hp < p.maxhp && s.active[slot].heal_block == 0 {
                         Some((idx, p.hp, p.maxhp))
                     } else {
                         None
@@ -8803,6 +8869,7 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
                             fractional: 0,
                             prioritized: false,
                             no_pp: false,
+                            recharge: s.active[slot].recharging,
                         });
                     }
                 }

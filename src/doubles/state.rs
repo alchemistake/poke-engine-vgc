@@ -112,6 +112,9 @@ pub struct ActiveSlot {
     pub fallen: u8,
     /// `taunt` volatile: remaining duration (0 = none).
     pub taunt: u8,
+    /// `magnetrise` volatile: remaining duration (0 = none). Makes the holder
+    /// ungrounded (PS `isGrounded`) until it ends (PS data/moves.ts magnetrise).
+    pub magnet_rise: u8,
     /// PS `activeTurns`: end-of-turn count since switch-in.
     pub active_turns: u8,
     /// Illusion ended (hit by a damaging move): the log shows the real species.
@@ -270,6 +273,7 @@ impl ActiveSlot {
             beat_up_queue: Vec::new(),
             fallen: 0,
             taunt: 0,
+            magnet_rise: 0,
             active_turns: 0,
             illusion_broken: false,
             illusion_target: None,

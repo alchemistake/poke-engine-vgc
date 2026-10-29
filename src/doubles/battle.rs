@@ -974,6 +974,7 @@ pub fn run_battle_fuzz(
             state.side_one.sync_sc_order();
             state.side_two.sync_sc_order();
             each_event_update(state, rng);
+            let queue_start = i;
             for (side, slot) in [(Side::One, 0usize), (Side::One, 1), (Side::Two, 0), (Side::Two, 1)] {
                 if !state.side(side).active[slot].force_switch {
                     continue;
@@ -1003,7 +1004,20 @@ pub fn run_battle_fuzz(
                         } else {
                             None
                         };
+                        // PS `switchIn`: a live switch-out cancels the old pokemon's
+                        // queued actions (`queue.cancelAction(oldActive)`).
+                        let old_pi = state.side(side).active[slot].pokemon_index;
                         switch_in(state, side, slot, position);
+                        if let Some(op) = old_pi {
+                            let mut k = queue_start;
+                            while k < actions.len() {
+                                if actions[k].side == side && actions[k].pokemon_index == op {
+                                    actions.remove(k);
+                                } else {
+                                    k += 1;
+                                }
+                            }
+                        }
                         if let Some((boosts, confusion, sub)) = passed {
                             if let Some(new_idx) = state.side(side).active[slot].pokemon_index {
                                 state.side_mut(side).team_boosts[new_idx as usize] = boosts;
@@ -1888,6 +1902,7 @@ fn execute_action_inner(
             if state.side(side).team_member(idx).status != PokemonStatus::SLEEP
                 && state.side(side).team_member(idx).ability != Abilities::COMATOSE =>
         {
+            state.side_mut(side).active[slot].move_result_this_turn = Some(false);
             push_order();
             return;
         }
@@ -1900,6 +1915,7 @@ fn execute_action_inner(
                 t.0 != need && t.1 != need
             } =>
         {
+            state.side_mut(side).active[slot].move_result_this_turn = Some(false);
             push_order();
             return;
         }
@@ -1952,6 +1968,7 @@ fn execute_action_inner(
             return;
         }
         Choices::SPITUP | Choices::SWALLOW if state.side(side).active[slot].stockpile == 0 => {
+            state.side_mut(side).active[slot].move_result_this_turn = Some(false);
             push_order();
             return;
         }
@@ -2502,7 +2519,9 @@ fn execute_action_inner(
     // used a (non-Struggle) move. PS data/moves.ts disable.
     if choice.move_id == Choices::DISABLE && !is_self && !is_field {
         let last = state.side(target_side).active[target_slot].last_move;
-        if matches!(last, None | Some(Choices::STRUGGLE)) {
+        // Observed in PS: a target that has not moved yet still rolls accuracy and
+        // fails in `onStart` ("Pokemon hasn't moved yet"), so only Struggle stops here.
+        if matches!(last, Some(Choices::STRUGGLE)) {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
             push_order();
             return;
@@ -3749,6 +3768,21 @@ fn execute_action_inner(
                 Some(m) if !FAIL.contains(&m.to_string().to_lowercase().as_str()) => copy_move = Some(m),
                 Some(_) => move_failed = true,
                 None => {}
+            }
+        }
+
+        // Tidy Up `onHit` (PS data/moves.ts tidyup): remove every Substitute and
+        // the entry hazards of both sides (the +1 Atk / Spe is the move's boost).
+        if choice.move_id == Choices::TIDYUP && ti == 0 {
+            for sd in [Side::One, Side::Two] {
+                for sl in 0..2 {
+                    state.side_mut(sd).active[sl].substitute_health = 0;
+                }
+                let sc = &mut state.side_mut(sd).side_conditions;
+                sc.spikes = 0;
+                sc.toxic_spikes = 0;
+                sc.stealth_rock = 0;
+                sc.sticky_web = 0;
             }
         }
 
@@ -5005,11 +5039,20 @@ fn compute_hit_damage(
             guts: attacker.ability == Abilities::GUTS,
             attack_mod: {
             let m = crate::engine::mechanics::attacker_stat_modifier(attacker, choice);
-            if state.side(side).active[slot].flash_fire && choice.move_type == PokemonType::FIRE {
+            let m = if state.side(side).active[slot].flash_fire && choice.move_type == PokemonType::FIRE {
                 (m * 6144 + 2048) >> 12
             } else {
                 m
-            }
+            };
+            // Thick Fat & co. (`onSourceModifyAtk` / `SpA`, breakable) chain first.
+            let src = if (side, slot) != (target_side, target_slot)
+                && !crate::engine::abilities::ignores_target_ability(attacker, choice, &defender.ability)
+            {
+                crate::engine::mechanics::defender_source_stat_modifier(defender, choice)
+            } else {
+                4096
+            };
+            if src != 4096 { (((4096 * src + 2048) >> 12) * m + 2048) >> 12 } else { m }
         },
         // TODO(PS parity): Mold Breaker (friendguard is breakable).
         friend_guard: state
@@ -5092,6 +5135,16 @@ fn compute_hit_damage(
             ctx.base_power_override = state.side(side).active[slot].bp_fixed;
         }
         if state.side(side).active[slot].bp_double {
+            ctx.base_power_override = if ctx.base_power_override > 0.0 {
+                ctx.base_power_override
+            } else {
+                choice.base_power
+            } * 2.0;
+        }
+        // Lash Out `onBasePower`: chainModify(2) if the user's stats were
+        // lowered this turn (PS data/moves.ts lashout).
+        // TODO(PS parity): chained with the other base-power modifiers.
+        if choice.move_id == Choices::LASHOUT && state.side(side).active[slot].stats_lowered_this_turn {
             ctx.base_power_override = if ctx.base_power_override > 0.0 {
                 ctx.base_power_override
             } else {
@@ -5532,6 +5585,7 @@ fn apply_boosts(
             }
         }
     }
+    let mut lowered = false;
     for (n, &req) in requested.iter().enumerate() {
         if req == 0 {
             continue;
@@ -5550,6 +5604,7 @@ fn apply_boosts(
         let old = *cur;
         *cur = (old + req).clamp(-6, 6);
         let changed = *cur != old;
+        lowered |= changed && req < 0;
         if changed && req < 0 {
             if let Some((stat, amount)) = reaction {
                 match stat {
@@ -5557,6 +5612,15 @@ fn apply_boosts(
                     PokemonBoostableStat::SpecialAttack => tb.spa = (tb.spa + amount).clamp(-6, 6),
                     _ => {}
                 }
+            }
+        }
+    }
+    // statsLoweredThisTurn (PS `boost`): set when a drop actually applied.
+    if lowered {
+        let s = state.side_mut(side);
+        for a in &mut s.active {
+            if a.pokemon_index == Some(idx) {
+                a.stats_lowered_this_turn = true;
             }
         }
     }
@@ -7046,6 +7110,7 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
             a.focus_punch = false;
             a.lost_focus = false;
             a.stats_raised_this_turn = false;
+            a.stats_lowered_this_turn = false;
         }
     }
 }

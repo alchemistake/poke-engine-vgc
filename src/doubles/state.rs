@@ -79,6 +79,8 @@ pub struct ActiveSlot {
     /// `statsRaisedThisTurn`); gates Alluring Voice / Burning Jealousy
     /// secondaries. Reset at end of turn.
     pub stats_raised_this_turn: bool,
+    /// PS `statsLoweredThisTurn` (Lash Out).
+    pub stats_lowered_this_turn: bool,
     /// `partiallytrapped` volatile (Whirlpool, Fire Spin, ...): remaining
     /// duration, the binder (side, team index) and the damage divisor.
     pub partial_trap: Option<PartialTrap>,
@@ -229,6 +231,7 @@ impl ActiveSlot {
             protected: false,
             helping_hand_mult: 1.0,
             stats_raised_this_turn: false,
+            stats_lowered_this_turn: false,
             partial_trap: None,
             yawn: 0,
             throat_chop: 0,

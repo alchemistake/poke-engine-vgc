@@ -490,6 +490,24 @@ pub fn attacker_stat_modifier(attacker: &Pokemon, choice: &Choice) -> i64 {
     }
 }
 
+/// The defender's `onSourceModifyAtk` / `onSourceModifySpA` ability modifier
+/// (4096 = none): Thick Fat (Fire / Ice), Heatproof and Water Bubble (Fire),
+/// Purifying Salt (Ghost). PS data/abilities.ts (priority 6, before the
+/// attacker's own handlers).
+pub fn defender_source_stat_modifier(defender: &Pokemon, choice: &Choice) -> i64 {
+    let hit = match defender.ability {
+        Abilities::THICKFAT => matches!(choice.move_type, PokemonType::FIRE | PokemonType::ICE),
+        Abilities::HEATPROOF | Abilities::WATERBUBBLE => choice.move_type == PokemonType::FIRE,
+        Abilities::PURIFYINGSALT => choice.move_type == PokemonType::GHOST,
+        _ => false,
+    };
+    if hit {
+        2048
+    } else {
+        4096
+    }
+}
+
 /// The defender's ability in PS's `ModifyDamage` step
 /// (`onSourceModifyDamage`), as a 4096-based modifier (4096 = none): Punk
 /// Rock / Ice Scales / Multiscale / Shadow Shield / Fluffy.

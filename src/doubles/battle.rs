@@ -39,6 +39,8 @@ struct Action {
     target_loc: i8,
     /// PS `fractionalPriority` in tenths (Quick Draw +1, Stall -1, ...).
     fractional: i8,
+    /// PS `queue.prioritizeAction` (`order = 3`): sorts before every move.
+    prioritized: bool,
 }
 
 impl Action {
@@ -68,6 +70,9 @@ fn speed_sort(actions: &mut [Action], rng: &mut Gen5Rng) {
         return;
     }
     let compare = |a: &Action, b: &Action| -> i32 {
+        if a.prioritized != b.prioritized {
+            return if a.prioritized { -1 } else { 1 };
+        }
         let dp = (b.priority - a.priority) as i32;
         if dp != 0 {
             return dp;
@@ -528,6 +533,7 @@ fn apply_queue_change(
         target: 0,
         target_loc: 0,
         fractional: 0,
+        prioritized: false,
     };
     // `resolveAction`: no target location -> `getRandomTarget` (a draw), then
     // `getActionSpeed` -> `getTarget`.
@@ -760,6 +766,7 @@ pub fn run_battle_fuzz(
                                     _ => *target,
                                 },
                                 fractional: 0,
+                                prioritized: false,
                             });
                         }
                     }
@@ -911,9 +918,11 @@ pub fn run_battle_fuzz(
             // PS data/moves.ts round, sim/battle-queue.ts prioritizeAction.
             // TODO(PS parity): only when the user reaches `onTry` (not asleep etc).
             if action.choice.move_id == Choices::ROUND {
+                // `i` is already past the running action (PS `queue.list`).
                 if let Some(j) = (i..actions.len()).find(|&j| actions[j].choice.move_id == Choices::ROUND) {
                     let mut a = actions.remove(j);
                     a.choice.base_power *= 2.0;
+                    a.prioritized = true;
                     actions.insert(i, a);
                 }
             }
@@ -928,9 +937,10 @@ pub fn run_battle_fuzz(
             // PS sim/battle-queue.ts prioritizeAction.
             if let Some((ts, tsl)) = state.queue_prioritize.take() {
                 if let Some(tidx) = state.side(ts).active[tsl].pokemon_index {
-                    if let Some(j) = (i + 1..actions.len()).find(|&j| actions[j].side == ts && actions[j].pokemon_index == tidx) {
-                        let a = actions.remove(j);
-                        actions.insert(i + 1, a);
+                    if let Some(j) = (i..actions.len()).find(|&j| actions[j].side == ts && actions[j].pokemon_index == tidx) {
+                        let mut a = actions.remove(j);
+                        a.prioritized = true;
+                        actions.insert(i, a);
                     }
                 }
             }
@@ -3524,7 +3534,7 @@ fn execute_action_inner(
         if choice.move_id == Choices::AFTERYOU && ti == 0 {
             let tidx = state.side(target_side).active[target_slot].pokemon_index;
             let will_move = tidx.is_some()
-                && queue.iter().skip(1).any(|q| q.side == target_side && Some(q.pokemon_index) == tidx);
+                && queue.iter().any(|q| q.side == target_side && Some(q.pokemon_index) == tidx);
             if will_move {
                 state.queue_prioritize = Some((target_side, target_slot));
             } else {
@@ -6939,6 +6949,7 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
                             target: 0,
                             target_loc: 0,
                             fractional: 0,
+                            prioritized: false,
                         });
                     }
                 }

@@ -3484,6 +3484,16 @@ fn execute_action_inner(
                     != (after.atk, after.def, after.spa, after.spd, after.spe, after.acc, after.eva)
                 {
                     drop_landed = true;
+                } else if choice.category == MoveCategory::Status
+                    && choice.heal.is_none()
+                    && choice.status.is_none()
+                    && choice.volatile_status.is_none()
+                    && choice.side_condition.is_none()
+                    && choice.move_id != Choices::CURSE
+                {
+                    // A boost-only status move that changed nothing (stat already
+                    // at +/-6) fails: the hit loop ends without an `eachEvent`.
+                    move_failed = true;
                 }
             }
         }

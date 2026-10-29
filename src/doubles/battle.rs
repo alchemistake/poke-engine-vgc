@@ -1097,7 +1097,8 @@ pub fn run_battle_fuzz(
                         // Baton Pass `copyVolatileFrom`: the passable volatiles.
                         let baton_extra = if state.side(side).active[slot].baton_passing {
                             let a = &state.side(side).active[slot];
-                            Some((a.cursed, a.focus_energy, a.leech_seed, a.ingrain, a.aqua_ring, a.heal_block))
+                            // `partiallytrapped` has no `noCopy`: it passes too.
+                            Some((a.cursed, a.focus_energy, a.leech_seed, a.ingrain, a.aqua_ring, a.heal_block, a.partial_trap.clone()))
                         } else {
                             None
                         };
@@ -1131,7 +1132,7 @@ pub fn run_battle_fuzz(
                                 }
                             }
                         }
-                        if let Some((cursed, fe, ls, ing, aq, hb)) = baton_extra {
+                        if let Some((cursed, fe, ls, ing, aq, hb, pt)) = baton_extra {
                             let a = &mut state.side_mut(side).active[slot];
                             a.cursed = cursed;
                             a.focus_energy = fe;
@@ -1139,6 +1140,7 @@ pub fn run_battle_fuzz(
                             a.ingrain = ing;
                             a.aqua_ring = aq;
                             a.heal_block = hb;
+                            a.partial_trap = pt;
                         }
                         if let Some((boosts, confusion, sub)) = passed {
                             if let Some(new_idx) = state.side(side).active[slot].pokemon_index {
@@ -1766,7 +1768,13 @@ fn execute_action_inner(
     }
 
     // Flinched by a previous move's secondary: cannot act. No draw.
+    // PS data/abilities.ts steadfast `onFlinch`: +1 Speed to the holder.
     if state.side(side).active[slot].flinched {
+        if let Some(idx) = state.side(side).active[slot].pokemon_index {
+            if state.side(side).team_member(idx).ability == Abilities::STEADFAST {
+                apply_boosts(state, side, idx, &StatBoosts { speed: 1, ..Default::default() }, false);
+            }
+        }
         return;
     }
 
@@ -1794,7 +1802,18 @@ fn execute_action_inner(
         a.confusion -= 1;
         if a.confusion > 0 && rng.label("status before move").random_chance(33, 100) {
             let dmg = confusion_damage(state, rng, side, slot, idx);
-            apply_damage(state, side, slot, dmg);
+            // Disguise `onDamage` (PS data/abilities.ts disguise): the self-hit
+            // is a `Move` effect, so it is absorbed and the forme busts (1/8).
+            let disguised = state.side(side).team_member(idx).id == crate::pokemon::PokemonName::MIMIKYU
+                && state.side(side).team_member(idx).ability == Abilities::DISGUISE;
+            if disguised {
+                let pm = state.side_mut(side).team_member_mut(idx);
+                pm.id = crate::pokemon::PokemonName::MIMIKYUBUSTED;
+                let bust = (pm.maxhp / 8).max(1);
+                apply_damage(state, side, slot, bust);
+            } else {
+                apply_damage(state, side, slot, dmg);
+            }
             return;
         }
     }
@@ -2429,6 +2448,10 @@ fn execute_action_inner(
         for (ts, tsl) in cands {
             // PS checkMoveBypassesProtect: only moves with the `protect` flag are blocked.
             if state.side(ts).active[tsl].protected && choice.flags.protect {
+                // Each protected target still runs the variant's contact penalty.
+                if choice.flags.contact {
+                    protect_contact_penalty(state, rng, side, slot, idx, ts, tsl);
+                }
                 continue;
             }
             // Wide Guard `onTryHit` (spread moves with the protect flag).
@@ -2647,24 +2670,8 @@ fn execute_action_inner(
         && state.side(target_side).active[target_slot].protected
         && choice.flags.protect
     {
-        // Contact penalties of the protect variants (`onTryHit`).
         if choice.flags.contact {
-            let kind = state.side(target_side).active[target_slot].protect_kind;
-            match kind {
-                1 => apply_boosts(state, side, idx, &StatBoosts { attack: -1, ..Default::default() }, true),
-                2 => {
-                    let maxhp = state.side(side).team_member(idx).maxhp;
-                    apply_damage(state, side, slot, (maxhp / 8).max(1));
-                }
-                3 | 5 => {
-                    if let Some(tidx) = state.side(target_side).active[target_slot].pokemon_index {
-                        let st = if kind == 3 { PokemonStatus::POISON } else { PokemonStatus::BURN };
-                        try_set_status(state, rng, side, slot, st, target_side, tidx);
-                    }
-                }
-                4 => apply_boosts(state, side, idx, &StatBoosts { speed: -1, ..Default::default() }, true),
-                _ => {}
-            }
+            protect_contact_penalty(state, rng, side, slot, idx, target_side, target_slot);
         }
         // Protect's `onTryHit` returns NOT_FAIL: `moveThisTurnResult` becomes
         // null (not false), but `moveResult` is false so `onMoveFail` still
@@ -3965,6 +3972,16 @@ fn execute_action_inner(
                 }
                 PokemonVolatileStatus::CONFUSION => {
                     if !safeguard_blocks_confusion(state, side, slot, idx, ts, tslot) {
+                        // `addVolatile` fails (already confused, Own Tempo): a status
+                        // move's `-fail` ends the hit loop with no `eachEvent`.
+                        let own_tempo = state.side(ts).slot_pokemon(tslot).map(|p| p.ability == Abilities::OWNTEMPO).unwrap_or(false);
+                        // Swagger / Flatter keep their boost, so they do not fail.
+                        if choice.category == MoveCategory::Status
+                            && choice.boost.is_none()
+                            && (own_tempo || state.side(ts).active[tslot].confusion > 0)
+                        {
+                            move_failed = true;
+                        }
                         try_confuse(state, rng, ts, tslot)
                     }
                 }
@@ -5830,8 +5847,16 @@ fn base_power_with_modifiers(
         // rivalry.onBasePower (priority 24): x1.25 same gender, x0.75 opposite.
         Abilities::RIVALRY if rivalry > 0 => mods.push((24, 5120)),
         Abilities::RIVALRY if rivalry < 0 => mods.push((24, 3072)),
-        // TODO(PS parity): Sand Force (weather), Analytic,
-        // Sheer Force, Supreme Overlord.
+        // sandforce.onBasePower (priority 21): x1.3 for Rock / Ground / Steel
+        // in a sandstorm (`isWeather`: not while Cloud Nine / Air Lock suppress it).
+        Abilities::SANDFORCE
+            if state.weather.weather_type == Weather::SAND
+                && !weather_suppressed(state)
+                && matches!(choice.move_type, PokemonType::ROCK | PokemonType::GROUND | PokemonType::STEEL) =>
+        {
+            mods.push((21, 5325))
+        }
+        // TODO(PS parity): Analytic, Sheer Force, Supreme Overlord.
         _ => {}
     }
     if ate_boosted {
@@ -6168,6 +6193,37 @@ fn try_partial_trap(
 
 /// PS `trySetStatus` from a secondary `onHit`: fails on an existing status
 /// or a type immunity; sleep draws its duration.
+/// Contact penalty of a protect variant (PS `onTryHit` of the protect
+/// condition, data/moves.ts): Spiky Shield damages the attacker by 1/8,
+/// King's Shield / Obstruct / Silk Trap lower its stats, Baneful Bunker /
+/// Burning Bulwark status it.
+fn protect_contact_penalty(
+    state: &mut DoublesState,
+    rng: &mut Gen5Rng,
+    side: Side,
+    slot: usize,
+    idx: PokemonIndex,
+    target_side: Side,
+    target_slot: usize,
+) {
+    let kind = state.side(target_side).active[target_slot].protect_kind;
+    match kind {
+        1 => apply_boosts(state, side, idx, &StatBoosts { attack: -1, ..Default::default() }, true),
+        2 => {
+            let maxhp = state.side(side).team_member(idx).maxhp;
+            apply_damage(state, side, slot, (maxhp / 8).max(1));
+        }
+        3 | 5 => {
+            if let Some(tidx) = state.side(target_side).active[target_slot].pokemon_index {
+                let st = if kind == 3 { PokemonStatus::POISON } else { PokemonStatus::BURN };
+                try_set_status(state, rng, side, slot, st, target_side, tidx);
+            }
+        }
+        4 => apply_boosts(state, side, idx, &StatBoosts { speed: -1, ..Default::default() }, true),
+        _ => {}
+    }
+}
+
 fn try_set_status(
     state: &mut DoublesState,
     rng: &mut Gen5Rng,

@@ -81,6 +81,12 @@ pub struct ActiveSlot {
     pub stats_raised_this_turn: bool,
     /// PS `statsLoweredThisTurn` (Lash Out).
     pub stats_lowered_this_turn: bool,
+    /// Destiny Bond volatile: when the holder faints, the last attacker also
+    /// faints (PS data/conditions.ts destinybond.onAfterFaint).
+    pub destinybond: bool,
+    /// The last pokemon that dealt damage to this slot's occupant
+    /// (side, team index), for Destiny Bond `onAfterFaint`.
+    pub last_attacker: Option<(Side, crate::state::PokemonIndex)>,
     /// `partiallytrapped` volatile (Whirlpool, Fire Spin, ...): remaining
     /// duration, the binder (side, team index) and the damage divisor.
     pub partial_trap: Option<PartialTrap>,
@@ -232,6 +238,8 @@ impl ActiveSlot {
             helping_hand_mult: 1.0,
             stats_raised_this_turn: false,
             stats_lowered_this_turn: false,
+            destinybond: false,
+            last_attacker: None,
             partial_trap: None,
             yawn: 0,
             throat_chop: 0,

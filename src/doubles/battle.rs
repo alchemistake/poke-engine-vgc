@@ -172,7 +172,22 @@ fn faint_pokemon(state: &mut DoublesState, side: Side, slot: usize) {
     if let Some(idx) = state.side(side).active[slot].pokemon_index {
         state.unresolved_faints.push((side, slot, idx));
     }
-    let s = state.side_mut(side);
+    // Destiny Bond `onAfterFaint`: the last attacker also faints.
+    // PS data/conditions.ts destinybond.onAfterFaint.
+    let db = state.side(side).active[slot].destinybond;
+    let la = state.side(side).active[slot].last_attacker;
+    if db {
+        if let Some((att_side, att_idx)) = la {
+            if let Some(att_slot) = (0..2).find(|&sl| {
+                state.side(att_side).active[sl].pokemon_index == Some(att_idx)
+            }) {
+                if state.side(att_side).team_member(att_idx).hp > 0 {
+                    state.side_mut(att_side).team_member_mut(att_idx).hp = 0;
+                    faint_pokemon(state, att_side, att_slot);
+                }
+            }
+        }
+    }    let s = state.side_mut(side);
     if let Some(idx) = s.active[slot].pokemon_index {
         s.clear_member_boosts(idx);
         if let Some(t) = s.active[slot].roost_orig.take() {
@@ -672,6 +687,14 @@ pub fn run_battle_fuzz(
         }
 
         let turn_no = state.turn;
+        // PS `destinybond` volatile duration is 1: cleared at the start of
+        // each turn (it only triggers if the holder faints on the turn it
+        // was used).
+        for side in [Side::One, Side::Two] {
+            for slot in 0..2 {
+                state.side_mut(side).active[slot].destinybond = false;
+            }
+        }
         if std::env::var("PE_DEBUG_DMG").is_ok() {
             eprintln!("=== TURN index {} (state.turn {})", ci + 1, turn_no);
         }
@@ -898,6 +921,16 @@ pub fn run_battle_fuzz(
                 a.lost_focus = false;
             }
             each_event_update(state, rng);
+        }
+        // Destiny Bond `onTryMove`: set the volatile before the turn's actions
+        // execute (PS sets it in the `beforeTurnMove` phase, so it triggers
+        // even if the holder is KO'd before its own action runs).
+        for a in &actions {
+            if a.choice.move_id == Choices::DESTINYBOND {
+                if state.side(a.side).active[a.slot].pokemon_index == Some(a.pokemon_index) {
+                    state.side_mut(a.side).active[a.slot].destinybond = true;
+                }
+            }
         }
         resort_queue(state, rng, &mut actions[..]);
 
@@ -2975,7 +3008,10 @@ fn execute_action_inner(
                     }
                 }
             }
-            if damage > 0 && apply_damage(state, target_side, target_slot, damage) {
+            if damage > 0 {
+                // Track the last attacker for Destiny Bond `onAfterFaint`.
+                state.side_mut(target_side).active[target_slot].last_attacker = Some((side, idx));
+                if apply_damage(state, target_side, target_slot, damage) {
                 // Target fainted. `onSourceAfterFaint` (Moxie, Chilling / Grim
                 // Neigh) boosts the attacker if it is still on the field. A
                 // faint that ends the battle runs `checkWin` first, so no
@@ -2993,6 +3029,7 @@ fn execute_action_inner(
                             apply_boosts(state, side, idx, &b, false);
                         }
                     }
+                }
                 }
             }
             total_damage = total_damage.saturating_add(damage);
@@ -7111,6 +7148,7 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
             a.lost_focus = false;
             a.stats_raised_this_turn = false;
             a.stats_lowered_this_turn = false;
+            a.last_attacker = None;
         }
     }
 }

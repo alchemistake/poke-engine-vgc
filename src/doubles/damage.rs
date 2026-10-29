@@ -180,6 +180,13 @@ pub fn calculate_damage(
 
     // Type immunity is checked in getDamage BEFORE any draws.
     let mut tm = type_mod_by(attacker, &choice.move_type, defender)?;
+    // PS data/moves.ts freezedry.onEffectiveness: `if (type === 'Water') return 1;`
+    // Each Water defender type is x2 (+1 step) whatever the chart says. Ice vs
+    // Water is resisted (-1 step), so the Water part moves from -1 to +1: +2.
+    if choice.move_id == crate::choices::Choices::FREEZEDRY {
+        let water_types = [defender.types.0, defender.types.1].iter().filter(|t| **t == PokemonType::WATER).count() as i32;
+        tm += 2 * water_types;
+    }
     if ctx.disguise {
         // disguise.onEffectiveness returns 0 (after the immunity check).
         tm = 0;

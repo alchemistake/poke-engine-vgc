@@ -1942,8 +1942,12 @@ fn execute_action_inner(
         // every foe; the engine hits one.
         // Metal Burst / Comeuppance `onModifyTarget`: the last foe that damaged
         // the user (`getAtSlot(lastDamagedBy.slot)`).
+        // A fainted last attacker is not a target: the move retargets (PS
+        // `getRandomTarget` draws in `getMoveTargets`, then `scripted` misses).
         let scripted = if matches!(choice.move_id, Choices::METALBURST | Choices::COMEUPPANCE) {
-            last_damaged_by(state, side, idx).map(|(s_, sl_, _, _)| (s_, sl_))
+            last_damaged_by(state, side, idx)
+                .map(|(s_, sl_, _, _)| (s_, sl_))
+                .filter(|&(s_, sl_)| slot_alive(state, s_, sl_))
         } else {
             None
         };
@@ -2257,6 +2261,17 @@ fn execute_action_inner(
     // this turn (`getLastDamagedBy(true)?.thisTurn`). No draw.
     if matches!(choice.move_id, Choices::METALBURST | Choices::COMEUPPANCE) {
         let last = last_damaged_by(state, side, idx);
+        // PS `getMoveTargets` (before `TryMove`): the scripted target's slot
+        // holds a fainted pokemon, so the move retargets with a random foe
+        // draw. The hit still goes to `resolved` (`scripted` misses).
+        if let Some((ls, lsl, _, _)) = last {
+            if !slot_alive(state, ls, lsl) {
+                let foes: Vec<usize> = (0..2).filter(|&s| slot_alive(state, side.other(), s)).collect();
+                if !foes.is_empty() {
+                    let _ = rng.label("retarget").random(foes.len() as u32);
+                }
+            }
+        }
         if !matches!(last, Some((_, _, _, t)) if t == state.turn) {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
             push_order();
@@ -2683,6 +2698,16 @@ fn execute_action_inner(
         return;
     }
 
+    // Ability absorbs (PS `onTryHit`, `hitStepTryHitEvent`: after Protect,
+    // before type immunity and accuracy; no draws).
+    if !is_self && !is_field && (side, slot) != (target_side, target_slot) && !is_spread {
+        if try_absorb(state, target_side, target_slot, choice.move_type) {
+            state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+            push_order();
+            return;
+        }
+    }
+
     // Thunder Wave is the one Status move with `ignoreImmunity: false`: the
     // type-immunity step (before accuracy, no draw) fails it on Ground types.
     // PS data/moves.ts thunderwave.
@@ -2795,16 +2820,6 @@ fn execute_action_inner(
         state.side_mut(side).active[slot].move_result_this_turn = Some(false);
         push_order();
         return;
-    }
-
-    // Ability absorbs (PS `onTryHit`, `hitStepTryHitEvent`: after Protect,
-    // before type immunity and accuracy; no draws).
-    if !is_self && !is_field && (side, slot) != (target_side, target_slot) && !is_spread {
-        if try_absorb(state, target_side, target_slot, choice.move_type) {
-            state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-            push_order();
-            return;
-        }
     }
 
     if matches!(choice.category, MoveCategory::Physical | MoveCategory::Special)
@@ -3179,11 +3194,23 @@ fn execute_action_inner(
     let faint_mark = state.faint_log.len();
     'hit_loop: for hit_idx in 0..hit_count {
       state.side_mut(side).active[slot].hit_number = hit_idx as u8 + 1;
+      if choice.move_id == Choices::BEATUP {
+          let a = &mut state.side_mut(side).active[slot];
+          if !a.beat_up_queue.is_empty() {
+              a.bp_fixed = a.beat_up_queue.remove(0);
+          }
+      }
+      let hit_targets: Vec<(Side, usize)> =
+          if is_spread { spread_list.clone() } else { vec![(target_side, target_slot)] };
       // `multiaccuracy` (Triple Axel / Triple Kick): hits after the first roll
       // accuracy again; a miss ends the loop. PS sim/battle-actions.ts
-      // hitStepMoveHitLoop.
+      // hitStepMoveHitLoop. The loop top checks `targets.every(!hp)` before the
+      // roll, so a fainted target ends it here with no draw.
       // TODO(PS parity): ModifyAccuracy / Accuracy events (abilities, items).
       if hit_idx > 0 && matches!(choice.move_id, Choices::TRIPLEAXEL | Choices::TRIPLEKICK) {
+          if !is_self && !is_field && !hit_targets.iter().any(|&(ts, tsl)| slot_alive(state, ts, tsl)) {
+              break 'hit_loop;
+          }
           let table = [1.0f64, 4.0 / 3.0, 5.0 / 3.0, 2.0, 7.0 / 3.0, 8.0 / 3.0, 3.0];
           let mut acc = choice.accuracy as f64;
           let ab = state.side(side).slot_boosts(slot).map(|b| b.acc).unwrap_or(0).clamp(-6, 6) as i32;
@@ -3194,14 +3221,6 @@ fn execute_action_inner(
               break;
           }
       }
-      if choice.move_id == Choices::BEATUP {
-          let a = &mut state.side_mut(side).active[slot];
-          if !a.beat_up_queue.is_empty() {
-              a.bp_fixed = a.beat_up_queue.remove(0);
-          }
-      }
-      let hit_targets: Vec<(Side, usize)> =
-          if is_spread { spread_list.clone() } else { vec![(target_side, target_slot)] };
       // PS `getSpreadDamage`: every target's crit + damage roll comes before
       // any per-target effect.
       let pre_damage: Vec<(i16, bool)> = if is_spread && is_attack {
@@ -4910,6 +4929,17 @@ fn execute_action_inner(
             } else {
                 crate::state::StateTrickRoom { active: true, turns_remaining: 5 }
             };
+        }
+        if choice.move_id == Choices::FAIRYLOCK {
+            // PS data/moves.ts fairylock: `addPseudoWeather` fails while it is up.
+            // Duration 2. The trap (`onTrapPokemon`) is not modeled: PS only
+            // offers switches that are legal, so the fuzzer never sends one.
+            // TODO(PS parity): Fairy Lock trap (`tryTrap`) on switch-out.
+            if state.fairy_lock.active {
+                move_failed = true;
+            } else {
+                state.fairy_lock = crate::state::StateTrickRoom { active: true, turns_remaining: 2 };
+            }
         }
         if choice.move_id == Choices::WONDERROOM {
             state.wonder_room_seen = false;
@@ -7432,6 +7462,8 @@ enum ResidualKind {
     Gravity,
     /// Magic Room duration countdown (order 27, subOrder 6).
     MagicRoom,
+    /// Fairy Lock duration countdown (no order, subOrder 5).
+    FairyLock,
     /// Wonder Room duration countdown (order 27, subOrder 5).
     WonderRoom,
     /// Terrain duration countdown (order 27, subOrder 7).
@@ -7493,6 +7525,10 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
     }
     if state.gravity.active {
         push(27, 0, 2, ResidualKind::Gravity);
+    }
+    if state.fairy_lock.active {
+        // No `onFieldResidualOrder`; a field condition's default subOrder is 5.
+        push(NO_ORDER, 0, 5, ResidualKind::FairyLock);
     }
     for side in [Side::One, Side::Two] {
         // Side conditions with a duration (`onSideResidualOrder` 26).
@@ -8282,6 +8318,14 @@ fn end_of_turn(
                     state.gravity.turns_remaining -= 1;
                     if state.gravity.turns_remaining == 0 {
                         state.gravity.active = false;
+                    }
+                }
+            }
+            ResidualKind::FairyLock => {
+                if state.fairy_lock.turns_remaining > 0 {
+                    state.fairy_lock.turns_remaining -= 1;
+                    if state.fairy_lock.turns_remaining == 0 {
+                        state.fairy_lock.active = false;
                     }
                 }
             }

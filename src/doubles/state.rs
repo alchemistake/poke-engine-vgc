@@ -481,6 +481,8 @@ pub struct DoublesState {
     pub magic_room: StateTrickRoom,
     /// Gravity pseudo-weather (everything grounded, accuracy x1.67), duration 5.
     pub gravity: StateTrickRoom,
+    /// Fairy Lock pseudo-weather (everything trapped), duration 2.
+    pub fairy_lock: StateTrickRoom,
     pub turn: u32,
     /// Pokemon that reached 0 HP during the current move's hit loop. PS only
     /// resolves faints after the loop, so its per-hit `eachEvent` still sorts
@@ -1065,6 +1067,10 @@ impl DoublesState {
                 active: false,
                 turns_remaining: 0,
             },
+            fairy_lock: StateTrickRoom {
+                active: false,
+                turns_remaining: 0,
+            },
             turn: 1,
             unresolved_faints: Vec::new(),
             faint_log: Vec::new(),
@@ -1310,6 +1316,9 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<String>) -> FuzzTurnS
     }
     if state.gravity.active {
         pseudo_weather.push("gravity".into());
+    }
+    if state.fairy_lock.active {
+        pseudo_weather.push("fairylock".into());
     }
     pseudo_weather.sort();
     // pokemon-showdown reports the weather CONDITION id (e.g. "raindance",

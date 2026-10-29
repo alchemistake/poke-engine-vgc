@@ -767,6 +767,17 @@ pub fn run_battle_fuzz(
                 state.side(action.side).species_names[action.pokemon_index as usize],
                 action.choice.move_id
             );
+            // Round `onTry`: the first other queued Round is moved to the front
+            // of the queue with `sourceEffect: 'round'` (BP doubled).
+            // PS data/moves.ts round, sim/battle-queue.ts prioritizeAction.
+            // TODO(PS parity): only when the user reaches `onTry` (not asleep etc).
+            if action.choice.move_id == Choices::ROUND {
+                if let Some(j) = (i..actions.len()).find(|&j| actions[j].choice.move_id == Choices::ROUND) {
+                    let mut a = actions.remove(j);
+                    a.choice.base_power *= 2.0;
+                    actions.insert(i, a);
+                }
+            }
             execute_action(state, rng, &action, &mut move_order, &actions[i..]);
             // Phazing (PS `runAction`: `forceSwitchFlag` -> `dragIn`) happens
             // before faints are resolved.
@@ -4218,6 +4229,12 @@ fn compute_hit_damage(
                 m
             }
         },
+        // TODO(PS parity): Mold Breaker (friendguard is breakable).
+        friend_guard: state
+            .side(target_side)
+            .slot_pokemon(1 - target_slot)
+            .map(|a| a.hp > 0 && a.ability == Abilities::FRIENDGUARD)
+            .unwrap_or(false),
         screen_handlers: [Side::One, Side::Two]
             .iter()
             .map(|&sd| {
@@ -4373,6 +4390,26 @@ fn contact_abilities(
     });
     let Some(def_idx) = def_idx else { return };
     let ability = state.side(target_side).team_member(def_idx).ability;
+    // Cute Charm `onDamagingHit`: `randomChance(3, 10)`, then the attacker gets
+    // the `attract` volatile (needs opposite genders; fails if already
+    // infatuated). PS data/abilities.ts cutecharm, data/conditions.ts attract.
+    if ability == Abilities::CUTECHARM {
+        if rng.label("ability").random_chance(3, 10) {
+            let att_gender = state.side(side).genders[idx as usize].clone();
+            let def_gender = state.side(target_side).genders[def_idx as usize].clone();
+            let opposite = matches!(
+                (att_gender.as_deref(), def_gender.as_deref()),
+                (Some("M"), Some("F")) | (Some("F"), Some("M"))
+            );
+            if opposite
+                && state.side(side).team_member(idx).ability != Abilities::OBLIVIOUS
+                && state.side(side).active[slot].attract.is_none()
+            {
+                state.side_mut(side).active[slot].attract = Some((target_side, def_idx));
+            }
+        }
+        return;
+    }
     match contact_ability(ability) {
         Some(ContactAbility::Status30(st)) => {
             if rng.label("ability").random_chance(3, 10) {
@@ -6142,6 +6179,7 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
                     attack_mod: crate::engine::mechanics::attacker_stat_modifier(attacker, &action.choice),
                     crit_bonus: 0,
                     screen_handlers: 0,
+                    friend_guard: false,
                     disguise: false,
                     defense_mod: 4096,
                     base_power_override: 0.0,

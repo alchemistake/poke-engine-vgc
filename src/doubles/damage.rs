@@ -119,6 +119,9 @@ pub struct DamageCtx {
     /// handler; they tie in the `ModifyDamage` event's `speedSort`, which
     /// shuffles (n - 1 draws).
     pub screen_handlers: u8,
+    /// An alive ally of the defender has Friend Guard (`onAnyModifyDamage`:
+    /// x0.75 on its allies). PS data/abilities.ts friendguard.
+    pub friend_guard: bool,
     /// Effective base power after multiplier effects (Helping Hand);
     /// 0.0 = use `choice.base_power`.
     pub base_power_override: f32,
@@ -294,6 +297,9 @@ pub fn calculate_damage(
     }
     if !crit && ((ctx.reflect && is_physical) || (ctx.light_screen && !is_physical)) {
         chain_in(2732);
+    }
+    if ctx.friend_guard {
+        chain_in(3072);
     }
     if chain != 4096 {
         base = (base * chain + 2047) / 4096;

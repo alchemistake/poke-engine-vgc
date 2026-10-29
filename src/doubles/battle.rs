@@ -430,9 +430,16 @@ pub fn run_battle_fuzz(
     // PS `runSwitch` for the four leads: speed sort, SwitchIn handlers, then
     // the action's `eachEvent('Update')`.
     rng.context = "turn 0: switch-in".to_string();
+    // PS `case "start"`: each lead's `switchIn` inserts a `runSwitch` action
+    // into the queue (`insertChoice`), drawing on speed ties before the
+    // `runSwitch` speed sort below.
+    queue_insert_draws(state, rng);
     let _ = sorted_actives(state, rng, "speed tie (switch-in)");
     for (side, slot) in [(Side::One, 0), (Side::One, 1), (Side::Two, 0), (Side::Two, 1)] {
-        apply_on_switch_abilities(state, side, slot);
+        if apply_on_switch_abilities(state, side, slot) {
+            // Terrain just set (e.g. Grassy Surge): `eachEvent("TerrainChange")`.
+            let _ = sorted_actives(state, rng, "speed tie (switch-in)");
+        }
     }
     each_event_update(state, rng);
     // Turn 0: the initial state right after the leads are sent out (stat
@@ -642,7 +649,9 @@ pub fn run_battle_fuzz(
                         each_event_update(state, rng);
                         let _ = sorted_actives(state, rng, "speed tie (switch-in)");
                         // TODO(PS parity): `fieldEvent('SwitchIn')` handler ties.
-                        apply_on_switch_abilities(state, side, slot);
+                        if apply_on_switch_abilities(state, side, slot) {
+                            let _ = sorted_actives(state, rng, "speed tie (switch-in)");
+                        }
                         each_event_update(state, rng);
                     }
                 }
@@ -845,7 +854,9 @@ fn drag_in_all(state: &mut DoublesState, rng: &mut Gen5Rng) {
             let pick = options[rng.label("drag in").random(options.len() as u32) as usize];
             switch_in(state, side, slot, pick);
             let _ = sorted_actives(state, rng, "speed tie (switch-in)");
-            apply_on_switch_abilities(state, side, slot);
+            if apply_on_switch_abilities(state, side, slot) {
+                let _ = sorted_actives(state, rng, "speed tie (switch-in)");
+            }
         }
     }
 }
@@ -2150,8 +2161,10 @@ fn skill_swap(state: &mut DoublesState, src_side: Side, src_slot: usize, tgt_sid
     }
     state.side_mut(src_side).team_member_mut(si).ability = tgt_ability;
     state.side_mut(tgt_side).team_member_mut(ti).ability = src_ability;
-    apply_on_switch_abilities(state, tgt_side, tgt_slot);
-    apply_on_switch_abilities(state, src_side, src_slot);
+    // TODO(PS parity): terrain set via Skill Swap needs an `eachEvent(
+    // "TerrainChange")` speed sort, but `skill_swap` has no `rng` here.
+    let _ = apply_on_switch_abilities(state, tgt_side, tgt_slot);
+    let _ = apply_on_switch_abilities(state, src_side, src_slot);
     true
 }
 
@@ -2262,12 +2275,12 @@ fn apply_boosts(
 /// active by -1 (PS `intimidate.onStart`, data/abilities.ts:2194). Targets
 /// behind a Substitute are immune.
 // TODO(PS parity): other on-switch abilities (Aura Veil, etc.).
-fn apply_on_switch_abilities(state: &mut DoublesState, side: Side, slot: usize) {
+fn apply_on_switch_abilities(state: &mut DoublesState, side: Side, slot: usize) -> bool {
     let ability = {
         let s = state.side(side);
         match s.active[slot].pokemon_index {
             Some(idx) => s.team_member(idx).ability,
-            None => return,
+            None => return false,
         }
     };
     // Weather / terrain setters (shared table with the singles engine).
@@ -2281,7 +2294,7 @@ fn apply_on_switch_abilities(state: &mut DoublesState, side: Side, slot: usize) 
                     turns_remaining: crate::engine::abilities::WEATHER_ABILITY_TURNS,
                 };
             }
-            return;
+            return false;
         }
         Some(crate::engine::mechanics::SwitchInField::Terrain(t)) => {
             if state.terrain.terrain_type != t {
@@ -2289,8 +2302,11 @@ fn apply_on_switch_abilities(state: &mut DoublesState, side: Side, slot: usize) 
                     terrain_type: t,
                     turns_remaining: 5,
                 };
+                // PS `setTerrain` -> `eachEvent("TerrainChange")`: a speed sort
+                // of all actives. The caller performs it (label depends on context).
+                return true;
             }
-            return;
+            return false;
         }
         None => {}
     }
@@ -2301,7 +2317,7 @@ fn apply_on_switch_abilities(state: &mut DoublesState, side: Side, slot: usize) 
         if let Some(ally) = state.side(side).active[1 - slot].pokemon_index {
             state.side_mut(side).clear_member_boosts(ally);
         }
-        return;
+        return false;
     }
     // Intimidate (-1 Atk) / Supersweet Syrup (-1 evasion, once per battle)
     // on each adjacent foe not behind a Substitute.
@@ -2313,7 +2329,7 @@ fn apply_on_switch_abilities(state: &mut DoublesState, side: Side, slot: usize) 
         Abilities::SUPERSWEETSYRUP => {
             let me = state.side(side).active[slot].pokemon_index.unwrap();
             if state.side(side).syrup_triggered[me as usize] {
-                return;
+                return false;
             }
             state.side_mut(side).syrup_triggered[me as usize] = true;
             StatBoosts {
@@ -2321,7 +2337,7 @@ fn apply_on_switch_abilities(state: &mut DoublesState, side: Side, slot: usize) 
                 ..Default::default()
             }
         }
-        _ => return,
+        _ => return false,
     };
     let foe = match side {
         Side::One => Side::Two,
@@ -2337,6 +2353,7 @@ fn apply_on_switch_abilities(state: &mut DoublesState, side: Side, slot: usize) 
     for fidx in targets {
         apply_boosts(state, foe, fidx, &drop, true);
     }
+    false
 }
 
 fn apply_side_condition(state: &mut DoublesState, side: Side, c: PokemonSideCondition) {
@@ -2478,6 +2495,8 @@ enum ResidualKind {
     SpeedBoost(Side, usize),
     /// Salt Cure `onResidual` (champions mod: 1/16, 1/8 vs Water / Steel).
     SaltCure(Side, usize),
+    /// Grassy Terrain `onFieldResidual`: heal grounded actives by 1/16 max HP.
+    GrassyHeal(Side, usize),
 }
 
 /// Build the Residual handler list in pokemon-showdown's `fieldEvent`
@@ -2572,9 +2591,8 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
                 push(13, speed, 2, ResidualKind::SaltCure(side, slot));
             }
             // Grassy Terrain heal (`onResidualOrder` 5, subOrder 2).
-            // TODO(PS parity): the heal itself.
             if state.terrain.terrain_type == crate::engine::state::Terrain::GRASSYTERRAIN {
-                push(5, speed, 2, ResidualKind::Marker);
+                push(5, speed, 2, ResidualKind::GrassyHeal(side, slot));
             }
             // Abilities (subOrder 7 unless set).
             if p.ability == Abilities::SPEEDBOOST {
@@ -2614,6 +2632,26 @@ fn sort_residual_handlers(
         sorted += next_indexes.len();
     }
     hs
+}
+
+/// PS initial send-out: each lead's `switchIn` inserts a `runSwitch` action
+/// into the queue (`insertChoice`), which consumes a draw when the lead's
+/// speed ties with one or more already-inserted leads —
+/// `random(firstIndex, lastIndex + 1)`, modulus = (ties + 1). Leads are
+/// inserted in send-out order: A0, A1, B0, B1. These draws come before the
+/// `runSwitch` speed sort.
+fn queue_insert_draws(state: &DoublesState, rng: &mut Gen5Rng) {
+    let mut inserted: Vec<i16> = Vec::new();
+    for (side, slot) in [(Side::One, 0usize), (Side::One, 1), (Side::Two, 0), (Side::Two, 1)] {
+        let Some(speed) = effective_speed(state, side, slot) else {
+            continue;
+        };
+        let ties = inserted.iter().filter(|&&s| s == speed).count();
+        if ties > 0 {
+            let _ = rng.label("speed tie (queue insert)").random(ties as u32 + 1);
+        }
+        inserted.push(speed);
+    }
 }
 
 /// PS `eachEvent('Update')` (sim/battle.ts): speed-sorts all actives, which
@@ -2726,6 +2764,25 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
                     apply_damage(state, side, slot, dmg);
                 }
             }
+            ResidualKind::GrassyHeal(side, slot) => {
+                // PS `grassyterrain.onFieldResidual`: heal grounded actives by
+                // 1/16 max HP (gen 8+).
+                let heal = {
+                    let s = state.side(side);
+                    let Some(idx) = s.active[slot].pokemon_index else { continue };
+                    let p = s.team_member(idx);
+                    if p.is_grounded() && p.hp < p.maxhp {
+                        Some((idx, p.hp, p.maxhp))
+                    } else {
+                        None
+                    }
+                };
+                if let Some((idx, hp, maxhp)) = heal {
+                    let h = (maxhp / 16).max(1);
+                    let s = state.side_mut(side);
+                    s.team_member_mut(idx).hp = (hp + h).min(maxhp);
+                }
+            }
             ResidualKind::SpeedBoost(side, slot) => {
                 // PS `speedboost.onResidual`, data/abilities.ts:4454. No draw.
                 // TODO(PS parity): only when `activeTurns` > 0.
@@ -2769,7 +2826,9 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
     // On-switch abilities (Intimidate) for each newly switched-in pokemon.
     // TODO(PS parity): `fieldEvent('SwitchIn')` handler ties.
     for (side, slot, _) in pending_switches {
-        apply_on_switch_abilities(state, *side, *slot);
+        if apply_on_switch_abilities(state, *side, *slot) {
+            let _ = sorted_actives(state, rng, "speed tie (switch-in)");
+        }
     }
     if !pending_switches.is_empty() {
         each_event_update(state, rng);

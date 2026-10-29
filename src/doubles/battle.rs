@@ -3225,10 +3225,18 @@ fn execute_action_inner(
     let hit_count: u32 = match choice.multihit {
         _ if beat_up_hits > 0 => beat_up_hits,
         0 => 1,
+        // Skill Link `onModifyMove` (PS data/abilities.ts): the 2-5 range is 5, no draw.
+        20 if state.side(side).team_member(idx).ability == Abilities::SKILLLINK => 5,
         20 => {
             // 35-35-15-15 out of 100 for 2-3-4-5 hits (PS sample of 20).
             const TABLE: [u32; 20] = [2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 5, 5, 5];
-            TABLE[rng.label("multihit").random(20) as usize]
+            let n = TABLE[rng.label("multihit").random(20) as usize];
+            // Loaded Dice (PS scripts.ts hitStepMoveHitLoop): 4-5 hits instead of 2-3.
+            if n < 4 && state.side(side).team_member(idx).item == crate::engine::items::Items::LOADEDDICE {
+                5 - rng.label("multihit").random(2)
+            } else {
+                n
+            }
         }
         n => n as u32,
     };
@@ -6370,6 +6378,13 @@ fn compute_hit_damage(
 ) -> (i16, bool) {
     let speeds = (stat_speed(state, side, slot), stat_speed(state, target_side, target_slot));
     let attacker = state.side(side).team_member(idx);
+    // The attacker's slot state applies only while it occupies the slot (a Future
+    // Sight source may have left; the slot then belongs to another pokemon).
+    let att_slot = if state.side(side).active[slot].pokemon_index == Some(idx) {
+        state.side(side).active[slot].clone()
+    } else {
+        ActiveSlot::empty()
+    };
     let defender = state
         .side(target_side)
         .slot_pokemon(target_slot)
@@ -6387,7 +6402,7 @@ fn compute_hit_damage(
             .unwrap_or(1);
     } else if matches!(choice.move_id, Choices::COUNTER | Choices::MIRRORCOAT) {
         // damageCallback: the recorded `2 * damage` (1 if none).
-        let a = &state.side(side).active[slot];
+        let a = &att_slot;
         let rec = if choice.move_id == Choices::COUNTER { a.counter_vol } else { a.mirror_coat_vol };
         damage = rec.map(|(_, d)| d).filter(|&d| d > 0).unwrap_or(1);
     } else if let Some(fd) = choice.move_id.fixed_damage(attacker, defender) {
@@ -6506,7 +6521,7 @@ fn compute_hit_damage(
             guts: attacker.ability == Abilities::GUTS,
             attack_mod: {
             let m = crate::engine::mechanics::attacker_stat_modifier(attacker, choice);
-            let m = if state.side(side).active[slot].flash_fire && choice.move_type == PokemonType::FIRE {
+            let m = if att_slot.flash_fire && choice.move_type == PokemonType::FIRE {
                 (m * 6144 + 2048) >> 12
             } else {
                 m
@@ -6535,8 +6550,8 @@ fn compute_hit_damage(
             })
             .sum(),
         // PS focusenergy +2; Super Luck `onModifyCritRatio` +1 (data/abilities.ts).
-        crit_bonus: (if state.side(side).active[slot].focus_energy { 2 } else { 0 })
-            + (match state.side(side).active[slot].dragon_cheer {
+        crit_bonus: (if att_slot.focus_energy { 2 } else { 0 })
+            + (match att_slot.dragon_cheer {
                 Some(true) => 2,
                 Some(false) => 1,
                 None => 0,
@@ -6570,11 +6585,11 @@ fn compute_hit_damage(
                 choice,
                 attacker,
                 defender,
-                state.side(side).active[slot].helping_hand_mult,
+                att_slot.helping_hand_mult,
                 speeds,
                 state.terrain.terrain_type,
                 ate_boosted,
-                state.side(side).active[slot].fallen,
+                att_slot.fallen,
                 (0..2)
                     .filter(|&sl| {
                         state.side(side).slot_pokemon(sl).map(|p| p.hp > 0 && p.ability == Abilities::STEELYSPIRIT).unwrap_or(false)
@@ -6595,7 +6610,7 @@ fn compute_hit_damage(
                         })
                         .unwrap_or(false),
                 side_total_fainted(state, side),
-                state.side(side).active[slot].hit_number as u32,
+                att_slot.hit_number as u32,
                 // PS `rivalry.onBasePower`: both genders must be set (`M` / `F`).
                 {
                     let gendered = |g: Option<&str>| matches!(g, Some("M") | Some("F"));
@@ -6615,10 +6630,10 @@ fn compute_hit_damage(
             ),
         };
         let mut ctx = ctx;
-        if state.side(side).active[slot].bp_fixed > 0.0 {
-            ctx.base_power_override = state.side(side).active[slot].bp_fixed;
+        if att_slot.bp_fixed > 0.0 {
+            ctx.base_power_override = att_slot.bp_fixed;
         }
-        if state.side(side).active[slot].bp_double {
+        if att_slot.bp_double {
             ctx.base_power_override = if ctx.base_power_override > 0.0 {
                 ctx.base_power_override
             } else {
@@ -6628,7 +6643,7 @@ fn compute_hit_damage(
         // Lash Out `onBasePower`: chainModify(2) if the user's stats were
         // lowered this turn (PS data/moves.ts lashout).
         // TODO(PS parity): chained with the other base-power modifiers.
-        if choice.move_id == Choices::LASHOUT && state.side(side).active[slot].stats_lowered_this_turn {
+        if choice.move_id == Choices::LASHOUT && att_slot.stats_lowered_this_turn {
             ctx.base_power_override = if ctx.base_power_override > 0.0 {
                 ctx.base_power_override
             } else {
@@ -6636,7 +6651,7 @@ fn compute_hit_damage(
             } * 2.0;
         }
         if matches!(choice.move_id, Choices::STOMPINGTANTRUM | Choices::TEMPERFLARE)
-            && state.side(side).active[slot].move_result_last_turn == Some(false)
+            && att_slot.move_result_last_turn == Some(false)
         {
             // PS `basePowerCallback`: doubled after a failed move.
             ctx.base_power_override = if ctx.base_power_override > 0.0 {
@@ -6656,7 +6671,7 @@ fn compute_hit_damage(
             };
             ctx.base_power_override = bp * ratio;
         }
-        if state.side(side).active[slot].charge && choice.move_type == PokemonType::ELECTRIC {
+        if att_slot.charge && choice.move_type == PokemonType::ELECTRIC {
             // charge.onBasePower (priority 9): chainModify(2).
             ctx.base_power_override = if ctx.base_power_override > 0.0 {
                 ctx.base_power_override
@@ -6666,7 +6681,7 @@ fn compute_hit_damage(
         }
         if choice.move_id == Choices::SPITUP {
             // PS `basePowerCallback`: 100 per Stockpile layer.
-            ctx.base_power_override = 100.0 * state.side(side).active[slot].stockpile as f32;
+            ctx.base_power_override = 100.0 * att_slot.stockpile as f32;
         }
         if let Some(outcome) = calculate_damage(attacker, defender, choice, rng, spread, &ctx) {
             damage = outcome.damage;

@@ -2776,28 +2776,12 @@ fn execute_action_inner(
     // Worry Seed `onTryImmunity` / `onTryHit`: fails (before the accuracy roll) on
     // Truant / Insomnia holders and on abilities that can't be suppressed.
     if choice.move_id == Choices::WORRYSEED && !is_self && !is_field {
-        let own = Abilities::INSOMNIA;
+        // `onTryImmunity`: Truant / Insomnia fail before the accuracy roll; the
+        // `cantsuppress` check is `onTryHit`, after it (see the onHit block).
         let bad = state
             .side(target_side)
             .slot_pokemon(target_slot)
-            .map(|p| {
-                matches!(
-                    p.ability,
-                    Abilities::TRUANT
-                        | Abilities::MULTITYPE
-                        | Abilities::STANCECHANGE
-                        | Abilities::DISGUISE
-                        | Abilities::ZENMODE
-                        | Abilities::SCHOOLING
-                        | Abilities::SHIELDSDOWN
-                        | Abilities::POWERCONSTRUCT
-                        | Abilities::COMATOSE
-                        | Abilities::ICEFACE
-                        | Abilities::GULPMISSILE
-                        | Abilities::HUNGERSWITCH
-                        | Abilities::BATTLEBOND
-                ) || p.ability == own
-            })
+            .map(|p| matches!(p.ability, Abilities::TRUANT | Abilities::INSOMNIA))
             .unwrap_or(false);
         if bad {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
@@ -2914,6 +2898,7 @@ fn execute_action_inner(
         target_side = spread_list[0].0;
         target_slot = spread_list[0].1;
     } else if !choice.always_hit
+        && !choice.ohko
         && move_ty != "all"
         && !toxic_hits
         && !state.side(target_side).active[target_slot].glaive_rush
@@ -2934,6 +2919,62 @@ fn execute_action_inner(
         };
         let mods = accuracy_ability_mods(state, side, idx, target_side, target_slot, choice);
         if !roll_accuracy_boosted(choice.accuracy, ab, eb, mods, rng) {
+            state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+            push_order();
+            return;
+        }
+    }
+
+    // OHKO moves (`hitStepAccuracy`): immune when the target out-levels the user
+    // (or has the Ice type for Sheer Cold); otherwise accuracy 30 (20 for a
+    // non-Ice Sheer Cold user) + the level difference, bypassing every
+    // accuracy modifier. PS sim/battle-actions.ts.
+    // Sturdy `onTryHit`: OHKO moves are blocked before the accuracy roll.
+    if choice.ohko
+        && !is_self
+        && !is_field
+        && !is_spread
+        && (side, slot) != (target_side, target_slot)
+        && state.side(target_side).slot_pokemon(target_slot).is_some_and(|d| {
+            d.ability == Abilities::STURDY
+                && !crate::engine::abilities::ignores_target_ability(
+                    state.side(side).team_member(idx),
+                    choice,
+                    &d.ability,
+                )
+        })
+    {
+        state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+        push_order();
+        return;
+    }
+    if choice.ohko
+        && !is_self
+        && !is_field
+        && !is_spread
+        && (side, slot) != (target_side, target_slot)
+        && state.side(target_side).active[target_slot].charging.is_none()
+    {
+        let (alevel, atypes) = {
+            let a = state.side(side).team_member(idx);
+            (a.level as i32, a.types)
+        };
+        let (dlevel, dtypes) = {
+            let d = state.side(target_side).slot_pokemon(target_slot).unwrap();
+            (d.level as i32, d.types)
+        };
+        let ice = |t: (PokemonType, PokemonType)| t.0 == PokemonType::ICE || t.1 == PokemonType::ICE;
+        let sheer = choice.move_id == Choices::SHEERCOLD;
+        if alevel < dlevel || (sheer && ice(dtypes)) {
+            state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+            push_order();
+            return;
+        }
+        let mut acc = if sheer && !ice(atypes) { 20 } else { 30 };
+        acc += alevel - dlevel;
+        let no_guard = state.side(side).team_member(idx).ability == Abilities::NOGUARD
+            || state.side(target_side).slot_pokemon(target_slot).is_some_and(|d| d.ability == Abilities::NOGUARD);
+        if !no_guard && !rng.label("accuracy").random_chance(acc.max(0) as u32, 100) {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
             push_order();
             return;
@@ -4204,9 +4245,27 @@ fn execute_action_inner(
         if choice.move_id == Choices::WORRYSEED && ti == 0 && !move_failed {
             if let Some(tidx) = state.side(target_side).active[target_slot].pokemon_index {
                 let pm = state.side_mut(target_side).team_member_mut(tidx);
-                pm.ability = Abilities::INSOMNIA;
-                if pm.status == PokemonStatus::SLEEP {
-                    pm.status = PokemonStatus::NONE;
+                if matches!(
+                    pm.ability,
+                    Abilities::MULTITYPE
+                        | Abilities::STANCECHANGE
+                        | Abilities::DISGUISE
+                        | Abilities::ZENMODE
+                        | Abilities::SCHOOLING
+                        | Abilities::SHIELDSDOWN
+                        | Abilities::POWERCONSTRUCT
+                        | Abilities::COMATOSE
+                        | Abilities::ICEFACE
+                        | Abilities::GULPMISSILE
+                        | Abilities::HUNGERSWITCH
+                        | Abilities::BATTLEBOND
+                ) {
+                    move_failed = true;
+                } else {
+                    pm.ability = Abilities::INSOMNIA;
+                    if pm.status == PokemonStatus::SLEEP {
+                        pm.status = PokemonStatus::NONE;
+                    }
                 }
             }
         }

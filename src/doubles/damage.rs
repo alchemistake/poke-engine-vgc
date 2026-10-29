@@ -122,6 +122,9 @@ pub struct DamageCtx {
     /// An alive ally of the defender has Friend Guard (`onAnyModifyDamage`:
     /// x0.75 on its allies). PS data/abilities.ts friendguard.
     pub friend_guard: bool,
+    /// Defender has Filter / Solid Rock / Prism Armor (`onSourceModifyDamage`:
+    /// x0.75 on a super-effective hit; PS data/abilities.ts filter).
+    pub solid_rock: bool,
     /// Effective base power after multiplier effects (Helping Hand);
     /// 0.0 = use `choice.base_power`.
     pub base_power_override: f32,
@@ -291,6 +294,9 @@ pub fn calculate_damage(
     let mut chain_in = |m: i64| chain = (chain * m + 2048) >> 12;
     if ctx.defender_mod != 4096 {
         chain_in(ctx.defender_mod);
+    }
+    if ctx.solid_rock && tm > 0 {
+        chain_in(3072);
     }
     // PS `runEvent('ModifyDamage')` -> `speedSort` over the handlers; the
     // screens share order / priority / subOrder (4) / speed, so they shuffle.

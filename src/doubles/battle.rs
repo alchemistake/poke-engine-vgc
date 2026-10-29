@@ -539,7 +539,8 @@ fn apply_queue_change(
         choice.category = cat;
         choice.base_power = 0.0;
     }
-    let boost = (p.ability == Abilities::PRANKSTER && choice.category == MoveCategory::Status) as i8;
+    let boost = (p.ability == Abilities::PRANKSTER && choice.category == MoveCategory::Status) as i8
+        + grassy_glide_boost(state, p, &choice);
     update_speed(state);
     let mut a = Action {
         side,
@@ -757,7 +758,8 @@ pub fn run_battle_fuzz(
                                 // PS prankster `onModifyPriority`: +1 on Status moves.
                                 let boost = (p.ability == Abilities::PRANKSTER
                                     && choice.category == MoveCategory::Status)
-                                    as i8;
+                                    as i8
+                                    + grassy_glide_boost(state, p, &choice);
                                 // A recharging pokemon's action is the `recharge`
                                 // pseudo-move (priority 0), not the chosen move.
                                 let base = if s.active[slot].recharging {
@@ -4529,6 +4531,18 @@ fn execute_action_inner(
                 // fails if already up, else `eachEvent('WeatherChange')`.
                 // PS data/abilities.ts sandspit.
                 // TODO(PS parity): Smooth Rock duration, primal weather.
+                // Seed Sower `onDamagingHit`: `field.setTerrain('grassyterrain')`
+                // (fails if already up). PS data/abilities.ts seedsower.
+                // TODO(PS parity): Terrain Extender duration.
+                if ability == Abilities::SEEDSOWER
+                    && state.terrain.terrain_type != crate::engine::state::Terrain::GRASSYTERRAIN
+                {
+                    state.terrain = crate::state::StateTerrain {
+                        terrain_type: crate::engine::state::Terrain::GRASSYTERRAIN,
+                        turns_remaining: 5,
+                    };
+                    let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+                }
                 if ability == Abilities::SANDSPIT && state.weather.weather_type != Weather::SAND {
                     state.weather = crate::state::StateWeather {
                         weather_type: Weather::SAND,
@@ -4634,6 +4648,13 @@ fn execute_action_inner(
                 apply_damage(state, side, slot, recoil);
             }
         }
+    }
+
+    // Healing Wish / Lunar Dance (slot-condition moves) make exactly one
+    // hit-loop `eachEvent('Update')` in PS, while the user still counts as
+    // active (faints are resolved afterwards).
+    if hits_done == 0 && matches!(choice.move_id, Choices::HEALINGWISH | Choices::LUNARDANCE) && !move_failed {
+        each_event_update(state, rng);
     }
 
     // PS `resolveFaints` right after the hit loop.
@@ -4960,6 +4981,14 @@ fn base_power_with_modifiers(
 /// callback; use `choice.base_power`). Reversal / Flail scale with the
 /// user's remaining HP; Hard Press / Crush Grip / Wring Out with the
 /// target's.
+/// Grassy Glide `onModifyPriority`: +1 in Grassy Terrain for a grounded user
+/// (PS data/moves.ts grassyglide).
+fn grassy_glide_boost(state: &DoublesState, p: &crate::state::Pokemon, choice: &Choice) -> i8 {
+    (choice.move_id == Choices::GRASSYGLIDE
+        && state.terrain.terrain_type == crate::engine::state::Terrain::GRASSYTERRAIN
+        && p.is_grounded()) as i8
+}
+
 /// Residual / weather / status damage: PS `Magic Guard` `onDamage` returns
 /// false for any non-Move effect (data/abilities.ts magicguard).
 fn apply_indirect_damage(state: &mut DoublesState, side: Side, slot: usize, dmg: i16) -> bool {
@@ -5351,6 +5380,10 @@ fn compute_hit_damage(
                     m
                 }
             },
+            solid_rock: matches!(
+                defender.ability,
+                Abilities::FILTER | Abilities::SOLIDROCK | Abilities::PRISMARMOR
+            ) && !crate::engine::abilities::ignores_target_ability(attacker, choice, &defender.ability),
             guts: attacker.ability == Abilities::GUTS,
             attack_mod: {
             let m = crate::engine::mechanics::attacker_stat_modifier(attacker, choice);
@@ -5837,7 +5870,9 @@ fn maybe_synchronize(
     }
     let s = state.side_mut(source_side);
     let pm = s.team_member_mut(source_idx);
-    if pm.status == PokemonStatus::NONE {
+    // PS `setStatus`: a fainted pokemon can't be statused (`!this.hp`).
+    // TODO(PS parity): type / ability immunities of the source.
+    if pm.status == PokemonStatus::NONE && pm.hp > 0 {
         pm.status = status;
         if status == PokemonStatus::SLEEP {
             pm.sleep_turns = 1;
@@ -6818,7 +6853,7 @@ fn sorted_actives(state: &DoublesState, rng: &mut Gen5Rng, label: &'static str) 
         } else {
             continue;
         };
-        hs.push(ResidualHandler {
+            hs.push(ResidualHandler {
             order: 0,
             priority: 0,
             speed,
@@ -7343,7 +7378,22 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
                     let s = state.side(side);
                     let Some(idx) = s.active[slot].pokemon_index else { continue };
                     let p = s.team_member(idx);
-                    if p.is_grounded() && p.hp < p.maxhp && s.active[slot].heal_block == 0 {
+                    // PS `pokemon.isSemiInvulnerable()` (fly / bounce / dive / dig /
+                    // phantomforce / shadowforce / skydrop volatiles).
+                    let semi_invulnerable = matches!(
+                        s.active[slot].charging,
+                        Some((
+                            Choices::FLY
+                            | Choices::BOUNCE
+                            | Choices::DIVE
+                            | Choices::DIG
+                            | Choices::PHANTOMFORCE
+                            | Choices::SHADOWFORCE
+                            | Choices::SKYDROP,
+                            _
+                        ))
+                    );
+                    if p.is_grounded() && !semi_invulnerable && p.hp < p.maxhp && s.active[slot].heal_block == 0 {
                         Some((idx, p.hp, p.maxhp))
                     } else {
                         None
@@ -7635,6 +7685,7 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
                     reflect: false,
                     light_screen: false,
                     defender_mod: 4096,
+                    solid_rock: false,
                     guts: attacker.ability == Abilities::GUTS,
                     attack_mod: crate::engine::mechanics::attacker_stat_modifier(attacker, &action.choice),
                     crit_bonus: 0,

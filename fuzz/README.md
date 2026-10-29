@@ -143,5 +143,12 @@ value. Use it when the PRNG draws line up but a number differs.
   workers that can no longer find an earlier failure, and re-runs the lowest
   failing seed for the report. `--jobs 1` runs sequentially; `--verbose`
   disables both.
-- Typical (18 cores): 100 battles ~0.6 s; a 1000-battle sweep that fails at
-  seed 100 ~0.9 s.
+- PS cache: the PS side of a battle depends only on the seed, the harness
+  (`fuzz.js`, `teams.js`) and the pokemon-showdown build — never on the
+  engine — so the fast path stores each PS battle in
+  `fuzz/work/ps-cache/<key>/<seed>.json` and later sweeps only re-run the
+  engine. The key hashes those inputs; a harness or PS change starts a new
+  cache (old ones are deleted). Failure reports always run PS live.
+  `--no-cache` disables it.
+- Typical (18 cores): 100 battles ~0.6 s cold, ~0.12 s cached; a
+  1000-battle sweep that fails at seed 100 ~0.3 s cached.

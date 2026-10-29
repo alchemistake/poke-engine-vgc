@@ -27,16 +27,22 @@ const PARALLEL_PARENT = (() => {
 if (PARALLEL_PARENT) runParallel(PARALLEL_PARENT);
 
 const PS_DIR = path.resolve(__dirname, '..', '..', 'pokemon-showdown');
-const Sim = require(path.join(PS_DIR, 'dist', 'sim'));
-const { Dex, Battle } = Sim;
-const { PRNG } = require(path.join(PS_DIR, 'dist', 'sim', 'prng.js'));
 const { genTeam, effectiveStats } = require('./teams.js');
 
 const FORMAT = 'gen9championsvgc2026regmc';
 
-// The format's own dex (applies data/mods/champions/*): its species table
-// defines which species are legal (CAP / Past-gen / Illegal are excluded).
-const MOD_DEX = Dex.forFormat(FORMAT);
+// pokemon-showdown, loaded on first use: a sweep whose PS battles are all
+// cached never loads it. MOD_DEX is the format's own dex (applies
+// data/mods/champions/*): its species table defines which species are legal.
+let PS_SIM = null;
+function ps() {
+  if (!PS_SIM) {
+    const Sim = require(path.join(PS_DIR, 'dist', 'sim'));
+    const { PRNG } = require(path.join(PS_DIR, 'dist', 'sim', 'prng.js'));
+    PS_SIM = { Dex: Sim.Dex, Battle: Sim.Battle, PRNG, MOD_DEX: Sim.Dex.forFormat(FORMAT) };
+  }
+  return PS_SIM;
+}
 
 // ---------------------------------------------------------------------------
 // Args
@@ -55,6 +61,8 @@ function parseArgs() {
     step: 1,
     checkOnly: false,
     jobs: Math.max(1, require('os').cpus().length),
+    // Reuse cached PS battles on the fast path (see psCacheDir).
+    cache: true,
   };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--seed') opts.seed = parseInt(args[++i], 10);
@@ -65,6 +73,7 @@ function parseArgs() {
     else if (args[i] === '--jobs') opts.jobs = Math.max(1, parseInt(args[++i], 10));
     else if (args[i] === '--step') opts.step = parseInt(args[++i], 10);
     else if (args[i] === '--check-only') opts.checkOnly = true;
+    else if (args[i] === '--no-cache') opts.cache = false;
     else {
       console.error(`unknown argument: ${args[i]}`);
       process.exit(2);
@@ -443,8 +452,8 @@ function prngReport(pe, failTurn) {
 // turns, snapIdx, meta)` at every turn boundary. The fuzzer runs poke-engine
 // on the same state/turns so far and exits immediately on the first divergence.
 function stepPSBattle(battleSeed, teamA, teamB, controller, onInit, onTurn) {
-  const battle = new Battle({
-    format: Dex.formats.get(FORMAT),
+  const battle = new (ps().Battle)({
+    format: ps().Dex.formats.get(FORMAT),
     seed: battleSeed,
     p1: { name: 'A', team: teamA },
     p2: { name: 'B', team: teamB },
@@ -710,7 +719,7 @@ const BOOST_KEYS = ['atk', 'def', 'spa', 'spd', 'spe', 'acc', 'eva'];
 
 function prettySpecies(id) {
   try {
-    const s = Dex.species.get(id);
+    const s = ps().Dex.species.get(id);
     return s && s.name ? s.name : id;
   } catch (e) {
     return id;
@@ -719,7 +728,7 @@ function prettySpecies(id) {
 
 function prettyMove(id) {
   try {
-    const m = Dex.moves.get(id);
+    const m = ps().Dex.moves.get(id);
     return m && m.name ? m.name : id;
   } catch (e) {
     return id;
@@ -880,7 +889,7 @@ function formatTeamLabeled(team, battleTeam) {
     lines.push(`      gender: ${m.gender}`);
     lines.push(`      nature: ${m.nature}`);
     lines.push(`      stat points: (hp: ${m.evs.hp}, atk: ${m.evs.atk}, def: ${m.evs.def}, spa: ${m.evs.spa}, spd: ${m.evs.spd}, spe: ${m.evs.spe})`);
-    const st = effectiveStats(m, Dex);
+    const st = effectiveStats(m, ps().Dex);
     lines.push(
       `      stats (level 50, after stat points + nature): (hp: ${st.hp}, atk: ${st.atk}, def: ${st.def}, spa: ${st.spa}, spd: ${st.spd}, spe: ${st.spe})`
     );
@@ -1189,13 +1198,54 @@ function failTest(opts, t, info) {
   process.exit(1);
 }
 
+// PS battle cache (fast path only). The PS side of a battle depends only on
+// the test seed, the harness (this file, teams.js) and the pokemon-showdown
+// build, never on the engine; so a battle's PS result (choices, snapshots,
+// winner) is stored once and reused by later sweeps. The key hashes all of
+// those inputs, so any harness or PS change starts a fresh cache.
+// Location: fuzz/work/ps-cache/<key>/<seed>.json (gitignored).
+let PS_CACHE_DIR = null;
+function psCacheDir() {
+  if (PS_CACHE_DIR) return PS_CACHE_DIR;
+  const h = require('crypto').createHash('sha1');
+  h.update(fs.readFileSync(__filename));
+  h.update(fs.readFileSync(path.join(__dirname, 'teams.js')));
+  const head = spawnSync('git', ['-C', PS_DIR, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
+  h.update(String(head.stdout || ''));
+  h.update(String(fs.statSync(path.join(PS_DIR, 'dist', 'sim', 'battle.js')).mtimeMs));
+  h.update(FORMAT);
+  const root = path.join(__dirname, 'work', 'ps-cache');
+  PS_CACHE_DIR = path.join(root, h.digest('hex').slice(0, 16));
+  if (!fs.existsSync(PS_CACHE_DIR)) {
+    // New harness / PS build: older caches can never be used again.
+    for (const old of fs.existsSync(root) ? fs.readdirSync(root) : []) {
+      fs.rmSync(path.join(root, old), { recursive: true, force: true });
+    }
+  }
+  fs.mkdirSync(PS_CACHE_DIR, { recursive: true });
+  return PS_CACHE_DIR;
+}
+function psCacheRead(seed) {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(psCacheDir(), `${seed}.json`), 'utf8'));
+  } catch (e) {
+    return null;
+  }
+}
+function psCacheWrite(seed, game) {
+  const file = path.join(psCacheDir(), `${seed}.json`);
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(game));
+  fs.renameSync(tmp, file); // atomic: parallel workers never read half a file
+}
+
 // Tests checked per engine call on the fast path.
 const FAST_CHUNK = 8;
 
 // The controller PRNG, battle seed and teams of one test (all derived from
 // the test seed, so a test can be rebuilt identically).
 function makeTest(testSeed) {
-  const controller = new PRNG([
+  const controller = new (ps().PRNG)([
     testSeed & 0xffff,
     (testSeed + 1) & 0xffff,
     (testSeed + 2) & 0xffff,
@@ -1204,8 +1254,8 @@ function makeTest(testSeed) {
   // 1. Battle seed (4 x 16-bit words), from the controller stream.
   const battleSeed = [0, 0, 0, 0].map(() => controller.random(65536));
   // 2. Two fully random teams, from the controller stream.
-  const teamA = genTeam(controller, MOD_DEX);
-  const teamB = genTeam(controller, MOD_DEX);
+  const teamA = genTeam(controller, ps().MOD_DEX);
+  const teamB = genTeam(controller, ps().MOD_DEX);
   return { controller, battleSeed, teamA, teamB };
 }
 
@@ -1220,22 +1270,28 @@ function fastCheckBatch(opts, dir, seeds) {
   let firstBad = -1;
   TRACE_DRAWS = false;
   for (let k = 0; k < seeds.length; k++) {
-    const { controller, battleSeed, teamA, teamB } = makeTest(seeds[k]);
-    let initSnap = null;
-    const snaps = [];
-    try {
-      const meta = stepPSBattle(battleSeed, teamA, teamB, controller,
-        (snap) => {
-          initSnap = snap;
-        },
-        (snap) => {
-          snaps.push(snap);
-        });
-      games.push({ battleSeed, meta, initSnap, snaps });
-    } catch (e) {
-      firstBad = k; // later tests cannot be first
-      break;
+    let game = opts.cache ? psCacheRead(seeds[k]) : null;
+    if (!game) {
+      const { controller, battleSeed, teamA, teamB } = makeTest(seeds[k]);
+      let initSnap = null;
+      const snaps = [];
+      try {
+        const meta = stepPSBattle(battleSeed, teamA, teamB, controller,
+          (snap) => {
+            initSnap = snap;
+          },
+          (snap) => {
+            snaps.push(snap);
+          });
+        const { turns, leads, battleTeamA, battleTeamB, winner } = meta;
+        game = { battleSeed, meta: { turns, leads, battleTeamA, battleTeamB, winner }, initSnap, snaps };
+      } catch (e) {
+        firstBad = k; // later tests cannot be first (PS errors are not cached)
+        break;
+      }
+      if (opts.cache) psCacheWrite(seeds[k], game);
     }
+    games.push(game);
   }
   TRACE_DRAWS = true;
   if (!games.length) return firstBad;
@@ -1290,7 +1346,7 @@ function runParallel(opts) {
     const child = spawn(
       process.execPath,
       [__filename, '--seed', String(opts.seed + j), '--count', String(count), '--step', String(jobs),
-        '--check-only', '--jobs', '1', '--engine', opts.engine,
+        '--check-only', '--jobs', '1', '--engine', opts.engine, ...(opts.cache ? [] : ['--no-cache']),
         '--workdir', path.join(opts.workdir, `worker-${j}`)],
       { stdio: ['ignore', 'pipe', 'inherit'] }
     );

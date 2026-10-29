@@ -187,14 +187,14 @@ pub fn calculate_damage(
     match ctx.weather {
         Weather::RAIN | Weather::HEAVYRAIN => {
             if choice.move_type == PokemonType::WATER {
-                base = modify(base, 2.0, 1.0);
+                base = modify(base, 1.5, 1.0);
             } else if choice.move_type == PokemonType::FIRE {
                 base = modify(base, 0.5, 1.0);
             }
         }
         Weather::SUN | Weather::HARSHSUN => {
             if choice.move_type == PokemonType::FIRE {
-                base = modify(base, 2.0, 1.0);
+                base = modify(base, 1.5, 1.0);
             } else if choice.move_type == PokemonType::WATER {
                 base = modify(base, 0.5, 1.0);
             }
@@ -274,6 +274,20 @@ pub fn calculate_damage(
 /// pokemon-showdown draws the roll even at 100% accuracy, but NOT for moves
 /// whose accuracy is `true` (always-hit, e.g. Spikes / Protect) — the engine
 /// encodes those as `accuracy == 0.0`.
+/// PS `hitStepAccuracy`: accuracy scaled by the user's accuracy stage minus
+/// the target's evasion stage (each clamped to +-6), then `randomChance`.
+// TODO(PS parity): ModifyAccuracy / Accuracy events (Compound Eyes, items, ...).
+pub fn roll_accuracy_boosted(accuracy: f32, acc_boost: i8, eva_boost: i8, rng: &mut Gen5Rng) -> bool {
+    let mut acc = accuracy as i32;
+    let boost = (acc_boost.clamp(-6, 6) as i32 - eva_boost as i32).clamp(-6, 6);
+    if boost > 0 {
+        acc = acc * (3 + boost) / 3;
+    } else if boost < 0 {
+        acc = acc * 3 / (3 - boost);
+    }
+    rng.label("accuracy").random_chance(acc.max(0) as u32, 100)
+}
+
 pub fn roll_accuracy(accuracy: f32, rng: &mut Gen5Rng) -> bool {
     if accuracy >= 100.0 {
         // pokemon-showdown still draws the roll even at 100%.

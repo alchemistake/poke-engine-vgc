@@ -85,6 +85,18 @@ pub struct ActiveSlot {
     /// `yawn` volatile: remaining duration (0 = none) and the user who
     /// applied it (for the sleep `trySetStatus` when it ends).
     pub yawn: u8,
+    /// `uproar` volatile: remaining duration (0 = none). Locks the move.
+    pub uproar: u8,
+    /// `stall` volatile (Protect / Detect / Endure counter): (counter, duration).
+    pub stall: Option<(u16, u8)>,
+    /// `endure` volatile (duration 1): survive moves at 1 HP.
+    pub endure: bool,
+    /// PS `lastMoveTargetLoc`: the target location of the last move (signed:
+    /// foe slot + 1, own slot -(slot + 1)); a locked move reuses it.
+    pub last_target_loc: i8,
+    /// `lockedmove` volatile (Outrage, Thrash, Petal Dance): (duration,
+    /// trueDuration) from PS data/conditions.ts.
+    pub locked_move: Option<(u8, u8)>,
     /// `disable` volatile: the disabled move and remaining duration.
     pub disabled: Option<(Choices, u8)>,
     /// BeforeMove aborted the locked charge turn: PS `twoturnmove` is gone
@@ -144,6 +156,11 @@ impl ActiveSlot {
             stats_raised_this_turn: false,
             partial_trap: None,
             yawn: 0,
+            uproar: 0,
+            stall: None,
+            endure: false,
+            last_target_loc: 0,
+            locked_move: None,
             disabled: None,
             charge_aborted: false,
             yawn_source: None,

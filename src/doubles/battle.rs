@@ -914,6 +914,13 @@ pub fn run_battle_fuzz(
         // closing `eachEvent('Update')`; each is a speed sort of the actives.
         each_event_update(state, rng);
         each_event_update(state, rng);
+        // `beforeTurnMove` actions (Counter / Mirror Coat `beforeTurnCallback`):
+        // each is an action of its own and ends with `eachEvent('Update')`.
+        for a in actions.iter() {
+            if matches!(a.choice.move_id, Choices::COUNTER | Choices::MIRRORCOAT) {
+                each_event_update(state, rng);
+            }
+        }
         // `priorityChargeMove` actions (order 107: after `beforeTurn`, before
         // every move): Focus Punch adds its volatile. When one is queued,
         // `beforeTurn` is not followed by a move, so its re-sort is skipped;
@@ -3017,6 +3024,10 @@ fn execute_action_inner(
         && !bypasses_substitute(choice)
         && state.side(side).team_member(idx).ability != Abilities::INFILTRATOR
     {
+        // `onTryPrimaryHit` returns null (not false): the hit loop still runs its
+        // `eachEvent('Update')` (once in the loop, once after it).
+        each_event_update(state, rng);
+        each_event_update(state, rng);
         push_order();
         return;
     }
@@ -3064,6 +3075,10 @@ fn execute_action_inner(
     // TODO(PS parity): other failing status effects (boosts at +6, ...).
     let mut move_failed = false;
     let mut hits_done = 0u32;
+    // Hits that landed on a Substitute only: PS's closing `eachEvent` is skipped
+    // (`damage` holds no number).
+    let mut sub_hit = false;
+    let mut real_hit = false;
     // Cloud Nine / Air Lock `onEnd` (faint): the ability ending triggers
     // `eachEvent('WeatherChange')` — a speed sort. Set when such a holder
     // faints this move; consumed after the per-hit eachEvent.
@@ -3181,6 +3196,7 @@ fn execute_action_inner(
                 && !bypasses_substitute(choice)
                 && state.side(side).team_member(idx).ability != Abilities::INFILTRATOR
             {
+                sub_hit = true;
                 let d = damage.min(sub_hp);
                 state.side_mut(target_side).active[target_slot].substitute_health = sub_hp - d;
                 total_damage = total_damage.saturating_add(d);
@@ -3262,6 +3278,7 @@ fn execute_action_inner(
                 }
                 continue;
             }
+            real_hit = true;
             // Disguise `onDamage` (priority 1): the first damaging hit is absorbed,
             // then `onUpdate` busts the forme and deals 1/8 max HP.
             let damage = {
@@ -5078,6 +5095,22 @@ fn execute_action_inner(
     }
 
 
+    // Rapid Spin `onAfterHit` / `onAfterSubDamage` (not with Sheer Force): clears
+    // the user's Leech Seed, its side's hazards and any binding. PS data/moves.ts.
+    if choice.move_id == Choices::RAPIDSPIN
+        && (hits_done > 0 || sub_hit)
+        && state.side(side).team_member(idx).ability != Abilities::SHEERFORCE
+    {
+        let sc = &mut state.side_mut(side).side_conditions;
+        sc.spikes = 0;
+        sc.toxic_spikes = 0;
+        sc.stealth_rock = 0;
+        sc.sticky_web = 0;
+        let a = &mut state.side_mut(side).active[slot];
+        a.leech_seed = None;
+        a.partial_trap = None;
+    }
+
     // PS `resolveFaints` right after the hit loop (before the recoil).
     resolve_faints(state, |_, _| true);
 
@@ -5105,6 +5138,8 @@ fn execute_action_inner(
             if !no_recoil {
                 let recoil = ((total_damage as f32) * frac).round().max(1.0) as i16;
                 apply_damage(state, side, slot, recoil);
+                // Ordinary recoil KOs are resolved before the closing `eachEvent`.
+                state.unresolved_faints.retain(|&(fs, fsl, _)| (fs, fsl) != (side, slot));
             }
         }
     }

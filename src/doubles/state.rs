@@ -40,6 +40,8 @@ pub struct ActiveSlot {
     pub force_trapped: bool,
     pub slow_uturn_move: bool,
     pub baton_passing: bool,
+    /// Electrify (single turn): the next move becomes Electric.
+    pub electrify: bool,
     /// Power Trick is active (Attack and Defense are swapped).
     pub power_trick: bool,
     /// PS `move.hit` (1-based) of the current hit of a multi-hit move.
@@ -230,6 +232,7 @@ impl ActiveSlot {
             force_trapped: false,
             slow_uturn_move: false,
             baton_passing: false,
+            electrify: false,
             power_trick: false,
             hit_number: 1,
             shed_tailing: false,

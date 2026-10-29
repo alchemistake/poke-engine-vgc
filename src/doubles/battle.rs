@@ -1056,6 +1056,13 @@ pub fn run_battle_fuzz(
                         update_speed(state);
                         // Baton Pass (`selfSwitch: 'copyvolatile'`): boosts and
                         // the copyable volatiles move to the replacement.
+                        // Baton Pass `copyVolatileFrom`: the passable volatiles.
+                        let baton_extra = if state.side(side).active[slot].baton_passing {
+                            let a = &state.side(side).active[slot];
+                            Some((a.cursed, a.focus_energy, a.leech_seed, a.ingrain, a.aqua_ring, a.heal_block))
+                        } else {
+                            None
+                        };
                         let shed = state.side(side).active[slot].shed_tailing;
                         let passed = if shed {
                             let a = &state.side(side).active[slot];
@@ -1085,6 +1092,15 @@ pub fn run_battle_fuzz(
                                     k += 1;
                                 }
                             }
+                        }
+                        if let Some((cursed, fe, ls, ing, aq, hb)) = baton_extra {
+                            let a = &mut state.side_mut(side).active[slot];
+                            a.cursed = cursed;
+                            a.focus_energy = fe;
+                            a.leech_seed = ls;
+                            a.ingrain = ing;
+                            a.aqua_ring = aq;
+                            a.heal_block = hb;
                         }
                         if let Some((boosts, confusion, sub)) = passed {
                             if let Some(new_idx) = state.side(side).active[slot].pokemon_index {
@@ -1864,6 +1880,10 @@ fn execute_action_inner(
         } else if sp.contains("combat") {
             modified.move_type = PokemonType::FIGHTING;
         }
+    }
+    // Electrify `onModifyType` (priority -2): any move but Struggle becomes Electric.
+    if state.side(side).active[slot].electrify && modified.move_id != Choices::STRUGGLE {
+        modified.move_type = PokemonType::ELECTRIC;
     }
     let choice = &modified;
     let mut target_side = side.other();
@@ -4309,6 +4329,16 @@ fn execute_action_inner(
             std::mem::swap(&mut pm.attack, &mut pm.defense);
             let a = &mut state.side_mut(side).active[slot];
             a.power_trick = !a.power_trick;
+        }
+        // Electrify: fails if the target already moved (`onTryHit`); lasts the turn.
+        if choice.move_id == Choices::ELECTRIFY && ti == 0 && !move_failed {
+            let tidx = state.side(target_side).active[target_slot].pokemon_index;
+            let will_move = queue.iter().any(|q| q.side == target_side && Some(q.pokemon_index) == tidx);
+            if !will_move && state.side(target_side).active[target_slot].active_turns > 0 {
+                move_failed = true;
+            } else {
+                state.side_mut(target_side).active[target_slot].electrify = true;
+            }
         }
         // Belly Drum `onHit`: fails at or below half HP (or Atk +6); otherwise
         // the user pays floor(maxhp / 2) and its Attack goes to +6 (`boost atk: 12`).
@@ -8412,6 +8442,7 @@ fn end_of_turn(
             a.move_result_last_turn = a.move_result_this_turn;
             a.move_result_this_turn = None;
             a.flinched = false;
+            a.electrify = false;
             a.hurt_this_turn = false;
             a.protected = false;
             a.twoturn_fired = false;

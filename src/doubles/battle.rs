@@ -436,7 +436,7 @@ pub fn run_battle_fuzz(
     queue_insert_draws(state, rng);
     let _ = sorted_actives(state, rng, "speed tie (switch-in)");
     for (side, slot) in [(Side::One, 0), (Side::One, 1), (Side::Two, 0), (Side::Two, 1)] {
-        if apply_on_switch_abilities(state, side, slot) {
+        if apply_on_switch_abilities(state, side, slot, rng) {
             // Terrain just set (e.g. Grassy Surge): `eachEvent("TerrainChange")`.
             let _ = sorted_actives(state, rng, "speed tie (switch-in)");
         }
@@ -649,7 +649,7 @@ pub fn run_battle_fuzz(
                         each_event_update(state, rng);
                         let _ = sorted_actives(state, rng, "speed tie (switch-in)");
                         // TODO(PS parity): `fieldEvent('SwitchIn')` handler ties.
-                        if apply_on_switch_abilities(state, side, slot) {
+                        if apply_on_switch_abilities(state, side, slot, rng) {
                             let _ = sorted_actives(state, rng, "speed tie (switch-in)");
                         }
                         each_event_update(state, rng);
@@ -854,7 +854,7 @@ fn drag_in_all(state: &mut DoublesState, rng: &mut Gen5Rng) {
             let pick = options[rng.label("drag in").random(options.len() as u32) as usize];
             switch_in(state, side, slot, pick);
             let _ = sorted_actives(state, rng, "speed tie (switch-in)");
-            if apply_on_switch_abilities(state, side, slot) {
+            if apply_on_switch_abilities(state, side, slot, rng) {
                 let _ = sorted_actives(state, rng, "speed tie (switch-in)");
             }
         }
@@ -1551,7 +1551,7 @@ fn execute_action(
         // Skill Swap (`onHit` -> `skillSwap(source, target)`).
         if choice.move_id == Choices::SKILLSWAP {
             let (ts, tsl) = if is_ally { (side, ally_slot) } else { (target_side, target_slot) };
-            if !skill_swap(state, side, slot, ts, tsl) {
+            if !skill_swap(state, side, slot, ts, tsl, rng) {
                 move_failed = true;
             }
         }
@@ -1763,8 +1763,24 @@ fn execute_action(
                 if let Some(b) = crate::engine::mechanics::on_damaging_hit_boosts(ability, choice) {
                     apply_boosts(state, target_side, didx, &b, false);
                 }
+                // Gooey (defender's ability): the attacker's Speed drops by 1 on
+                // a contact hit (PS `gooey.onDamagingHit`; this build uses a stage
+                // drop, not the standard stat halving).
+                // TODO(PS parity): `checkMoveMakesContact` (Long Reach, Substitute).
+                if ability == Abilities::GOOEY && choice.flags.contact {
+                    apply_boosts(
+                        state,
+                        side,
+                        idx,
+                        &StatBoosts {
+                            speed: -1,
+                            ..Default::default()
+                        },
+                        true,
+                    );
+                }
             }
-            maybe_wandering_spirit(state, side, slot, target_side, target_slot, choice);
+            maybe_wandering_spirit(state, side, slot, target_side, target_slot, choice, rng);
         }
 
         // PS `hitStepMoveHitLoop`: `eachEvent('Update')` after every hit that
@@ -1872,6 +1888,19 @@ fn base_power_with_modifiers(
     }
     if ate_boosted {
         mods.push((23, 4915));
+    }
+    // Facade (`onBasePower`): x2 when the user has a non-sleep status.
+    if choice.move_id == Choices::FACADE
+        && matches!(
+            attacker.status,
+            PokemonStatus::BURN
+                | PokemonStatus::POISON
+                | PokemonStatus::TOXIC
+                | PokemonStatus::FREEZE
+                | PokemonStatus::PARALYZE
+        )
+    {
+        mods.push((0, 8192));
     }
     if let Some(m) = crate::engine::mechanics::terrain_base_power_modifier(terrain, choice, attacker, defender) {
         mods.push((6, m));
@@ -2123,6 +2152,7 @@ fn maybe_wandering_spirit(
     def_side: Side,
     def_slot: usize,
     choice: &Choice,
+    rng: &mut Gen5Rng,
 ) {
     if !choice.flags.contact {
         return;
@@ -2137,13 +2167,20 @@ fn maybe_wandering_spirit(
     if state.side(def_side).team_member(di).ability != Abilities::WANDERINGSPIRIT {
         return;
     }
-    skill_swap(state, att_side, att_slot, def_side, def_slot);
+    skill_swap(state, att_side, att_slot, def_side, def_slot, rng);
 }
 
 /// PS `battle.skillSwap(source, target)` (sim/battle.ts): fails if either is
 /// fainted or either ability has `failskillswap`; swaps the abilities, then
 /// runs the new abilities' Start events (the target's first).
-fn skill_swap(state: &mut DoublesState, src_side: Side, src_slot: usize, tgt_side: Side, tgt_slot: usize) -> bool {
+fn skill_swap(
+    state: &mut DoublesState,
+    src_side: Side,
+    src_slot: usize,
+    tgt_side: Side,
+    tgt_slot: usize,
+    rng: &mut Gen5Rng,
+) -> bool {
     let (Some(si), Some(ti)) = (
         state.side(src_side).active[src_slot].pokemon_index,
         state.side(tgt_side).active[tgt_slot].pokemon_index,
@@ -2161,10 +2198,10 @@ fn skill_swap(state: &mut DoublesState, src_side: Side, src_slot: usize, tgt_sid
     }
     state.side_mut(src_side).team_member_mut(si).ability = tgt_ability;
     state.side_mut(tgt_side).team_member_mut(ti).ability = src_ability;
-    // TODO(PS parity): terrain set via Skill Swap needs an `eachEvent(
-    // "TerrainChange")` speed sort, but `skill_swap` has no `rng` here.
-    let _ = apply_on_switch_abilities(state, tgt_side, tgt_slot);
-    let _ = apply_on_switch_abilities(state, src_side, src_slot);
+    // TODO(PS parity): terrain / Trace set via Skill Swap need their speed sort /
+    // sample draw, handled by the `rng` passed to `apply_on_switch_abilities`.
+    let _ = apply_on_switch_abilities(state, tgt_side, tgt_slot, rng);
+    let _ = apply_on_switch_abilities(state, src_side, src_slot, rng);
     true
 }
 
@@ -2269,20 +2306,80 @@ fn apply_boosts(
     }
 }
 
+/// Abilities with the `notrace` flag (PS `data/abilities.ts`): Trace cannot
+/// copy them.
+fn has_notrace(a: Abilities) -> bool {
+    matches!(
+        a,
+        Abilities::BATTLEBOND
+            | Abilities::COMATOSE
+            | Abilities::DISGUISE
+            | Abilities::FLOWERGIFT
+            | Abilities::FORECAST
+            | Abilities::HUNGERSWITCH
+            | Abilities::ICEFACE
+            | Abilities::ILLUSION
+            | Abilities::IMPOSTER
+            | Abilities::MULTITYPE
+            | Abilities::POISONPUPPETEER
+            | Abilities::POWERCONSTRUCT
+            | Abilities::POWEROFALCHEMY
+            | Abilities::RECEIVER
+            | Abilities::SCHOOLING
+            | Abilities::SHIELDSDOWN
+            | Abilities::STANCECHANGE
+            | Abilities::TERASHELL
+            | Abilities::TRACE
+            | Abilities::ZENMODE
+    )
+}
+
 /// Add / refresh a side condition with its pokemon-showdown duration.
 /// Apply on-switch-in ability effects for the Pokémon now in `side`'s
 /// `active[slot]`. Currently only Intimidate: lowers the Attack of every foe
 /// active by -1 (PS `intimidate.onStart`, data/abilities.ts:2194). Targets
 /// behind a Substitute are immune.
 // TODO(PS parity): other on-switch abilities (Aura Veil, etc.).
-fn apply_on_switch_abilities(state: &mut DoublesState, side: Side, slot: usize) -> bool {
-    let ability = {
+fn apply_on_switch_abilities(
+    state: &mut DoublesState,
+    side: Side,
+    slot: usize,
+    rng: &mut Gen5Rng,
+) -> bool {
+    let mut ability = {
         let s = state.side(side);
         match s.active[slot].pokemon_index {
             Some(idx) => s.team_member(idx).ability,
             None => return false,
         }
     };
+    // Trace (`trace.onStart` -> `onUpdate`): copies a RANDOM adjacent foe's
+    // ability, drawing `sample(possibleTargets)`. Foes with the `notrace`
+    // flag or No Ability are excluded. Must happen before the copied
+    // ability's own on-switch effects run.
+    if ability == Abilities::TRACE {
+        let foes = [side.other(), side.other()];
+        let mut targets: Vec<(Side, PokemonIndex)> = Vec::new();
+        for f in 0..2 {
+            let fs = foes[f];
+            let Some(fidx) = state.side(fs).active[f].pokemon_index else { continue };
+            let fab = state.side(fs).team_member(fidx).ability;
+            if fab == Abilities::NOABILITY || has_notrace(fab) {
+                continue;
+            }
+            targets.push((fs, fidx));
+        }
+        // `possibleTargets` is `adjacentFoes()` filtered; in doubles both foes
+        // are adjacent, in slot order [0, 1].
+        if !targets.is_empty() {
+            let pick = targets[rng.label("other: onUpdate").random(targets.len() as u32) as usize];
+            let copied = state.side(pick.0).team_member(pick.1).ability;
+            if let Some(idx) = state.side(side).active[slot].pokemon_index {
+                state.side_mut(side).team_member_mut(idx).ability = copied;
+            }
+            ability = copied;
+        }
+    }
     // Weather / terrain setters (shared table with the singles engine).
     // TODO(PS parity): fails if the same weather / terrain is already up
     // (no duration reset), primal weathers, Cloud Nine.
@@ -2826,7 +2923,7 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
     // On-switch abilities (Intimidate) for each newly switched-in pokemon.
     // TODO(PS parity): `fieldEvent('SwitchIn')` handler ties.
     for (side, slot, _) in pending_switches {
-        if apply_on_switch_abilities(state, *side, *slot) {
+        if apply_on_switch_abilities(state, *side, *slot, rng) {
             let _ = sorted_actives(state, rng, "speed tie (switch-in)");
         }
     }

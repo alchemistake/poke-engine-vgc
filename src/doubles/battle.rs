@@ -1048,7 +1048,7 @@ pub fn run_battle_fuzz(
                         // Baton Pass / Shed Tail set `skipPursuit` in `self.onHit`
                         // (PS data/moves.ts), so they skip it.
                         // TODO(PS parity): Shed Tail (not in the engine yet).
-                        if !state.side(side).active[slot].baton_passing {
+                        if !state.side(side).active[slot].baton_passing && !state.side(side).active[slot].shed_tailing {
                             each_event_update(state, rng);
                         }
                         // The switch answer (`commitChoices` -> `updateSpeed`),
@@ -1056,7 +1056,11 @@ pub fn run_battle_fuzz(
                         update_speed(state);
                         // Baton Pass (`selfSwitch: 'copyvolatile'`): boosts and
                         // the copyable volatiles move to the replacement.
-                        let passed = if state.side(side).active[slot].baton_passing {
+                        let shed = state.side(side).active[slot].shed_tailing;
+                        let passed = if shed {
+                            let a = &state.side(side).active[slot];
+                            Some((Default::default(), 0, a.substitute_health))
+                        } else if state.side(side).active[slot].baton_passing {
                             let a = &state.side(side).active[slot];
                             a.pokemon_index.map(|old| {
                                 (
@@ -3678,6 +3682,26 @@ fn execute_action_inner(
             }
         }
 
+        // Aroma Veil `onAllyTryAddVolatile`: the holder and its ally can't gain
+        // Attract / Disable / Encore / Heal Block / Taunt / Torment from others
+        // (after the accuracy roll). PS data/abilities.ts aromaveil.
+        // TODO(PS parity): Mold Breaker.
+        if matches!(
+            choice.move_id,
+            Choices::ATTRACT | Choices::DISABLE | Choices::ENCORE | Choices::HEALBLOCK | Choices::TAUNT | Choices::TORMENT
+        ) && ti == 0
+            && (target_side, target_slot) != (side, slot)
+            && (0..2).any(|sl| {
+                state
+                    .side(target_side)
+                    .slot_pokemon(sl)
+                    .is_some_and(|p| p.hp > 0 && p.ability == Abilities::AROMAVEIL)
+            })
+        {
+            move_failed = true;
+            continue;
+        }
+
         // Status moves (Thunder Wave, Will-O-Wisp, Toxic, Hypnosis, ...).
         if let Some(st) = &choice.status {
             let (ts, tslot) = if st.target == MoveTarget::User || is_self {
@@ -4246,6 +4270,37 @@ fn execute_action_inner(
                     state.side_mut(target_side).team_member_mut(tidx).ability = Abilities::NONE;
                 }
             }
+        }
+        // Shed Tail `onTryHit` / `onHit`: needs a replacement, no existing
+        // Substitute and more than ceil(maxhp / 2) HP; the user pays that much
+        // and the replacement gets the substitute (floor(maxhp / 4) HP).
+        // PS data/moves.ts shedtail.
+        if choice.move_id == Choices::SHEDTAIL && ti == 0 && !move_failed {
+            let (hp, maxhp) = {
+                let p = state.side(side).team_member(idx);
+                (p.hp as i32, p.maxhp as i32)
+            };
+            let cost = (maxhp + 1) / 2;
+            if state.side(side).find_replacement().is_none()
+                || state.side(side).active[slot].substitute_health > 0
+                || hp <= cost
+            {
+                move_failed = true;
+            } else {
+                apply_damage(state, side, slot, cost as i16);
+                let a = &mut state.side_mut(side).active[slot];
+                a.substitute_health = (maxhp / 4) as i16;
+                a.partial_trap = None;
+                a.shed_tailing = true;
+            }
+        }
+        // Power Trick: swaps Attack and Defense; using it again swaps back
+        // (`onRestart` ends the volatile). Undone on switch-out. PS data/moves.ts.
+        if choice.move_id == Choices::POWERTRICK && ti == 0 && !move_failed {
+            let pm = state.side_mut(side).team_member_mut(idx);
+            std::mem::swap(&mut pm.attack, &mut pm.defense);
+            let a = &mut state.side_mut(side).active[slot];
+            a.power_trick = !a.power_trick;
         }
         // Belly Drum `onHit`: fails at or below half HP (or Atk +6); otherwise
         // the user pays floor(maxhp / 2) and its Attack goes to +6 (`boost atk: 12`).
@@ -5198,12 +5253,13 @@ fn execute_action_inner(
         Choices::PARTINGSHOT => drop_landed,
         _ => false,
     };
+    let shed = choice.move_id == Choices::SHEDTAIL && state.side(side).active[slot].shed_tailing;
     let baton = choice.move_id == Choices::BATONPASS;
     if baton && state.side(side).find_replacement().is_none() {
         // Baton Pass `onHit`: `-fail` without a replacement.
         state.side_mut(side).active[slot].move_result_this_turn = Some(false);
     }
-    if (self_switch || baton)
+    if (self_switch || baton || shed)
         && state.side(side).slot_pokemon(slot).map(|p| p.hp > 0).unwrap_or(false)
         && state.side(side).find_replacement().is_some()
     {
@@ -6515,10 +6571,24 @@ fn apply_boosts(
     // PS `runEvent('TryBoost')`: stat-drop blockers, only for boosts from
     // another pokemon (`if (source && target === source) return`).
     if source_is_foe {
-        let blocks_all = matches!(
-            holder_ability,
-            Abilities::CLEARBODY | Abilities::WHITESMOKE | Abilities::FULLMETALBODY
-        );
+        // Flower Veil `onAllyTryBoost`: Grass types (holder and ally) can't have
+        // stats lowered by others. PS data/abilities.ts flowerveil.
+        let grass = {
+            let m = state.side(side).team_member(idx);
+            m.types.0 == PokemonType::GRASS || m.types.1 == PokemonType::GRASS
+        };
+        let veil = grass
+            && (0..2).any(|sl| {
+                state
+                    .side(side)
+                    .slot_pokemon(sl)
+                    .is_some_and(|p| p.hp > 0 && p.ability == Abilities::FLOWERVEIL)
+            });
+        let blocks_all = veil
+            || matches!(
+                holder_ability,
+                Abilities::CLEARBODY | Abilities::WHITESMOKE | Abilities::FULLMETALBODY
+            );
         for (n, r) in requested.iter_mut().enumerate() {
             let blocked = blocks_all
                 || (n == 0 && holder_ability == Abilities::HYPERCUTTER)
@@ -6962,6 +7032,10 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
         }
     }
     if let Some(old) = state.side(side).active[slot].pokemon_index {
+        if state.side(side).active[slot].power_trick {
+            let pm = state.side_mut(side).team_member_mut(old);
+            std::mem::swap(&mut pm.attack, &mut pm.defense);
+        }
         // `SwitchOut` abilities (PS data/abilities.ts): Regenerator heals
         // floor(baseMaxhp / 3); Natural Cure clears the status.
         {

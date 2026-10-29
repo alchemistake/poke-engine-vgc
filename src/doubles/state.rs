@@ -40,6 +40,8 @@ pub struct ActiveSlot {
     pub force_trapped: bool,
     pub slow_uturn_move: bool,
     pub baton_passing: bool,
+    /// Power Trick is active (Attack and Defense are swapped).
+    pub power_trick: bool,
     /// PS `move.hit` (1-based) of the current hit of a multi-hit move.
     pub hit_number: u8,
     pub shed_tailing: bool,
@@ -228,6 +230,7 @@ impl ActiveSlot {
             force_trapped: false,
             slow_uturn_move: false,
             baton_passing: false,
+            power_trick: false,
             hit_number: 1,
             shed_tailing: false,
             flinched: false,

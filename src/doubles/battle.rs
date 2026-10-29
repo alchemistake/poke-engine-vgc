@@ -2384,6 +2384,7 @@ fn execute_action_inner(
         speeds,
         false,
         false,
+        side_total_fainted(state, side),
     ) > 0.0
         // `damageCallback` moves (Endeavor, ...) are attacks: type immunity applies.
         || (!is_self
@@ -4708,6 +4709,7 @@ fn base_power_with_modifiers(
     fallen: u8,
     steely_spirits: u8,
     avalanche_boosted: bool,
+    total_fainted: u32,
     state: &DoublesState,
 ) -> f32 {
     let dynamic = dynamic_base_power(
@@ -4717,6 +4719,7 @@ fn base_power_with_modifiers(
         speeds,
         avalanche_boosted,
         state.terrain.terrain_type == crate::engine::state::Terrain::ELECTRICTERRAIN,
+        total_fainted,
     );
     let bp = if dynamic > 0.0 { dynamic } else { choice.base_power };
     // (onBasePowerPriority, 4096-based modifier); PS runs higher priority
@@ -4831,6 +4834,16 @@ fn base_power_with_modifiers(
 /// callback; use `choice.base_power`). Reversal / Flail scale with the
 /// user's remaining HP; Hard Press / Crush Grip / Wring Out with the
 /// target's.
+/// PS `side.totalFainted`: fainted members of the battle team.
+fn side_total_fainted(state: &DoublesState, side: Side) -> u32 {
+    let sd = state.side(side);
+    sd.team
+        .iter()
+        .enumerate()
+        .filter(|(i, p)| p.id != crate::pokemon::PokemonName::NONE && p.hp <= 0 && !sd.species_names[*i].is_empty())
+        .count() as u32
+}
+
 fn dynamic_base_power(
     choice: &Choice,
     attacker: &crate::state::Pokemon,
@@ -4843,6 +4856,8 @@ fn dynamic_base_power(
     avalanche_boosted: bool,
     // Electric Terrain is active (Rising Voltage).
     electric_terrain: bool,
+    // PS `side.totalFainted`: Last Respects.
+    total_fainted: u32,
 ) -> f32 {
     use crate::engine::mechanics as m;
     let (att_spe, def_spe) = speeds;
@@ -4863,6 +4878,17 @@ fn dynamic_base_power(
         // Electric Terrain.
         Choices::RISINGVOLTAGE => {
             if electric_terrain && defender.map(|d| d.is_grounded()).unwrap_or(false) {
+                choice.base_power * 2.0
+            } else {
+                choice.base_power
+            }
+        }
+        // PS lastrespects.basePowerCallback: 50 + 50 * side.totalFainted.
+        Choices::LASTRESPECTS => 50.0 + 50.0 * total_fainted as f32,
+        // PS hex.basePowerCallback: doubled on a statused target (or Comatose).
+        Choices::HEX => {
+            let hit = defender.map(|d| d.status != PokemonStatus::NONE || d.ability == Abilities::COMATOSE);
+            if hit.unwrap_or(false) {
                 choice.base_power * 2.0
             } else {
                 choice.base_power
@@ -5261,6 +5287,7 @@ fn compute_hit_damage(
                                 .any(|&(s, t)| s == tidx as u8 && t == state.turn)
                         })
                         .unwrap_or(false),
+                side_total_fainted(state, side),
                 state,
             ),
         };

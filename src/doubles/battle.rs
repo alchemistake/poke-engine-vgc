@@ -3039,6 +3039,26 @@ fn execute_action_inner(
                     Choices::FICKLEBEAM => 0,
                     _ => choice.secondaries.as_ref().map(|v| v.len()).unwrap_or(0),
                 } };
+                // `self.volatileStatus: 'lockedmove'` (Outrage, Thrash, ...) still
+                // applies when the hit lands on a Substitute (PS spreadMoveHit
+                // `self` step); onStart draws trueDuration, onRestart resets.
+                if ti == 0
+                    && choice
+                        .volatile_status
+                        .as_ref()
+                        .is_some_and(|v| v.volatile_status == PokemonVolatileStatus::LOCKEDMOVE && v.target == MoveTarget::User)
+                {
+                    match state.side(side).active[slot].locked_move {
+                        None => {
+                            let t = rng.label("volatile duration").random_range(2, 4) as u8;
+                            state.side_mut(side).active[slot].locked_move = Some((2, t));
+                        }
+                        Some((d, t)) => {
+                            state.side_mut(side).active[slot].locked_move =
+                                if t >= 2 { Some((2, t)) } else { Some((d, t)) };
+                        }
+                    }
+                }
                 for k in 0..rolls {
                     let r = rng.label("secondary").random(100) as f32;
                     // A secondary with `self` (Flame Charge's +1 Speed) still
@@ -4538,6 +4558,31 @@ fn execute_action_inner(
                     Effect::RemoveItem => {
                         // TODO(PS parity): item removal.
                     }
+                }
+            }
+        }
+
+        // Stench `onModifyMove` (priority -1): a damaging move without a flinch
+        // secondary gets one (chance 10), rolled after the move's own entries.
+        // PS data/abilities.ts stench.
+        // TODO(PS parity): Sheer Force order, moves with custom flinch (Fake Out).
+        if state.side(side).team_member(idx).ability == Abilities::STENCH
+            && choice.category != MoveCategory::Status
+            && !sheer_force
+            && !shield_dust
+            && !(side, slot).eq(&(target_side, target_slot))
+            && !choice.secondaries.as_ref().is_some_and(|ss| {
+                ss.iter().any(|e| matches!(e.effect, Effect::Flinch | Effect::VolatileStatus(PokemonVolatileStatus::FLINCH)))
+            })
+        {
+            if rng.label("secondary").random_chance(10, 100) {
+                let inner_focus = state
+                    .side(target_side)
+                    .slot_pokemon(target_slot)
+                    .map(|p| p.ability == Abilities::INNERFOCUS)
+                    .unwrap_or(false);
+                if !state.side(target_side).active[target_slot].focus_punch && !inner_focus {
+                    state.side_mut(target_side).active[target_slot].flinched = true;
                 }
             }
         }
@@ -6352,6 +6397,17 @@ fn apply_on_switch_abilities(
                 _ => {}
             }
         }
+        // Mirror Armor `onBoost`: a drop from another pokemon is reflected onto
+        // the source (unless the stat is already at -6). PS data/abilities.ts.
+        // TODO(PS parity): Mold Breaker, multi-stat drops with some stats at -6.
+        if state.side(foe).team_member(fidx).ability == Abilities::MIRRORARMOR
+            && state.side(foe).team_boosts[fidx as usize].atk > -6
+        {
+            if let Some(src) = state.side(side).active[slot].pokemon_index {
+                apply_boosts(state, side, src, &drop, true);
+            }
+            continue;
+        }
         apply_boosts(state, foe, fidx, &drop, true);
         // Rattled `onAfterBoost`: +1 Speed after an Intimidate Atk drop.
         if ability == Abilities::INTIMIDATE
@@ -7105,6 +7161,11 @@ fn end_of_turn(
     if std::env::var("PE_DEBUG_RES").is_ok() { eprintln!("=== residual ({} handlers) ===", handlers.len()); for h in &handlers { let nm = match &h.kind { ResidualKind::GrassyHeal(sd, sl) | ResidualKind::ThroatChop(sd, sl) | ResidualKind::Stall(sd, sl) => state.side(*sd).active[*sl].pokemon_index.map(|i| state.side(*sd).team_member(i).id.to_string()).unwrap_or_default(), _ => String::new() }; eprintln!("RES order={} sub={} speed={} kind={:?} [{}]", h.order, h.sub_order, h.speed, h.kind, nm); } }
     let handlers = sort_residual_handlers(handlers, rng, "speed tie (residual)");
     for h in handlers {
+        // PS `fieldEvent`: faints are resolved after every handler; once a
+        // side is wiped out the battle has ended and no handler runs.
+        if state.battle_is_over() != 0.0 {
+            return;
+        }
         match h.kind {
             ResidualKind::Marker => {}
             ResidualKind::Weather => {

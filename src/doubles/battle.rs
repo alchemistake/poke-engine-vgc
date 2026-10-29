@@ -5253,6 +5253,11 @@ fn contact_abilities(
     if !choice.flags.contact {
         return;
     }
+    // Long Reach: the attacker's contact moves are non-contact (PS
+    // `onModifyMove` deletes the `contact` flag).
+    if state.side(side).team_member(idx).ability == Abilities::LONGREACH {
+        return;
+    }
     let def_idx = state.side(target_side).active[target_slot].pokemon_index.or_else(|| {
         state
             .unresolved_faints
@@ -7346,6 +7351,8 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
                     pending_switches.push((target_side, target_slot));
                 }
                 // Static: 30% chance to paralyze the attacker on a physical hit.
+                // PS skips the draw when the attacker already has a status
+                // (can't be paralyzed anyway).
                 if defender_ability == Abilities::STATIC
                     && is_physical
                     && outcome.damage > 0

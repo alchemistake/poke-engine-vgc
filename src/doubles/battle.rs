@@ -7391,10 +7391,13 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
             None
         };
         let boots = s.team_member(idx).item == crate::engine::items::Items::HEAVYDUTYBOOTS;
+        // Magic Guard blocks indirect (non-move) damage, hazards included
+        // (PS data/abilities.ts magicguard.onDamage).
+        let magic_guard = s.team_member(idx).ability == Abilities::MAGICGUARD;
         let grounded = s.team_member(idx).is_grounded() || gravity_on;
         // Stealth Rock `onSwitchIn`: maxhp * 2^typeMod / 8 (`damage` truncates,
         // min 1). Applied before Spikes (side-condition insertion order).
-        let rock_dmg = if s.side_conditions.stealth_rock > 0 && !boots {
+        let rock_dmg = if s.side_conditions.stealth_rock > 0 && !boots && !magic_guard {
             let mult = crate::engine::damage_calc::type_effectiveness_modifier(
                 &PokemonType::ROCK,
                 s.team_member(idx),
@@ -7403,7 +7406,7 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
         } else {
             0
         };
-        let spikes_dmg = if grounded && spikes > 0 && !boots {
+        let spikes_dmg = if grounded && spikes > 0 && !boots && !magic_guard {
             let mult = [0, 3, 4, 6][spikes.min(3) as usize];
             ((s.team_member(idx).maxhp as i32 * mult / 24) as i16).max(1)
         } else {
@@ -8070,17 +8073,11 @@ fn end_of_turn(
                         continue;
                     }
                     let Some(idx) = state.side(side).active[slot].pokemon_index else { continue };
-                    // Semi-invulnerable (Dig / Fly / Bounce / Dive / Sink /
-                    // Sky Drop charge turn): immune to sandstorm (PS
-                    // `runStatusImmunity` -> `Immunity` event).
-                    // Phantom Force is NOT semi-invulnerable (hidden only).
+                    // Dig / Dive charge turn: immune to sandstorm (PS
+                    // data/moves.ts dig / dive `condition.onImmunity`). Fly,
+                    // Bounce and Sky Drop have no such handler, so they take it.
                     if let Some((mv, _)) = &state.side(side).active[slot].charging {
-                        if matches!(mv,
-                            crate::choices::Choices::DIG
-                            | crate::choices::Choices::FLY
-                            | crate::choices::Choices::BOUNCE
-                            | crate::choices::Choices::DIVE
-                            | crate::choices::Choices::SKYDROP) {
+                        if matches!(mv, crate::choices::Choices::DIG | crate::choices::Choices::DIVE) {
                             continue;
                         }
                     }

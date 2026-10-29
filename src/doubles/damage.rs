@@ -99,6 +99,8 @@ pub struct DamageCtx {
     /// The attacker ability's ModifyAtk / ModifySpA modifier (4096 = none),
     /// from `mechanics::attacker_stat_modifier`.
     pub attack_mod: i64,
+    /// The defender ability's ModifyDef / ModifySpD modifier (4096 = none).
+    pub defense_mod: i64,
     /// Extra critical-hit stages (Focus Energy +2).
     pub crit_bonus: i32,
     /// Effective base power after multiplier effects (Helping Hand);
@@ -164,7 +166,10 @@ pub fn calculate_damage(
     if ctx.attack_mod != 4096 {
         attack = ((attack as i64 * ctx.attack_mod + 2047) / 4096) as i16;
     }
-    let defense = crate::engine::mechanics::boost_stat(def_b, ctx.defense_base).max(1);
+    let mut defense = crate::engine::mechanics::boost_stat(def_b, ctx.defense_base).max(1);
+    if ctx.defense_mod != 4096 {
+        defense = ((defense as i64 * ctx.defense_mod + 2047) / 4096) as i16;
+    }
 
     // Fickle Beam (PS `onBasePower`, drawn in the BasePower event after
     // the crit roll): 30% chance of double power.

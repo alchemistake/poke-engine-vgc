@@ -253,6 +253,7 @@ pub fn on_damaging_hit_boosts(defender_ability: Abilities, choice: &Choice) -> O
         #[cfg(any(feature = "champions", feature = "gen9", feature = "gen8", feature = "gen7"))]
         Abilities::WATERCOMPACTION if t == PokemonType::WATER => Some(b(0, 2, 0)),
         Abilities::JUSTIFIED if t == PokemonType::DARK => Some(b(1, 0, 0)),
+        Abilities::RATTLED if matches!(t, PokemonType::DARK | PokemonType::BUG | PokemonType::GHOST) => Some(b(0, 0, 1)),
         _ => None,
     }
 }

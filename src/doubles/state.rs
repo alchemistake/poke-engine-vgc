@@ -85,6 +85,10 @@ pub struct ActiveSlot {
     /// `yawn` volatile: remaining duration (0 = none) and the user who
     /// applied it (for the sleep `trySetStatus` when it ends).
     pub yawn: u8,
+    /// `throatchop` volatile: remaining duration (sound moves blocked).
+    pub throat_chop: u8,
+    /// Set while a move is run through `useMove` (Copycat): no PP, no BeforeMove.
+    pub external_call: bool,
     /// Beat Up: base power for the current hit / the remaining hits' base powers.
     pub bp_fixed: f32,
     pub beat_up_queue: Vec<f32>,
@@ -200,6 +204,8 @@ impl ActiveSlot {
             stats_raised_this_turn: false,
             partial_trap: None,
             yawn: 0,
+            throat_chop: 0,
+            external_call: false,
             bp_fixed: 0.0,
             beat_up_queue: Vec::new(),
             fallen: 0,
@@ -279,6 +285,12 @@ pub struct DoublesSide {
     /// PS `side.pokemon` order (team indices). Switch-ins swap positions
     /// (PS `switchIn`); random drag-ins sample from positions 2.. of it.
     pub ps_order: [usize; 6],
+    /// Team member that fainted in an active slot this turn and is still
+    /// sitting there (PS keeps fainted actives in `side.active` until they
+    /// are replaced; their volatiles are cleared on faint, but status /
+    /// ability / slot-condition / field handlers stay in the Residual sort).
+    /// `(team index, the occupant's stall volatile)`. Cleared on switch-in.
+    pub fainted_in_slot: [Option<(PokemonIndex, Option<(u16, u8)>)>; 2],
     /// Wish slot condition per position: (heal amount, residuals seen).
     pub wish: [Option<(i16, u8)>; 2],
     /// `futuremove` slot condition per position: (move, source side, source index, residuals seen).
@@ -372,6 +384,8 @@ impl DoublesSide {
 
 #[derive(Debug, Clone)]
 pub struct DoublesState {
+    /// PS `battle.lastMove`: the last move used by anyone (Copycat).
+    pub last_move: Option<Choices>,
     pub side_one: DoublesSide,
     pub side_two: DoublesSide,
     pub weather: StateWeather,
@@ -804,6 +818,7 @@ fn build_pokemon(m: &TeamMember) -> Pokemon {
         mega_evolved: false,
         terastallized: false,
         tera_type: PokemonType::NORMAL,
+        attacked_by: Vec::new(),
         moves: crate::state::PokemonMoves {
             m0: crate::state::Move {
                 id: moves[0].id,
@@ -865,6 +880,7 @@ impl DoublesState {
             toxic_stage: [0; 6],
             speed_cache: [0; 6],
             ps_order: [0, 1, 2, 3, 4, 5],
+            fainted_in_slot: [None, None],
             wish: [None, None],
             future_move: [None, None],
             sc_order: Vec::new(),
@@ -880,6 +896,7 @@ impl DoublesState {
             toxic_stage: [0; 6],
             speed_cache: [0; 6],
             ps_order: [0, 1, 2, 3, 4, 5],
+            fainted_in_slot: [None, None],
             wish: [None, None],
             future_move: [None, None],
             sc_order: Vec::new(),
@@ -899,6 +916,7 @@ impl DoublesState {
             side_two.genders[i] = m.gender.clone();
         }
         let state = Self {
+            last_move: None,
             side_one,
             side_two,
             weather: StateWeather {

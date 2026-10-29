@@ -172,6 +172,10 @@ fn faint_pokemon(state: &mut DoublesState, side: Side, slot: usize) {
         }
         // The status stays until PS `checkFainted` (end of turn, only for a
         // side that can still switch) sets it to 'fnt'; see `check_fainted`.
+        // PS keeps the fainted pokemon in the slot until its replacement
+        // switches in; remember it (plus its stall slot condition) so the
+        // Residual sort still lists its handlers.
+        s.fainted_in_slot[slot] = Some((idx, s.active[slot].stall));
         s.active[slot] = ActiveSlot::empty();
     }
 }
@@ -1095,6 +1099,9 @@ fn execute_action(
     let order_len = move_order.len();
     state.side_mut(action.side).active[action.slot].move_result_this_turn = None;
     execute_action_inner(state, rng, action, move_order, will_act, queue);
+    if move_order.len() > order_len {
+        state.last_move = Some(action.choice.move_id);
+    }
     // charge `onAfterMove` / `onMoveAborted`: an Electric move uses it up.
     if action.choice.move_type == PokemonType::ELECTRIC && action.choice.move_id != Choices::CHARGE {
         state.side_mut(action.side).active[action.slot].charge = false;
@@ -1169,8 +1176,9 @@ fn execute_action_inner(
         ))
     };
 
+    let external = state.side(side).active[slot].external_call;
     // Deduct PP (pokemon-showdown deducts before the move runs).
-    {
+    if !external {
         let s = state.side_mut(side);
         if let Some(p) = s.active[slot].pokemon_index {
             let mv = &mut s.team_member_mut(p).moves[&action.choice.move_index];
@@ -1216,6 +1224,8 @@ fn execute_action_inner(
             if ts == side { -(tsl as i8 + 1) } else { tsl as i8 + 1 };
     }
 
+    // `useMove` (external) skips the BeforeMove step entirely.
+    if !external {
     // A pokemon that must recharge (Hyper Beam / Solar Beam) cannot act.
     // No PRNG draw (PS `mustrecharge.onBeforeMove` returns false).
     if state.side(side).active[slot].recharging {
@@ -1273,6 +1283,11 @@ fn execute_action_inner(
         return;
     }
 
+    // Throat Chop `onBeforeMove` (priority 6): sound moves are blocked.
+    if state.side(side).active[slot].throat_chop > 0 && action.choice.flags.sound {
+        return;
+    }
+
     // Taunt `onBeforeMove` (priority 5): Status moves are blocked.
     if state.side(side).active[slot].taunt > 0 && action.choice.category == MoveCategory::Status {
         return;
@@ -1319,6 +1334,7 @@ fn execute_action_inner(
     // fails with `|cant|` if the user was hit by a damaging move this turn.
     if action.choice.move_id == Choices::FOCUSPUNCH && state.side(side).active[slot].lost_focus {
         return;
+    }
     }
 
     // PS `onModifyType` / `onModifyMove` for moves whose type and power
@@ -1863,6 +1879,7 @@ fn execute_action_inner(
         state.side(side).team_member(idx),
         state.side(target_side).slot_pokemon(target_slot),
         speeds,
+        false,
     ) > 0.0
     {
         1.0
@@ -1988,13 +2005,21 @@ fn execute_action_inner(
         }
     }
 
+    // Weather `onModifyAccuracy`: Thunder always hits in rain, Fire Blast in
+    // sun (accuracy becomes `true`: no roll at all).
+    let weather_guaranteed = matches!(
+        (choice.move_id, state.weather.weather_type),
+        (Choices::THUNDER, Weather::RAIN | Weather::HEAVYRAIN)
+            | (Choices::FIREBLAST, Weather::SUN | Weather::HARSHSUN)
+    );
+
     // Accuracy roll (drawn even at 100%; skipped for always-hit / 0.0).
     if std::env::var("PE_DEBUG_DMG").is_ok() {
         eprintln!("REACHED_ACC {} {} target_slot={} has_target={}", name, choice.move_id, target_slot, has_target);
     }
     if is_spread {
         // PS `hitStepAccuracy`: one roll per target, in target order.
-        if !choice.always_hit && !toxic_hits && choice.accuracy > 0.0 {
+        if !choice.always_hit && !toxic_hits && !weather_guaranteed && choice.accuracy > 0.0 {
             let ab = state.side(side).slot_boosts(slot).map(|b| b.acc).unwrap_or(0);
             let user_no_guard = state.side(side).team_member(idx).ability == Abilities::NOGUARD;
             let st = &*state;
@@ -2016,7 +2041,9 @@ fn execute_action_inner(
         target_side = spread_list[0].0;
         target_slot = spread_list[0].1;
     } else if !choice.always_hit
+        && move_ty != "all"
         && !toxic_hits
+        && !weather_guaranteed
         && choice.accuracy > 0.0
         && !(state.side(side).team_member(idx).ability == Abilities::NOGUARD
             || state
@@ -2094,6 +2121,7 @@ fn execute_action_inner(
     let mut hits_done = 0u32;
     let mut drop_landed = false;
     let mut extra_order: Vec<String> = Vec::new();
+    let mut copy_move: Option<Choices> = None;
     let mut berserk_before: Vec<(Side, usize, i16)> = Vec::new();
 
     for _ in 0..hit_count {
@@ -2221,6 +2249,8 @@ fn execute_action_inner(
             // Endure `onDamage` (priority -10): a move that would KO leaves 1 HP.
             let damage = match state.side(target_side).slot_pokemon(target_slot) {
                 Some(d) if state.side(target_side).active[target_slot].endure && damage >= d.hp && d.hp > 0 => d.hp - 1,
+                // Sturdy `onDamage` (priority -30): a full-HP holder survives a KO at 1 HP.
+                Some(d) if d.ability == Abilities::STURDY && d.hp == d.maxhp && damage >= d.hp && d.hp > 0 => d.hp - 1,
                 _ => damage,
             };
             // PS damage dealt is capped by the target's remaining HP (drain,
@@ -2231,6 +2261,34 @@ fn execute_action_inner(
             };
             if damage > 0 {
                 state.side_mut(target_side).active[target_slot].illusion_broken = true;
+                // PS `gotAttacked`: record the attacker in `attackedBy`
+                // (Avalanche's base power check).
+                let turn_now = state.turn;
+                if let Some(tidx) = state.side(target_side).active[target_slot].pokemon_index {
+                    state
+                        .side_mut(target_side)
+                        .team_member_mut(tidx)
+                        .attacked_by
+                        .push((idx as u8, turn_now));
+                    // Toxic Debris `onDamagingHit`: a physical hit on the
+                    // holder adds a Toxic Spikes layer to the attacker's side
+                    // (no third layer).
+                    if state.side(target_side).team_member(tidx).ability == Abilities::TOXICDEBRIS
+                        && choice.category == MoveCategory::Physical
+                    {
+                        let spikes_side = if target_side == side {
+                            side.other()
+                        } else {
+                            side
+                        };
+                        if state.side(spikes_side).side_conditions.toxic_spikes < 2 {
+                            state
+                                .side_mut(spikes_side)
+                                .side_conditions
+                                .toxic_spikes += 1;
+                        }
+                    }
+                }
             }
             // Anger Point `onHit`: a critical hit maxes Attack.
             if was_crit {
@@ -2244,8 +2302,10 @@ fn execute_action_inner(
             }
             if damage > 0 && apply_damage(state, target_side, target_slot, damage) {
                 // Target fainted. `onSourceAfterFaint` (Moxie, Chilling / Grim
-                // Neigh) boosts the attacker if it is still on the field.
-                if target_side != side {
+                // Neigh) boosts the attacker if it is still on the field. A
+                // faint that ends the battle runs `checkWin` first, so no
+                // `AfterFaint` (and no boost) happens.
+                if target_side != side && state.battle_is_over() == 0.0 {
                     let ab = state.side(side).team_member(idx).ability;
                     let b = match ab {
                         Abilities::MOXIE | Abilities::CHILLINGNEIGH => Some(StatBoosts { attack: 1, ..Default::default() }),
@@ -2426,8 +2486,9 @@ fn execute_action_inner(
                     (pm.maxhp as f32 * h.amount).round() as i16
                 };
                 if amount < 0 {
-                    // Memento / Healing Wish style self-KO (`selfdestruct`).
-                    let hp = pm.hp;
+                    // Memento style self-KO (-1.0) or Steel Beam / Mind Blown
+                    // recoil (`mindBlownRecoil`: round(maxhp / 2)).
+                    let hp = if h.amount <= -1.0 { pm.hp } else { -amount };
                     let _ = pm;
                     apply_damage(state, ts, tslot, hp);
                 } else {
@@ -2809,6 +2870,16 @@ fn execute_action_inner(
             }
         }
 
+        // Copycat `onHit`: `useMove(lastMove)` unless it has `failcopycat`.
+        if choice.move_id == Choices::COPYCAT && ti == 0 {
+            const FAIL: &[&str] = &["banefulbunker", "beakblast", "belch", "behemothbash", "behemothblade", "blazingtorque", "burningbulwark", "celebrate", "combattorque", "dynamaxcannon", "holdhands", "kingsshield", "magicaltorque", "metronome", "mimic", "noxioustorque", "protect", "shelltrap", "sketch", "spikyshield", "terastarstorm", "wickedtorque", "assist", "bestow", "chatter", "circlethrow", "copycat", "counter", "covet", "destinybond", "detect", "dragontail", "endure", "feint", "focuspunch", "followme", "helpinghand", "mefirst", "mirrormove", "naturepower", "ragepowder", "roar", "snatch", "sleeptalk", "spotlight", "struggle", "switcheroo", "thief", "transform", "trick", "whirlwind", "matblock"];
+            match state.last_move {
+                Some(m) if !FAIL.contains(&m.to_string().to_lowercase().as_str()) => copy_move = Some(m),
+                Some(_) => move_failed = true,
+                None => {}
+            }
+        }
+
         // Haze `onHitField`: clear every active pokemon's stat stages.
         if choice.move_id == Choices::HAZE && ti == 0 {
             for sd in [Side::One, Side::Two] {
@@ -2817,6 +2888,26 @@ fn execute_action_inner(
                         state.side_mut(sd).clear_member_boosts(ai);
                     }
                 }
+            }
+        }
+
+        // Guard Swap `onHit`: swap Def / SpD stat stages with the target.
+        if choice.move_id == Choices::GUARDSWAP && ti == 0 {
+            if let Some(tidx) = state.side(target_side).active[target_slot].pokemon_index {
+                let (d1, s1) = {
+                    let sb = &state.side(side).team_boosts[idx as usize];
+                    (sb.def, sb.spd)
+                };
+                let (d2, s2) = {
+                    let sb = &state.side(target_side).team_boosts[tidx as usize];
+                    (sb.def, sb.spd)
+                };
+                let sb = &mut state.side_mut(side).team_boosts[idx as usize];
+                sb.def = d2;
+                sb.spd = s2;
+                let tb = &mut state.side_mut(target_side).team_boosts[tidx as usize];
+                tb.def = d1;
+                tb.spd = s1;
             }
         }
 
@@ -2893,6 +2984,44 @@ fn execute_action_inner(
             } else if !apply_side_condition(state, cs, sc.condition) {
                 move_failed = true;
             }
+        }
+
+        // Court Change (`onHitField`): swap the listed side conditions between
+        // the two sides. (PS list: mist, lightscreen, reflect, spikes,
+        // safeguard, tailwind, toxicspikes, stealthrock, stickyweb,
+        // auroraveil, luckychant, ...; pledges / guard / crafty shield are
+        // not swapped.)
+        if choice.move_id == Choices::COURTCHANGE {
+            let a = state.side(side).side_conditions.clone();
+            let b = state.side(side.other()).side_conditions.clone();
+            state.side_mut(side).side_conditions = crate::state::SideConditions {
+                mist: b.mist,
+                light_screen: b.light_screen,
+                reflect: b.reflect,
+                spikes: b.spikes,
+                safeguard: b.safeguard,
+                tailwind: b.tailwind,
+                toxic_spikes: b.toxic_spikes,
+                stealth_rock: b.stealth_rock,
+                sticky_web: b.sticky_web,
+                aurora_veil: b.aurora_veil,
+                lucky_chant: b.lucky_chant,
+                ..a
+            };
+            state.side_mut(side.other()).side_conditions = crate::state::SideConditions {
+                mist: a.mist,
+                light_screen: a.light_screen,
+                reflect: a.reflect,
+                spikes: a.spikes,
+                safeguard: a.safeguard,
+                tailwind: a.tailwind,
+                toxic_spikes: a.toxic_spikes,
+                stealth_rock: a.stealth_rock,
+                sticky_web: a.sticky_web,
+                aurora_veil: a.aurora_veil,
+                lucky_chant: a.lucky_chant,
+                ..b
+            };
         }
 
         // Weather / terrain / pseudo-weather.
@@ -3003,12 +3132,22 @@ fn execute_action_inner(
                 }
                 true
             }
+            Choices::THROATCHOP => {
+                // secondary { chance 100, onHit: addVolatile('throatchop') } (duration 2).
+                let _ = rng.label("secondary").random(100);
+                if slot_alive(state, target_side, target_slot)
+                    && state.side(target_side).active[target_slot].substitute_health <= 0
+                    && state.side(target_side).active[target_slot].throat_chop == 0
+                {
+                    state.side_mut(target_side).active[target_slot].throat_chop = 2;
+                }
+                true
+            }
             // TODO(PS parity): trapping (Spirit Shackle), Throat Chop's sound
             // lock, Eerie Spell's PP cut, Psychic Noise's Heal Block. The
             // roll is consumed; hazards for Ceaseless Edge / Stone Axe are
             // applied via `side_condition` above.
             Choices::SPIRITSHACKLE
-            | Choices::THROATCHOP
             | Choices::EERIESPELL
             | Choices::PSYCHICNOISE
             | Choices::CEASELESSEDGE
@@ -3253,6 +3392,18 @@ fn execute_action_inner(
 
     push_order();
     move_order.extend(extra_order);
+    // Copycat's `useMove`: run the copied move as an external call.
+    if let Some(m) = copy_move {
+        if let Some(mc) = MOVES.get(&m).cloned() {
+            let mut sub = action.clone();
+            sub.choice = mc;
+            sub.target = 0;
+            sub.target_loc = 0;
+            state.side_mut(side).active[slot].external_call = true;
+            execute_action_inner(state, rng, &sub, move_order, will_act, queue);
+            state.side_mut(side).active[slot].external_call = false;
+        }
+    }
 }
 
 /// PS `flags.bypasssub` (champions data): the move ignores a Substitute.
@@ -3377,8 +3528,11 @@ fn base_power_with_modifiers(
     terrain: crate::engine::state::Terrain,
     ate_boosted: bool,
     fallen: u8,
+    steely_spirits: u8,
+    avalanche_boosted: bool,
+    state: &DoublesState,
 ) -> f32 {
-    let dynamic = dynamic_base_power(choice, attacker, Some(defender), speeds);
+    let dynamic = dynamic_base_power(choice, attacker, Some(defender), speeds, avalanche_boosted);
     let bp = if dynamic > 0.0 { dynamic } else { choice.base_power };
     // (onBasePowerPriority, 4096-based modifier); PS runs higher priority
     // first. Values from data/abilities.ts / data/moves.ts `onBasePower`.
@@ -3416,6 +3570,12 @@ fn base_power_with_modifiers(
     if ate_boosted {
         mods.push((23, 4915));
     }
+    // steelyspirit.onAllyBasePower (priority 22): x1.5 per holder (user or ally).
+    if choice.move_type == PokemonType::STEEL {
+        for _ in 0..steely_spirits {
+            mods.push((22, 6144));
+        }
+    }
     // Facade (`onBasePower`): x2 when the user has a non-sleep status.
     if choice.move_id == Choices::FACADE
         && matches!(
@@ -3428,6 +3588,36 @@ fn base_power_with_modifiers(
         )
     {
         mods.push((0, 8192));
+    }
+    // solarbeam / solarblade `onBasePower` (default priority): x0.5 in
+    // rain / sandstorm / hail / snow (`pokemon.effectiveWeather()`, so Cloud
+    // Nine / Air Lock suppression and the user's Mega Sol apply).
+    if matches!(choice.move_id, Choices::SOLARBEAM | Choices::SOLARBLADE) {
+        let weather = state.weather.weather_type;
+        let weakening = matches!(
+            weather,
+            Weather::RAIN
+                | Weather::HEAVYRAIN
+                | Weather::SAND
+                | Weather::HAIL
+                | Weather::SNOW
+        );
+        let suppressed = [Side::One, Side::Two]
+            .iter()
+            .flat_map(|s| (0..2).map(move |sl| (*s, sl)))
+            .any(|(s, sl)| {
+                state
+                    .side(s)
+                    .slot_pokemon(sl)
+                    .map(|p| {
+                        p.hp > 0
+                            && (p.ability == Abilities::CLOUDNINE || p.ability == Abilities::AIRLOCK)
+                    })
+                    .unwrap_or(false)
+            });
+        if weakening && !suppressed && attacker.ability != Abilities::MEGASOL {
+            mods.push((0, 2048));
+        }
     }
     if let Some(m) = crate::engine::mechanics::terrain_base_power_modifier(terrain, choice, attacker, defender) {
         mods.push((6, m));
@@ -3461,6 +3651,9 @@ fn dynamic_base_power(
     // PS `getStat('spe')` of attacker and defender (boosts + modifiers, no
     // Trick Room): Electro Ball / Gyro Ball.
     speeds: (i32, i32),
+    // PS avalanche.basePowerCallback: doubled when the target damaged the
+    // user this turn.
+    avalanche_boosted: bool,
 ) -> f32 {
     use crate::engine::mechanics as m;
     let (att_spe, def_spe) = speeds;
@@ -3477,6 +3670,7 @@ fn dynamic_base_power(
                 55.0
             }
         }
+        Choices::AVALANCHE if avalanche_boosted => choice.base_power * 2.0,
         Choices::ELECTROBALL => m::electro_ball_power(att_spe, def_spe),
         Choices::GYROBALL => m::gyro_ball_power(att_spe, def_spe),
         Choices::GRASSKNOT | Choices::LOWKICK => m::grass_knot_power(defender.map(def_hg).unwrap_or(1)),
@@ -3774,6 +3968,26 @@ fn compute_hit_damage(
                 state.terrain.terrain_type,
                 ate_boosted,
                 state.side(side).active[slot].fallen,
+                (0..2)
+                    .filter(|&sl| {
+                        state.side(side).slot_pokemon(sl).map(|p| p.hp > 0 && p.ability == Abilities::STEELYSPIRIT).unwrap_or(false)
+                    })
+                    .count() as u8,
+                // PS avalanche.basePowerCallback: doubled when the target
+                // damaged the user this turn (`attackedBy` `thisTurn`).
+                choice.move_id == Choices::AVALANCHE
+                    && state
+                        .side(target_side)
+                        .active[target_slot]
+                        .pokemon_index
+                        .map(|tidx| {
+                            attacker
+                                .attacked_by
+                                .iter()
+                                .any(|&(s, t)| s == tidx as u8 && t == state.turn)
+                        })
+                        .unwrap_or(false),
+                state,
             ),
         };
         let mut ctx = ctx;
@@ -4452,7 +4666,10 @@ fn switch_in(state: &mut DoublesState, side: Side, slot: usize, position: usize)
     };
     let s = state.side_mut(side);
     s.active[slot] = ActiveSlot::empty();
+    s.fainted_in_slot[slot] = None;
     if alive {
+        // PS `setSpecies` (switch-in): `attackedBy = []`.
+        s.team_member_mut(idx).attacked_by.clear();
         s.active[slot].pokemon_index = Some(idx);
         let boots = s.team_member(idx).item == crate::engine::items::Items::HEAVYDUTYBOOTS;
         let grounded = s.team_member(idx).is_grounded();
@@ -4540,6 +4757,8 @@ enum ResidualKind {
     Weather,
     /// brn / psn / tox `onResidual`.
     Status(Side, usize),
+    /// `throatchop` duration countdown (order 22).
+    ThroatChop(Side, usize),
     /// `taunt` duration countdown (order 15).
     Taunt(Side, usize),
     /// Healer / Shed Skin `onResidual` (order 5, subOrder 3).
@@ -4639,19 +4858,27 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             }
         }
         for slot in 0..2 {
-            let a = &state.side(side).active[slot];
-            let Some(idx) = a.pokemon_index else { continue };
-            let p = state.side(side).team_member(idx);
-            if p.hp <= 0 {
-                continue;
-            }
-            let speed = cached_speed(state, side, slot);
+            let s = state.side(side);
+            let a = &s.active[slot];
+            let (idx, speed, alive) = match a.pokemon_index {
+                Some(i) => (i, cached_speed(state, side, slot), true),
+                None => match s.fainted_in_slot[slot] {
+                    // PS keeps the fainted pokemon in the slot (and in the
+                    // Residual sort) until its replacement switches in. Its
+                    // volatiles were cleared on faint; only status / ability /
+                    // slot-condition / field handlers remain, all of them
+                    // skipped at run time.
+                    Some((fi, _)) => (fi, s.speed_cache[fi as usize] as i32, false),
+                    None => continue,
+                },
+            };
+            let p = s.team_member(idx);
             // futuremove slot condition (`onResidualOrder` 3).
-            if state.side(side).future_move[slot].is_some() {
+            if s.future_move[slot].is_some() {
                 push(3, speed, 2, ResidualKind::FutureMove(side, slot));
             }
             // Wish slot condition (`onResidualOrder` 4).
-            if state.side(side).wish[slot].is_some() {
+            if s.wish[slot].is_some() {
                 push(4, speed, 2, ResidualKind::Wish(side, slot));
             }
             // Status (effectType 'Status': subOrder 0).
@@ -4661,6 +4888,27 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
                     push(9, speed, 0, ResidualKind::Status(side, slot))
                 }
                 _ => {}
+            }
+            if !alive {
+                // `stall` slot condition (saved with the fainted occupant).
+                if s.fainted_in_slot[slot].map(|st| st.1.is_some()).unwrap_or(false) {
+                    push(NO_ORDER, speed, 2, ResidualKind::Stall(side, slot));
+                }
+                // Abilities (subOrder 7 unless set).
+                if matches!(p.ability, Abilities::HEALER | Abilities::SHEDSKIN) {
+                    push(5, speed, 3, ResidualKind::CureStatus(side, slot));
+                }
+                if p.ability == Abilities::MOODY {
+                    push(28, speed, 2, ResidualKind::Moody(side, slot));
+                }
+                if p.ability == Abilities::SPEEDBOOST {
+                    push(28, speed, 2, ResidualKind::SpeedBoost(side, slot));
+                }
+                // Grassy Terrain heal (`onResidualOrder` 5, subOrder 2).
+                if state.terrain.terrain_type == crate::engine::state::Terrain::GRASSYTERRAIN {
+                    push(5, speed, 2, ResidualKind::GrassyHeal(side, slot));
+                }
+                continue;
             }
             // Volatiles with a duration (Conditions: subOrder 2, no order).
             if let Some((m, _)) = a.charging {
@@ -4706,6 +4954,9 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             }
             if a.yawn > 0 {
                 push(23, speed, 2, ResidualKind::Yawn(side, slot));
+            }
+            if a.throat_chop > 0 {
+                push(22, speed, 2, ResidualKind::ThroatChop(side, slot));
             }
             if a.taunt > 0 {
                 push(15, speed, 2, ResidualKind::Taunt(side, slot));
@@ -4828,6 +5079,8 @@ fn sorted_actives(state: &DoublesState, rng: &mut Gen5Rng, label: &'static str) 
         } else if let Some(&(_, _, idx)) =
             state.unresolved_faints.iter().find(|(fs, fsl, _)| *fs == s && *fsl == sl)
         {
+            // A pokemon that fainted in the current hit loop still counts
+            // until faints are resolved (`unresolved_faints`).
             state.side(s).speed_cache[idx as usize] as i32
         } else {
             continue;
@@ -4849,6 +5102,64 @@ fn sorted_actives(state: &DoublesState, rng: &mut Gen5Rng, label: &'static str) 
         .collect()
 }
 
+/// End-of-turn `DisableMove` event tie draws (see `end_turn_disable_moves`
+/// call site). Consumes the PRNG draws PS's `speedSort` makes when a pokemon
+/// has more than one `onDisableMove` handler (Taunt + Throat Chop, ...).
+fn end_turn_disable_moves(state: &DoublesState, rng: &mut Gen5Rng) {
+    for (s, sl) in [(Side::One, 0usize), (Side::One, 1), (Side::Two, 0), (Side::Two, 1)] {
+        let ss = state.side(s);
+        let Some(xidx) = ss.active[sl].pokemon_index else { continue };
+        // (order, speed, subOrder); every onDisableMove handler has order
+        // `false` (4294967296) and priority 0; Conditions are subOrder 2,
+        // Abilities 7.
+        let mut hs: Vec<(i64, i32, i64)> = Vec::new();
+        let speed = cached_speed(state, s, sl);
+        let a = &ss.active[sl];
+        if a.taunt > 0 {
+            hs.push((4294967296, speed, 2));
+        }
+        if a.throat_chop > 0 {
+            hs.push((4294967296, speed, 2));
+        }
+        if a.disabled.is_some() {
+            hs.push((4294967296, speed, 2));
+        }
+        // TODO(PS parity): encore / torment / healblock / choicelock / belch /
+        // stuffcheeks volatiles, Imprison `onFoeDisableMove`.
+        if ss.team_member(xidx).ability == Abilities::GORILLATACTICS {
+            hs.push((4294967296, speed, 7));
+        }
+        if state.gravity.active {
+            hs.push((4294967296, 0, 2));
+        }
+        if hs.len() < 2 {
+            continue;
+        }
+        // `speedSort` over the handlers: shuffle every exact tie group.
+        let key = |e: &(i64, i32, i64)| (e.0, -(e.1 as i64), e.2);
+        let mut sorted = 0usize;
+        while sorted + 1 < hs.len() {
+            let mut next_indexes = vec![sorted];
+            for i in (sorted + 1)..hs.len() {
+                match key(&hs[i]).cmp(&key(&hs[next_indexes[0]])) {
+                    std::cmp::Ordering::Less => next_indexes = vec![i],
+                    std::cmp::Ordering::Equal => next_indexes.push(i),
+                    std::cmp::Ordering::Greater => {}
+                }
+            }
+            for (i, &index) in next_indexes.iter().enumerate() {
+                if index != sorted + i {
+                    hs.swap(sorted + i, index);
+                }
+            }
+            if next_indexes.len() > 1 {
+                shuffle(&mut hs, sorted, sorted + next_indexes.len(), rng, "speed tie (move order)");
+            }
+            sorted += next_indexes.len();
+        }
+    }
+}
+
 /// End-of-turn processing, mirroring pokemon-showdown's `update()`:
 /// resolve faints (already done on damage), apply residual status/weather
 /// damage to the actives in speed order, switch in replacements (with
@@ -4861,6 +5172,7 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
     // `runAction('residual')` -> `updateSpeed()` first.
     update_speed(state);
     let handlers = collect_residual_handlers(state);
+    if std::env::var("PE_DEBUG_RES").is_ok() { eprintln!("=== residual ({} handlers) ===", handlers.len()); for h in &handlers { let nm = match &h.kind { ResidualKind::GrassyHeal(sd, sl) | ResidualKind::ThroatChop(sd, sl) | ResidualKind::Stall(sd, sl) => state.side(*sd).active[*sl].pokemon_index.map(|i| state.side(*sd).team_member(i).id.to_string()).unwrap_or_default(), _ => String::new() }; eprintln!("RES order={} sub={} speed={} kind={:?} [{}]", h.order, h.sub_order, h.speed, h.kind, nm); } }
     let handlers = sort_residual_handlers(handlers, rng, "speed tie (residual)");
     for h in handlers {
         match h.kind {
@@ -4922,6 +5234,10 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
             if dmg > 0 {
                 apply_damage(state, side, slot, dmg);
             }
+            }
+            ResidualKind::ThroatChop(side, slot) => {
+                let a = &mut state.side_mut(side).active[slot];
+                a.throat_chop = a.throat_chop.saturating_sub(1);
             }
             ResidualKind::Taunt(side, slot) => {
                 let a = &mut state.side_mut(side).active[slot];
@@ -5258,6 +5574,12 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
     if !pending_switches.is_empty() {
         each_event_update(state, rng);
     }
+
+    // PS `endTurn`: `runEvent('DisableMove', pokemon)` for every active. The
+    // handler list (the pokemon's own `onDisableMove` volatiles / ability,
+    // foes' `onFoeDisableMove` (Imprison), the field's Gravity) is
+    // speed-sorted, shuffling ties (a PRNG draw per tie group).
+    end_turn_disable_moves(state, rng);
 
     // Tick down durations.
 

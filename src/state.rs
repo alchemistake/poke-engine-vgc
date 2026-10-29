@@ -873,6 +873,10 @@ pub struct Pokemon {
     pub mega_evolved: bool,
     pub terastallized: bool,
     pub tera_type: PokemonType,
+    /// PS `pokemon.attackedBy`: `(source team index, turn)` for each move
+    /// that dealt this pokemon > 0 damage. Avalanche's base power doubles
+    /// when the target damaged the user this turn. Cleared on switch-in.
+    pub attacked_by: Vec<(u8, u32)>,
     pub moves: PokemonMoves,
 }
 
@@ -902,6 +906,7 @@ impl Default for Pokemon {
             mega_evolved: false,
             terastallized: false,
             tera_type: PokemonType::NORMAL,
+            attacked_by: Vec::new(),
             moves: PokemonMoves {
                 m0: Default::default(),
                 m1: Default::default(),
@@ -1048,6 +1053,7 @@ impl Pokemon {
             mega_evolved: split[26].parse::<bool>().unwrap(),
             terastallized: split[27].parse::<bool>().unwrap(),
             tera_type: PokemonType::from_str(split[28]).unwrap(),
+            attacked_by: Vec::new(),
         }
     }
 }

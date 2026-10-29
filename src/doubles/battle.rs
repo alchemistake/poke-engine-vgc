@@ -4213,6 +4213,24 @@ fn execute_action_inner(
                 }
             }
         }
+        // Belly Drum `onHit`: fails at or below half HP (or Atk +6); otherwise
+        // the user pays floor(maxhp / 2) and its Attack goes to +6 (`boost atk: 12`).
+        // PS data/moves.ts bellydrum.
+        if choice.move_id == Choices::BELLYDRUM && ti == 0 && !move_failed {
+            let (hp, maxhp) = {
+                let p = state.side(side).team_member(idx);
+                (p.hp as i32, p.maxhp as i32)
+            };
+            if hp * 2 <= maxhp
+                || state.side(side).team_boosts[idx as usize].atk >= 6
+                || maxhp == 1
+            {
+                move_failed = true;
+            } else {
+                apply_damage(state, side, slot, (maxhp / 2) as i16);
+                apply_boosts(state, side, idx, &StatBoosts { attack: 12, ..Default::default() }, false);
+            }
+        }
         // Soak `onHit`: `setType('Water')` (fails if already pure Water).
         // PS data/moves.ts soak. The original types come back on switch-out
         // (`type_change`, as for Libero).
@@ -4807,7 +4825,12 @@ fn execute_action_inner(
                                     }
                                 }
                             }
-                            // TODO(PS parity): Alluring Voice's confusion.
+                            // Alluring Voice: the confusion volatile (draws its duration).
+                            if status.is_none()
+                                && !safeguard_blocks_confusion(state, side, slot, idx, ts, tslot)
+                            {
+                                try_confuse(state, rng, ts, tslot);
+                            }
                         }
                     }
                     Effect::RemoveItem => {
@@ -6887,6 +6910,21 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
         }
     }
     if let Some(old) = state.side(side).active[slot].pokemon_index {
+        // `SwitchOut` abilities (PS data/abilities.ts): Regenerator heals
+        // floor(baseMaxhp / 3); Natural Cure clears the status.
+        {
+            let p = state.side_mut(side).team_member_mut(old);
+            if p.hp > 0 {
+                match p.ability {
+                    Abilities::REGENERATOR => p.hp = (p.hp + p.maxhp / 3).min(p.maxhp),
+                    Abilities::NATURALCURE if p.status != PokemonStatus::NONE => {
+                        p.status = PokemonStatus::NONE;
+                        p.sleep_turns = 0;
+                    }
+                    _ => {}
+                }
+            }
+        }
         // PS `clearVolatile`: boosts reset, ability back to the base one.
         let s = state.side_mut(side);
         s.clear_member_boosts(old);

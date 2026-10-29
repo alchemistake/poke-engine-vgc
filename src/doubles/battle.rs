@@ -175,7 +175,7 @@ fn faint_pokemon(state: &mut DoublesState, side: Side, slot: usize) {
     }
     // Destiny Bond `onAfterFaint`: the last attacker also faints.
     // PS data/conditions.ts destinybond.onAfterFaint.
-    let db = state.side(side).active[slot].destinybond;
+    let db = state.side(side).active[slot].destinybond && state.in_move;
     let la = state.side(side).active[slot].last_attacker;
     if db {
         if let Some((att_side, att_idx)) = la {
@@ -1485,7 +1485,9 @@ fn execute_action(
     let was_recharging = state.side(action.side).active[action.slot].recharging;
     let order_len = move_order.len();
     state.side_mut(action.side).active[action.slot].move_result_this_turn = None;
+    state.in_move = true;
     execute_action_inner(state, rng, action, move_order, will_act, queue);
+    state.in_move = false;
     // Destiny Bond `onBeforeMove` (any other move) / `onMoveAborted` (a `cant`)
     // remove the volatile. PS data/conditions.ts destinybond.
     let had_db = state.side(action.side).active[action.slot].destinybond;
@@ -2397,6 +2399,15 @@ fn execute_action_inner(
                     continue;
                 }
             }
+            // Telepathy `onTryHit`: an ally's damaging move skips the holder.
+            if ts == side
+                && (ts, tsl) != (side, slot)
+                && damaging
+                && d.ability == Abilities::TELEPATHY
+                && !crate::engine::abilities::ignores_target_ability(state.side(side).team_member(idx), choice, &d.ability)
+            {
+                continue;
+            }
             if (ts, tsl) != (side, slot) && try_absorb(state, ts, tsl, choice.move_type) {
                 if d.ability == Abilities::FLASHFIRE && choice.move_type == PokemonType::FIRE {
                     flash_fire_used = true;
@@ -2633,6 +2644,25 @@ fn execute_action_inner(
             state.side_mut(target_side).active[target_slot].bounced = false;
             return;
         }
+    }
+
+    // Oblivious `onTryHit`: immune to Attract / Taunt (before the accuracy roll).
+    if matches!(choice.move_id, Choices::TAUNT | Choices::ATTRACT)
+        && !is_self
+        && !is_field
+        && (target_side, target_slot) != (side, slot)
+        && state.side(target_side).slot_pokemon(target_slot).is_some_and(|d| {
+            d.ability == Abilities::OBLIVIOUS
+                && !crate::engine::abilities::ignores_target_ability(
+                    state.side(side).team_member(idx),
+                    choice,
+                    &d.ability,
+                )
+        })
+    {
+        state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+        push_order();
+        return;
     }
 
     // Thunder Wave is the one Status move with `ignoreImmunity: false`: the

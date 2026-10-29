@@ -492,6 +492,8 @@ pub struct DoublesState {
     pub queue_prioritize: Option<(Side, usize)>,
     /// Quash `onHit`: the target's queued action is moved last (`order = 201`).
     pub queue_quash: Option<(Side, usize)>,
+    /// A move is executing (Destiny Bond only reacts to move damage).
+    pub in_move: bool,
     /// Gravity `onFieldStart`: queued moves cancelled (`queue.cancelMove`).
     pub queue_cancel: Vec<(Side, usize)>,
     /// Wonder Room's `onModifyMove` has run since it started (PS fixes the
@@ -1027,6 +1029,7 @@ impl DoublesState {
             queue_change: None,
             queue_prioritize: None,
             queue_quash: None,
+            in_move: false,
             queue_cancel: Vec::new(),
             wonder_room_seen: false,
             side_one,

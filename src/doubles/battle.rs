@@ -448,6 +448,23 @@ fn move_by_index(
     }
 }
 
+/// The champions ("dubious") mod changes some moves' category / base power
+/// relative to the standard table. Return the mod's category for moves that
+/// differ; `None` when the move is unchanged.
+#[cfg(feature = "champions")]
+fn champions_move_category(move_id: Choices) -> Option<MoveCategory> {
+    match move_id {
+        // featherdance: a pure Status move (basePower 0) in the mod.
+        Choices::FEATHERDANCE => Some(MoveCategory::Status),
+        _ => None,
+    }
+}
+
+#[cfg(not(feature = "champions"))]
+fn champions_move_category(_move_id: Choices) -> Option<MoveCategory> {
+    None
+}
+
 /// Run a doubles battle driven by explicit per-turn controller choices
 /// (fuzz testing). The same choices are fed to pokemon-showdown; the two
 /// simulators must produce identical state.
@@ -541,14 +558,23 @@ pub fn run_battle_fuzz(
                                 (m, 0i8)
                             } else {
                                 let m = move_by_index(p, (*mi).min(3));
+                                let mut choice = m.choice.clone();
+                                if let Some(cat) = champions_move_category(choice.move_id) {
+                                    choice.category = cat;
+                                    choice.base_power = 0.0;
+                                }
                                 // PS prankster `onModifyPriority`: +1 on Status moves.
                                 let boost = (p.ability == Abilities::PRANKSTER
-                                    && m.choice.category == MoveCategory::Status)
+                                    && choice.category == MoveCategory::Status)
                                     as i8;
                                 // A recharging pokemon's action is the `recharge`
                                 // pseudo-move (priority 0), not the chosen move.
-                                let base = if s.active[slot].recharging { 0 } else { m.choice.priority + boost };
-                                (m.choice.clone(), base)
+                                let base = if s.active[slot].recharging {
+                                    0
+                                } else {
+                                    choice.priority + boost
+                                };
+                                (choice, base)
                             };
                             let charge_id = mv.move_id;
                             actions.push(Action {
@@ -1780,6 +1806,17 @@ fn execute_action_inner(
             {
                 continue;
             }
+            // Good as Gold: the holder is immune to status / non-damaging moves.
+            if d.ability == Abilities::GOODASGOLD
+                && choice.category == MoveCategory::Status
+                && !crate::engine::abilities::ignores_target_ability(
+                    state.side(side).team_member(idx),
+                    choice,
+                    &d.ability,
+                )
+            {
+                continue;
+            }
             if damaging && crate::doubles::damage::type_mod(&choice.move_type, &d).is_none() {
                 continue;
             }
@@ -1928,6 +1965,46 @@ fn execute_action_inner(
             push_order();
             return;
         }
+    }
+
+    // Good as Gold `onTryHit`: immune to status / non-damaging moves (no draw).
+    // Breakable (Mold Breaker / Terabreak / ...). Spread moves filter the
+    // holder out of the target list instead (handled in the spread block).
+    if !is_self && !is_field && !is_spread && (side, slot) != (target_side, target_slot) {
+        let immune = state
+            .side(target_side)
+            .slot_pokemon(target_slot)
+            .map(|d| {
+                d.ability == Abilities::GOODASGOLD
+                    && choice.category == MoveCategory::Status
+                    && !crate::engine::abilities::ignores_target_ability(
+                        state.side(side).team_member(idx),
+                        choice,
+                        &d.ability,
+                    )
+            })
+            .unwrap_or(false);
+        if immune {
+            state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+            push_order();
+            return;
+        }
+    }
+
+    // Poltergeist `onTryHit`: fails if the target is not holding an item.
+    if choice.move_id == Choices::POLTERGEIST
+        && !is_self
+        && !is_field
+        && (side, slot) != (target_side, target_slot)
+        && state
+            .side(target_side)
+            .slot_pokemon(target_slot)
+            .map(|d| d.item == crate::engine::items::Items::NONE)
+            .unwrap_or(true)
+    {
+        state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+        push_order();
+        return;
     }
 
     // Ability absorbs (PS `onTryHit`, `hitStepTryHitEvent`: after Protect,

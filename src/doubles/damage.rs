@@ -303,11 +303,27 @@ pub fn calculate_damage(
 /// PS `hitStepAccuracy`: accuracy scaled by the user's accuracy stage minus
 /// the target's evasion stage (each clamped to +-6), then `randomChance`.
 // TODO(PS parity): ModifyAccuracy / Accuracy events (Compound Eyes, items, ...).
-pub fn roll_accuracy_boosted(accuracy: f32, acc_boost: i8, eva_boost: i8, rng: &mut Gen5Rng) -> bool {
+pub fn roll_accuracy_boosted(
+    accuracy: f32,
+    acc_boost: i8,
+    eva_boost: i8,
+    hustle_physical: bool,
+    rng: &mut Gen5Rng,
+) -> bool {
     let mut acc = accuracy as i32;
-    // Gravity `onModifyAccuracy`: chainModify([6840, 4096]).
+    // `runEvent('ModifyAccuracy')`: handlers chain, applied once.
+    // Gravity `onModifyAccuracy` (priority 0): chainModify([6840, 4096]).
+    // Hustle `onSourceModifyAccuracy` (priority -1, physical moves):
+    // chainModify([3277, 4096]). PS data/abilities.ts hustle.
+    let mut m: i32 = 4096;
     if GRAVITY.with(|g| g.get()) {
-        acc = (acc * 6840 + 2047) / 4096;
+        m = (m * 6840 + 2048) >> 12;
+    }
+    if hustle_physical {
+        m = (m * 3277 + 2048) >> 12;
+    }
+    if m != 4096 {
+        acc = (acc * m + 2047) / 4096;
     }
     let boost = (acc_boost.clamp(-6, 6) as i32 - eva_boost as i32).clamp(-6, 6);
     if boost > 0 {

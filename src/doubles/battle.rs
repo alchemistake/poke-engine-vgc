@@ -465,6 +465,16 @@ fn champions_move_category(_move_id: Choices) -> Option<MoveCategory> {
     None
 }
 
+/// PS `move.ignoreEvasion`: Keen Eye / Illuminate / Mind's Eye
+/// (`onModifyMove`), Chip Away, Darkest Lariat, Sacred Sword.
+fn ignores_evasion(ability: Abilities, mv: Choices) -> bool {
+    matches!(ability, Abilities::KEENEYE | Abilities::ILLUMINATE | Abilities::MINDSEYE)
+        || matches!(
+            mv,
+            Choices::CHIPAWAY | Choices::DARKESTLARIAT | Choices::SACREDSWORD
+        )
+}
+
 /// Run a doubles battle driven by explicit per-turn controller choices
 /// (fuzz testing). The same choices are fed to pokemon-showdown; the two
 /// simulators must produce identical state.
@@ -479,6 +489,8 @@ pub fn run_battle_fuzz(
     // side A's leads first, then side B's (p1 switches in before p2).
     // PS `runSwitch` for the four leads: speed sort, SwitchIn handlers, then
     // the action's `eachEvent('Update')`.
+    rng.context = "turn 0: move order".to_string();
+    team_preview_draws(state, rng);
     rng.context = "turn 0: switch-in".to_string();
     // PS `case "start"`: each lead's `switchIn` inserts a `runSwitch` action
     // into the queue (`insertChoice`), drawing on speed ties before the
@@ -1917,6 +1929,7 @@ fn execute_action_inner(
         state.side(target_side).slot_pokemon(target_slot),
         speeds,
         false,
+        false,
     ) > 0.0
     {
         1.0
@@ -2060,6 +2073,21 @@ fn execute_action_inner(
         }
     }
 
+    // Leech Seed `onTryImmunity`: Grass targets are immune (no draw).
+    // PS data/moves.ts leechseed.
+    if choice.move_id == Choices::LEECHSEED && !is_self && !is_field {
+        let grass = state
+            .side(target_side)
+            .slot_pokemon(target_slot)
+            .map(|p| p.has_type(&PokemonType::GRASS))
+            .unwrap_or(false);
+        if grass {
+            state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+            push_order();
+            return;
+        }
+    }
+
     // Attract: PS `onTryImmunity` succeeds only for male -> female or
     // female -> male; Oblivious blocks it in TryHit. Both happen before the
     // accuracy roll (no draw).
@@ -2099,6 +2127,9 @@ fn execute_action_inner(
         if !choice.always_hit && !toxic_hits && !weather_guaranteed && choice.accuracy > 0.0 {
             let ab = state.side(side).slot_boosts(slot).map(|b| b.acc).unwrap_or(0);
             let user_no_guard = state.side(side).team_member(idx).ability == Abilities::NOGUARD;
+            let hustle_phys = state.side(side).team_member(idx).ability == Abilities::HUSTLE
+                && choice.category == MoveCategory::Physical;
+            let ignore_eva = ignores_evasion(state.side(side).team_member(idx).ability, choice.move_id);
             let st = &*state;
             spread_list.retain(|&(ts, tsl)| {
                 // No Guard `onAnyAccuracy`: no roll when either side has it.
@@ -2107,8 +2138,12 @@ fn execute_action_inner(
                 {
                     return true;
                 }
-                let eb = st.side(ts).slot_boosts(tsl).map(|b| b.eva).unwrap_or(0);
-                roll_accuracy_boosted(choice.accuracy, ab, eb, rng)
+                let eb = if ignore_eva {
+                    0
+                } else {
+                    st.side(ts).slot_boosts(tsl).map(|b| b.eva).unwrap_or(0)
+                };
+                roll_accuracy_boosted(choice.accuracy, ab, eb, hustle_phys, rng)
             });
         }
         if spread_list.is_empty() {
@@ -2130,8 +2165,14 @@ fn execute_action_inner(
                 .unwrap_or(false))
     {
         let ab = state.side(side).slot_boosts(slot).map(|b| b.acc).unwrap_or(0);
-        let eb = state.side(target_side).slot_boosts(target_slot).map(|b| b.eva).unwrap_or(0);
-        if !roll_accuracy_boosted(choice.accuracy, ab, eb, rng) {
+        let eb = if ignores_evasion(state.side(side).team_member(idx).ability, choice.move_id) {
+            0
+        } else {
+            state.side(target_side).slot_boosts(target_slot).map(|b| b.eva).unwrap_or(0)
+        };
+        let hustle_phys = state.side(side).team_member(idx).ability == Abilities::HUSTLE
+            && choice.category == MoveCategory::Physical;
+        if !roll_accuracy_boosted(choice.accuracy, ab, eb, hustle_phys, rng) {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
             push_order();
             return;
@@ -2928,6 +2969,15 @@ fn execute_action_inner(
             }
         }
 
+        // Leech Seed: `addVolatile('leechseed')` (fails if already seeded).
+        if choice.move_id == Choices::LEECHSEED && ti == 0 {
+            if state.side(target_side).active[target_slot].leech_seed.is_some() {
+                move_failed = true;
+            } else {
+                state.side_mut(target_side).active[target_slot].leech_seed = Some((side, slot));
+            }
+        }
+
         // Rest `onHit`: `setStatus('slp')` (draws the sleep duration), then the
         // sleep counter is forced to 3 and the user heals fully.
         if choice.move_id == Choices::REST && ti == 0 {
@@ -3609,7 +3659,14 @@ fn base_power_with_modifiers(
     avalanche_boosted: bool,
     state: &DoublesState,
 ) -> f32 {
-    let dynamic = dynamic_base_power(choice, attacker, Some(defender), speeds, avalanche_boosted);
+    let dynamic = dynamic_base_power(
+        choice,
+        attacker,
+        Some(defender),
+        speeds,
+        avalanche_boosted,
+        state.terrain.terrain_type == crate::engine::state::Terrain::ELECTRICTERRAIN,
+    );
     let bp = if dynamic > 0.0 { dynamic } else { choice.base_power };
     // (onBasePowerPriority, 4096-based modifier); PS runs higher priority
     // first. Values from data/abilities.ts / data/moves.ts `onBasePower`.
@@ -3731,6 +3788,8 @@ fn dynamic_base_power(
     // PS avalanche.basePowerCallback: doubled when the target damaged the
     // user this turn.
     avalanche_boosted: bool,
+    // Electric Terrain is active (Rising Voltage).
+    electric_terrain: bool,
 ) -> f32 {
     use crate::engine::mechanics as m;
     let (att_spe, def_spe) = speeds;
@@ -3745,6 +3804,15 @@ fn dynamic_base_power(
                 110.0
             } else {
                 55.0
+            }
+        }
+        // PS risingvoltage.basePowerCallback: doubled on a grounded target in
+        // Electric Terrain.
+        Choices::RISINGVOLTAGE => {
+            if electric_terrain && defender.map(|d| d.is_grounded()).unwrap_or(false) {
+                choice.base_power * 2.0
+            } else {
+                choice.base_power
             }
         }
         Choices::AVALANCHE if avalanche_boosted => choice.base_power * 2.0,
@@ -3999,8 +4067,15 @@ fn compute_hit_damage(
             defense_base: base_def,
             defense_boost: def_boost_stat,
             weather: state.weather.weather_type,
-            reflect: state.side(target_side).side_conditions.reflect > 0,
-            light_screen: state.side(target_side).side_conditions.light_screen > 0,
+            // PS data/moves.ts reflect / lightscreen / auroraveil
+            // `onAnyModifyDamage`: skipped when `move.infiltrates`
+            // (data/abilities.ts infiltrator.onModifyMove).
+            reflect: attacker.ability != Abilities::INFILTRATOR
+                && (state.side(target_side).side_conditions.reflect > 0
+                    || state.side(target_side).side_conditions.aurora_veil > 0),
+            light_screen: attacker.ability != Abilities::INFILTRATOR
+                && (state.side(target_side).side_conditions.light_screen > 0
+                    || state.side(target_side).side_conditions.aurora_veil > 0),
             defender_mod: crate::engine::mechanics::defender_damage_modifier(defender, choice),
             guts: attacker.ability == Abilities::GUTS,
             attack_mod: {
@@ -4250,7 +4325,9 @@ fn resolve_future_move(
     }
     let ab = state.side(ss).slot_boosts(sslot).map(|b| b.acc).unwrap_or(0);
     let eb = state.side(ts).slot_boosts(tslot).map(|b| b.eva).unwrap_or(0);
-    if !roll_accuracy_boosted(choice.accuracy, ab, eb, rng) {
+    let hustle_phys = state.side(ss).team_member(si).ability == Abilities::HUSTLE
+        && choice.category == MoveCategory::Physical;
+    if !roll_accuracy_boosted(choice.accuracy, ab, eb, hustle_phys, rng) {
         return;
     }
     let (damage, _) = compute_hit_damage(state, rng, ss, sslot, si, ts, tslot, &choice, false, false);
@@ -4844,6 +4921,7 @@ enum ResidualKind {
     Moody(Side, usize),
     /// Ghost `curse` damage (order 12).
     Curse(Side, usize),
+    LeechSeed(Side, usize),
     /// `perishsong` countdown (order 24).
     Perish(Side, usize),
     /// futuremove slot condition (order 3): the delayed hit.
@@ -5041,6 +5119,9 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             if a.cursed {
                 push(12, speed, 2, ResidualKind::Curse(side, slot));
             }
+            if a.leech_seed.is_some() {
+                push(8, speed, 2, ResidualKind::LeechSeed(side, slot));
+            }
             if a.perish > 0 {
                 push(24, speed, 2, ResidualKind::Perish(side, slot));
             }
@@ -5116,6 +5197,26 @@ fn sort_residual_handlers(
         sorted += next_indexes.len();
     }
     hs
+}
+
+/// PS team preview `commitChoices`: `queue.sort()` over the 8 `team` actions
+/// (priority `-index`, speed = `getActionSpeed`). The A and B actions of the
+/// same pick index tie when their speeds are equal: one `random(2)` shuffle.
+/// PS: sim/side.ts chooseTeam, sim/battle.ts commitChoices, speedSort.
+fn team_preview_draws(state: &DoublesState, rng: &mut Gen5Rng) {
+    let speed_of = |side: &crate::doubles::state::DoublesSide, i: usize| -> i64 {
+        let p = &side.team[i];
+        let mut s = p.speed as i64;
+        if p.item == crate::engine::items::Items::CHOICESCARF {
+            s = (s * 6144 + 2047) / 4096;
+        }
+        s
+    };
+    for i in 0..4 {
+        if speed_of(&state.side_one, i) == speed_of(&state.side_two, i) {
+            let _ = rng.label("speed tie (move order)").random(2);
+        }
+    }
 }
 
 /// PS initial send-out: each lead's `switchIn` inserts a `runSwitch` action
@@ -5382,6 +5483,36 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
                     }
                 }
                 apply_boosts(state, side, idx, &b, false);
+            }
+            ResidualKind::LeechSeed(side, slot) => {
+                // PS data/moves.ts leechseed.condition.onResidual: damage
+                // baseMaxhp/8 to the seeded pokemon, heal the source's slot
+                // occupant by the damage dealt.
+                let Some((ss, sslot)) = state.side(side).active[slot].leech_seed else { continue };
+                let Some(p) = state.side(side).slot_pokemon(slot) else { continue };
+                if p.hp <= 0 {
+                    continue;
+                }
+                let (hp0, maxhp, ooze) = (p.hp, p.maxhp, false);
+                let _ = ooze;
+                let src_alive = state.side(ss).slot_pokemon(sslot).map(|q| q.hp > 0).unwrap_or(false);
+                if !src_alive {
+                    continue;
+                }
+                apply_damage(state, side, slot, (maxhp / 8).max(1));
+                let dealt = hp0 - state.side(side).slot_pokemon(slot).map(|q| q.hp).unwrap_or(0);
+                if dealt > 0 {
+                    // Liquid Ooze `onSourceTryHeal`: the drainer takes the damage.
+                    let ooze_src = state.side(side).team_member(
+                        state.side(side).active[slot].pokemon_index.unwrap(),
+                    ).ability == Abilities::LIQUIDOOZE;
+                    if ooze_src {
+                        apply_damage(state, ss, sslot, dealt);
+                    } else if let Some(sidx) = state.side(ss).active[sslot].pokemon_index {
+                        let m = state.side_mut(ss).team_member_mut(sidx);
+                        m.hp = (m.hp + dealt).min(m.maxhp);
+                    }
+                }
             }
             ResidualKind::Curse(side, slot) => {
                 if let Some(p) = state.side(side).slot_pokemon(slot) {

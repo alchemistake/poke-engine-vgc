@@ -121,6 +121,9 @@ pub struct ActiveSlot {
     pub focus_energy: bool,
     /// `attract` volatile: the infatuating pokemon (side, team index).
     pub attract: Option<(Side, PokemonIndex)>,
+    /// `leechseed` volatile: the source's slot (side, slot) — PS
+    /// `effectState.sourceSlot`, resolved with `getAtSlot` at residual time.
+    pub leech_seed: Option<(Side, usize)>,
     /// `aquaring` volatile: heals 1/16 max HP each residual (order 6).
     pub aqua_ring: bool,
     /// `counter` / `mirrorcoat` volatiles (duration 1): the last foe slot that
@@ -222,6 +225,7 @@ impl ActiveSlot {
             no_retreat: false,
             focus_energy: false,
             attract: None,
+            leech_seed: None,
             aqua_ring: false,
             counter_vol: None,
             mirror_coat_vol: None,

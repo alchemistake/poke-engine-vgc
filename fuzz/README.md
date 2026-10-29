@@ -147,8 +147,9 @@ value. Use it when the PRNG draws line up but a number differs.
   (`fuzz.js`, `teams.js`) and the pokemon-showdown build — never on the
   engine — so the fast path stores each PS battle in
   `fuzz/work/ps-cache/<key>/<seed>.json` and later sweeps only re-run the
-  engine. The key hashes those inputs; a harness or PS change starts a new
-  cache (old ones are deleted). Failure reports always run PS live.
+  engine. The key hashes `fuzz.js`, `teams.js` and the PS build files
+  (`dist/`); a harness change or PS rebuild starts a new cache (old ones are
+  deleted). Cached battles run in engine batches of 128. Failure reports always run PS live.
   `--no-cache` disables it.
 - Typical (18 cores): 100 battles ~0.6 s cold, ~0.12 s cached; a
   1000-battle sweep that fails at seed 100 ~0.3 s cached.

@@ -1210,9 +1210,11 @@ function psCacheDir() {
   const h = require('crypto').createHash('sha1');
   h.update(fs.readFileSync(__filename));
   h.update(fs.readFileSync(path.join(__dirname, 'teams.js')));
-  const head = spawnSync('git', ['-C', PS_DIR, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
-  h.update(String(head.stdout || ''));
-  h.update(String(fs.statSync(path.join(PS_DIR, 'dist', 'sim', 'battle.js')).mtimeMs));
+  // The PS build that actually runs (dist/): a rebuild rewrites these.
+  for (const f of ['sim/battle.js', 'sim/battle-actions.js', 'data/moves.js', 'data/abilities.js',
+    'data/conditions.js', 'data/mods/champions/scripts.js']) {
+    h.update(`${f}:${fs.statSync(path.join(PS_DIR, 'dist', f)).mtimeMs};`);
+  }
   h.update(FORMAT);
   const root = path.join(__dirname, 'work', 'ps-cache');
   PS_CACHE_DIR = path.join(root, h.digest('hex').slice(0, 16));
@@ -1241,6 +1243,7 @@ function psCacheWrite(seed, game) {
 
 // Tests checked per engine call on the fast path.
 const FAST_CHUNK = 8;
+const FAST_CHUNK_CACHED = 128;
 
 // The controller PRNG, battle seed and teams of one test (all derived from
 // the test seed, so a test can be rebuilt identically).
@@ -1401,7 +1404,14 @@ function main() {
     // Fast path, in chunks: tests before `passedUpTo` are known to pass.
     // Only the first failing test is re-run stepwise below (the report).
     if (!opts.verbose && t >= passedUpTo) {
-      const n = Math.min(FAST_CHUNK, opts.count - t);
+      // A run of cached PS battles costs nothing to load, so it goes to the
+      // engine in one batch (up to 128); uncached battles keep small chunks
+      // for early stopping.
+      const isCached = (k) =>
+        opts.cache && fs.existsSync(path.join(psCacheDir(), `${opts.seed + (t + k) * opts.step}.json`));
+      let n = 0;
+      while (n < FAST_CHUNK_CACHED && t + n < opts.count && isCached(n)) n++;
+      if (n === 0) n = Math.min(FAST_CHUNK, opts.count - t);
       const seeds = Array.from({ length: n }, (_, k) => opts.seed + (t + k) * opts.step);
       const bad = fastCheckBatch(opts, opts.workdir, seeds);
       passedUpTo = bad < 0 ? t + n : t + bad;

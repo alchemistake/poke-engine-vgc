@@ -1811,6 +1811,9 @@ fn execute_action_inner(
                 pm.id = crate::pokemon::PokemonName::MIMIKYUBUSTED;
                 let bust = (pm.maxhp / 8).max(1);
                 apply_damage(state, side, slot, bust);
+                // `formeChange` -> `setSpecies`: the cached speed is the raw stat.
+                let raw = state.side(side).team_member(idx).speed;
+                state.side_mut(side).speed_cache[idx as usize] = raw as _;
             } else {
                 apply_damage(state, side, slot, dmg);
             }
@@ -3475,6 +3478,9 @@ fn execute_action_inner(
                         pm.id = crate::pokemon::PokemonName::MIMIKYUBUSTED;
                         let dmg = (pm.maxhp / 8).max(1);
                         apply_damage(state, target_side, target_slot, dmg);
+                        // `formeChange` -> `setSpecies`: the cached speed is the raw stat.
+                        let raw = state.side(target_side).team_member(tidx).speed;
+                        state.side_mut(target_side).speed_cache[tidx as usize] = raw as _;
                     }
                     0
                 } else {
@@ -6379,7 +6385,9 @@ fn compute_hit_damage(
         // Boosted stats, with crit rules (crit ignores negative attack /
         // positive defense boosts) applied inside `calculate_damage`
         // after the crit roll.
-        let att_boost = state.side(side).slot_boosts(slot).cloned().unwrap_or_default();
+        // The attacker's own boosts, by team member: a Future Sight source may
+        // have left the field (its boosts were cleared, its slot is someone else's).
+        let att_boost = state.side(side).team_boosts[idx as usize].clone();
         let def_boost = state
             .side(target_side)
             .slot_boosts(target_slot)
@@ -6872,6 +6880,17 @@ fn resolve_future_move(
         return;
     }
     let (damage, _) = compute_hit_damage(state, rng, ss, sslot, si, ts, tslot, &choice, false, false);
+    // Disguise absorbs the hit (a `Move` effect); the bust runs in the first
+    // `eachEvent('Update')` (its `onUpdate`), before the closing sort.
+    let disguised = state.side(ts).slot_pokemon(tslot).is_some_and(|d| {
+        d.id == crate::pokemon::PokemonName::MIMIKYU && d.ability == Abilities::DISGUISE
+    }) && state.side(ts).active[tslot].substitute_health <= 0;
+    if disguised {
+        each_event_update(state, rng);
+        disguise_bust(state, ts, tslot);
+        each_event_update(state, rng);
+        return;
+    }
     let damage = match state.side(ts).slot_pokemon(tslot) {
         Some(d) => damage.min(d.hp.max(0)),
         None => damage,
@@ -6881,6 +6900,19 @@ fn resolve_future_move(
     }
     each_event_update(state, rng);
     each_event_update(state, rng);
+}
+
+/// Disguise busts (PS data/abilities.ts disguise `onDamage` / `onUpdate`): the
+/// forme changes to Busted, the holder takes 1/8 max HP, and the cached speed
+/// becomes the raw stat (`formeChange` -> `setSpecies`).
+fn disguise_bust(state: &mut DoublesState, side: Side, slot: usize) {
+    let Some(idx) = state.side(side).active[slot].pokemon_index else { return };
+    let pm = state.side_mut(side).team_member_mut(idx);
+    pm.id = crate::pokemon::PokemonName::MIMIKYUBUSTED;
+    let dmg = (pm.maxhp / 8).max(1);
+    apply_damage(state, side, slot, dmg);
+    let raw = state.side(side).team_member(idx).speed;
+    state.side_mut(side).speed_cache[idx as usize] = raw as _;
 }
 
 /// Cursed Body (PS data/abilities.ts `onDamagingHit`): 30% to Disable the

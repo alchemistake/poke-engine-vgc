@@ -387,6 +387,9 @@ pub struct DoublesSide {
     /// Original (atk, def, spa, spd) of a team member whose `storedStats` were
     /// changed (Guard / Power Split); restored by `setSpecies` on switch-in.
     pub saved_stats: [Option<[i16; 4]>; 6],
+    /// Original raw speed of a team member whose `storedStats.spe` was swapped
+    /// (Speed Swap); restored by `setSpecies` on switch-in.
+    pub saved_speed: [Option<i16>; 6],
 }
 
 impl DoublesSide {
@@ -1002,6 +1005,7 @@ impl DoublesState {
             moves_used: [[false; 4]; 6],
             damaged_by: std::array::from_fn(|_| Vec::new()),
             saved_stats: [None; 6],
+            saved_speed: [None; 6],
         };
         let mut side_two = DoublesSide {
             team: std::array::from_fn(|_| Pokemon::default()),
@@ -1022,6 +1026,7 @@ impl DoublesState {
             moves_used: [[false; 4]; 6],
             damaged_by: std::array::from_fn(|_| Vec::new()),
             saved_stats: [None; 6],
+            saved_speed: [None; 6],
         };
         for (i, m) in teams.a.iter().enumerate().take(6) {
             side_one.team[i] = build_pokemon(m);

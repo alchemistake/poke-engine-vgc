@@ -3140,10 +3140,12 @@ fn execute_action_inner(
 
     // Substitute `onTryPrimaryHit` (after the accuracy step): a Status move
     // aimed at another pokemon's substitute fails (getDamage -> undefined)
-    // unless it is a sound move or the user has Infiltrator.
+    // unless it is a sound move or the user has Infiltrator. A spread move
+    // checks each target in the hit loop instead.
     if choice.category == MoveCategory::Status
         && !is_self
         && !is_field
+        && !is_spread
         && (target_side, target_slot) != (side, slot)
         && state.side(target_side).active[target_slot].substitute_health > 0
         && !bypasses_substitute(choice)
@@ -5249,13 +5251,11 @@ fn execute_action_inner(
                     .slot_pokemon(target_slot)
                     .map(|p| p.ability == Abilities::SHIELDDUST)
                     .unwrap_or(false);
-                let tidx = state.side(target_side).active[target_slot].pokemon_index;
-                if !shield {
-                    if let Some(tidx) = tidx {
-                        if rng.label("ability").random_chance(3, 10) {
-                            try_set_status(state, rng, target_side, target_slot, PokemonStatus::POISON, side, idx);
-                            let _ = tidx;
-                        }
+                // The hit's target as it was at the hit (a KO already cleared the
+                // slot, and PS still rolls for the hit).
+                if !shield && hit_target_pi.is_some() {
+                    if rng.label("ability").random_chance(3, 10) {
+                        try_set_status(state, rng, target_side, target_slot, PokemonStatus::POISON, side, idx);
                     }
                 }
             }
@@ -5466,6 +5466,35 @@ fn execute_action_inner(
     // End of PS's hit loop: one more `eachEvent('Update')` (after recoil).
     if hits_done > 0 {
         each_event_update(state, rng);
+    }
+
+    // Speed Swap `onHit` (data/moves.ts speedswap): swap the two pokemon's
+    // `storedStats.spe`. The originals are restored on switch-in (`setSpecies`).
+    if choice.move_id == Choices::SPEEDSWAP && !move_failed && (target_side, target_slot) != (side, slot) {
+        if let (Some(tidx), Some(uidx)) = (
+            state.side(target_side).active[target_slot].pokemon_index,
+            state.side(side).active[slot].pokemon_index,
+        ) {
+            let t_sp = state.side(target_side).team_member(tidx).speed;
+            let u_sp = state.side(side).team_member(uidx).speed;
+            if state.side(target_side).saved_speed[tidx as usize].is_none() {
+                state.side_mut(target_side).saved_speed[tidx as usize] = Some(t_sp);
+            }
+            if state.side(side).saved_speed[uidx as usize].is_none() {
+                state.side_mut(side).saved_speed[uidx as usize] = Some(u_sp);
+            }
+            state.side_mut(target_side).team_member_mut(tidx).speed = u_sp;
+            state.side_mut(side).team_member_mut(uidx).speed = t_sp;
+        }
+    }
+
+    // Fell Stinger `onAfterMoveSecondarySelf`: +3 Atk to the user when the
+    // move's target is down after its hits (data/moves.ts fellstinger).
+    if choice.move_id == Choices::FELLSTINGER
+        && hits_done > 0
+        && state.side(target_side).slot_pokemon(target_slot).map(|p| p.hp <= 0).unwrap_or(true)
+    {
+        apply_boosts(state, side, idx, &StatBoosts { attack: 3, ..Default::default() }, false);
     }
 
     // Self-destruct moves faint the user after dealing damage.
@@ -7109,6 +7138,20 @@ fn apply_on_switch_abilities(
         }
         return false;
     }
+    // Hospitality `onStart` (data/abilities.ts): heal each adjacent ally by
+    // baseMaxhp / 4 (Heal Block blocks it). The heal is a plain integer
+    // division (PS `heal` floors it: 155 / 4 -> 38).
+    if ability == Abilities::HOSPITALITY {
+        let ally_slot = &state.side(side).active[1 - slot];
+        if let Some(ally) = ally_slot.pokemon_index {
+            let heal_blocked = ally_slot.heal_block > 0;
+            let p = state.side_mut(side).team_member_mut(ally);
+            if p.hp > 0 && !heal_blocked {
+                p.hp = (p.hp + p.maxhp / 4).min(p.maxhp);
+            }
+        }
+        return false;
+    }
     // Intimidate (-1 Atk) / Supersweet Syrup (-1 evasion, once per battle)
     // on each adjacent foe not behind a Substitute.
     let drop = match ability {
@@ -7335,6 +7378,9 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
             p.defense = st[1];
             p.special_attack = st[2];
             p.special_defense = st[3];
+        }
+        if let Some(sp) = s.saved_speed[idx as usize].take() {
+            s.team_member_mut(idx).speed = sp;
         }
         s.active[slot].pokemon_index = Some(idx);
         // PS `clearVolatile` (switch-in): `newlySwitched = true`.

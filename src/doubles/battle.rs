@@ -2466,6 +2466,23 @@ fn execute_action_inner(
         return;
     }
 
+    // Thunder Wave is the one Status move with `ignoreImmunity: false`: the
+    // type-immunity step (before accuracy, no draw) fails it on Ground types.
+    // PS data/moves.ts thunderwave.
+    if choice.move_id == Choices::THUNDERWAVE
+        && !is_self
+        && !is_field
+        && (target_side, target_slot) != (side, slot)
+        && state
+            .side(target_side)
+            .slot_pokemon(target_slot)
+            .is_some_and(|d| crate::doubles::damage::type_mod(&choice.move_type, d).is_none())
+    {
+        state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+        push_order();
+        return;
+    }
+
     // Type immunity is checked before the accuracy roll (PS moveSteps order:
     // Invulnerability -> TryHit -> TypeImmunity -> Accuracy). An immune
     // target consumes no PRNG draws at all.

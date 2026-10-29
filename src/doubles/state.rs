@@ -99,6 +99,8 @@ pub struct ActiveSlot {
     pub throat_chop: u8,
     /// Set while a move is run through `useMove` (Copycat): no PP, no BeforeMove.
     pub external_call: bool,
+    /// The move being run was bounced (PS `move.hasBounced`): no second bounce.
+    pub bounced: bool,
     /// Beat Up: base power for the current hit / the remaining hits' base powers.
     pub bp_fixed: f32,
     pub beat_up_queue: Vec<f32>,
@@ -247,6 +249,7 @@ impl ActiveSlot {
             yawn: 0,
             throat_chop: 0,
             external_call: false,
+            bounced: false,
             bp_fixed: 0.0,
             beat_up_queue: Vec::new(),
             fallen: 0,

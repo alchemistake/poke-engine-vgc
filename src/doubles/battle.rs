@@ -689,14 +689,6 @@ pub fn run_battle_fuzz(
         }
 
         let turn_no = state.turn;
-        // PS `destinybond` volatile duration is 1: cleared at the start of
-        // each turn (it only triggers if the holder faints on the turn it
-        // was used).
-        for side in [Side::One, Side::Two] {
-            for slot in 0..2 {
-                state.side_mut(side).active[slot].destinybond = false;
-            }
-        }
         if std::env::var("PE_DEBUG_DMG").is_ok() {
             eprintln!("=== TURN index {} (state.turn {})", ci + 1, turn_no);
         }
@@ -924,16 +916,6 @@ pub fn run_battle_fuzz(
                 a.lost_focus = false;
             }
             each_event_update(state, rng);
-        }
-        // Destiny Bond `onTryMove`: set the volatile before the turn's actions
-        // execute (PS sets it in the `beforeTurnMove` phase, so it triggers
-        // even if the holder is KO'd before its own action runs).
-        for a in &actions {
-            if a.choice.move_id == Choices::DESTINYBOND {
-                if state.side(a.side).active[a.slot].pokemon_index == Some(a.pokemon_index) {
-                    state.side_mut(a.side).active[a.slot].destinybond = true;
-                }
-            }
         }
         resort_queue(state, rng, &mut actions[..]);
 
@@ -1452,7 +1434,20 @@ fn execute_action(
     execute_action_inner(state, rng, action, move_order, will_act, queue);
     // Destiny Bond `onBeforeMove` (any other move) / `onMoveAborted` (a `cant`)
     // remove the volatile. PS data/conditions.ts destinybond.
+    let had_db = state.side(action.side).active[action.slot].destinybond;
     if action.choice.move_id != Choices::DESTINYBOND || move_order.len() == order_len {
+        state.side_mut(action.side).active[action.slot].destinybond = false;
+    }
+    // Destiny Bond itself: `volatileStatus: 'destinybond'` is added when the
+    // move executes (PS data/moves.ts destinybond; no `beforeTurnCallback`).
+    if action.choice.move_id == Choices::DESTINYBOND
+        && move_order.len() > order_len
+        && !had_db // onPrepareHit: `!pokemon.removeVolatile('destinybond')` fails the move
+        && state.side(action.side).active[action.slot].pokemon_index == Some(action.pokemon_index)
+    {
+        state.side_mut(action.side).active[action.slot].destinybond = true;
+    }
+    if action.choice.move_id == Choices::DESTINYBOND && had_db && move_order.len() > order_len {
         state.side_mut(action.side).active[action.slot].destinybond = false;
     }
     if move_order.len() > order_len {
@@ -1501,6 +1496,26 @@ fn execute_action(
         if let Some(p) = state.side(action.side).slot_pokemon(action.slot) {
             if p.hp > 0 {
                 let dmg = (p.maxhp / 2).max(1);
+                apply_damage(state, action.side, action.slot, dmg);
+            }
+        }
+    }
+    // Steel Beam `onMoveFail` / Mind Blown, Chloroblast `mindBlownRecoil`: the
+    // user loses round(maxhp / 2) (Magic Guard blocks it). Steel Beam's hit
+    // recoil is its `heal` entry. PS data/moves.ts steelbeam,
+    // sim/battle-actions.ts recoilDamage.
+    if move_order.len() > order_len
+        && match action.choice.move_id {
+            Choices::STEELBEAM => {
+                state.side(action.side).active[action.slot].move_result_this_turn == Some(false)
+            }
+            Choices::MINDBLOWN | Choices::CHLOROBLAST => true,
+            _ => false,
+        }
+    {
+        if let Some(p) = state.side(action.side).slot_pokemon(action.slot) {
+            if p.hp > 0 && p.ability != Abilities::MAGICGUARD {
+                let dmg = ((p.maxhp as f32 / 2.0).round() as i16).max(1);
                 apply_damage(state, action.side, action.slot, dmg);
             }
         }
@@ -2464,6 +2479,47 @@ fn execute_action_inner(
         }
         push_order();
         return;
+    }
+
+    // Magic Bounce `onTryHit` (priority 1): a reflectable move aimed at the
+    // holder is used back on its user (no accuracy roll for the original).
+    // PS data/abilities.ts magicbounce. Single-target moves only; side moves
+    // are handled with the side condition below.
+    // TODO(PS parity): Mold Breaker (breakable), semi-invulnerable holder.
+    if choice.flags.reflectable
+        && !is_self
+        && !is_field
+        && !is_spread
+        && (target_side, target_slot) != (side, slot)
+        && !state.side(side).active[slot].bounced
+        && state
+            .side(target_side)
+            .slot_pokemon(target_slot)
+            .is_some_and(|d| {
+                d.ability == Abilities::MAGICBOUNCE
+                    && !crate::engine::abilities::ignores_target_ability(
+                        state.side(side).team_member(idx),
+                        choice,
+                        &d.ability,
+                    )
+            })
+    {
+        if let Some(bidx) = state.side(target_side).active[target_slot].pokemon_index {
+            push_order();
+            let mut sub = action.clone();
+            sub.side = target_side;
+            sub.slot = target_slot;
+            sub.pokemon_index = bidx;
+            sub.target = slot;
+            sub.target_loc = slot as i8 + 1;
+            sub.priority = action.priority;
+            state.side_mut(target_side).active[target_slot].external_call = true;
+            state.side_mut(target_side).active[target_slot].bounced = true;
+            execute_action_inner(state, rng, &sub, move_order, will_act, queue);
+            state.side_mut(target_side).active[target_slot].external_call = false;
+            state.side_mut(target_side).active[target_slot].bounced = false;
+            return;
+        }
     }
 
     // Thunder Wave is the one Status move with `ignoreImmunity: false`: the
@@ -5767,7 +5823,7 @@ fn contact_abilities(
             });
             if !damped {
                 let maxhp = attacker.maxhp;
-                apply_damage(state, side, slot, (maxhp / 4).max(1));
+                apply_indirect_damage(state, side, slot, (maxhp / 4).max(1));
             }
         }
         return;
@@ -5843,7 +5899,7 @@ fn contact_abilities(
         }
         Some(ContactAbility::Recoil8) => {
             let maxhp = state.side(side).team_member(idx).maxhp;
-            apply_damage(state, side, slot, (maxhp / 8).max(1));
+            apply_indirect_damage(state, side, slot, (maxhp / 8).max(1));
         }
         None => {}
     }
@@ -6335,6 +6391,8 @@ fn apply_on_switch_abilities(
                     weather_type: w,
                     turns_remaining: crate::engine::abilities::WEATHER_ABILITY_TURNS,
                 };
+                // PS `setWeather` -> `eachEvent('WeatherChange')`: the caller sorts.
+                return true;
             }
             return false;
         }

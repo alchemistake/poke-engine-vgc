@@ -1273,6 +1273,11 @@ fn execute_action_inner(
         return;
     }
 
+    // Taunt `onBeforeMove` (priority 5): Status moves are blocked.
+    if state.side(side).active[slot].taunt > 0 && action.choice.category == MoveCategory::Status {
+        return;
+    }
+
     // Confusion (data/conditions.ts `confusion.onBeforeMove`): time--, ends
     // at 0; otherwise a 33/100 chance to hit itself (40 BP typeless, own Atk
     // vs own Def, damage roll) instead of moving. The singles engine's
@@ -1664,6 +1669,18 @@ fn execute_action_inner(
         state.side_mut(side).active[slot].bp_double = !will_move;
     }
 
+    // Future Sight / Doom Desire `onTry`: queue the delayed hit on the target's
+    // slot (fails if one is pending). NOT_FAIL: no accuracy roll now.
+    if matches!(choice.move_id, Choices::FUTURESIGHT | Choices::DOOMDESIRE) && !is_self && !is_field {
+        if state.side(target_side).future_move[target_slot].is_some() {
+            state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+        } else {
+            state.side_mut(target_side).future_move[target_slot] = Some((choice.move_id, side, idx, 0));
+        }
+        push_order();
+        return;
+    }
+
     // Upper Hand `onTry`: the target must still have a queued priority attack
     // (`queue.willMove(target)`).
     if choice.move_id == Choices::UPPERHAND && !is_self && !is_field {
@@ -2025,7 +2042,7 @@ fn execute_action_inner(
         && !is_field
         && (target_side, target_slot) != (side, slot)
         && state.side(target_side).active[target_slot].substitute_health > 0
-        && !choice.flags.sound
+        && !bypasses_substitute(choice)
         && state.side(side).team_member(idx).ability != Abilities::INFILTRATOR
     {
         push_order();
@@ -2033,7 +2050,33 @@ fn execute_action_inner(
     }
 
     // Multi-hit count.
+    // Beat Up `onModifyMove`: one hit per team member that is the user or is
+    // unfainted and status-free (`side.pokemon` order); each hit's base power
+    // is 5 + baseAtk/10 of that member.
+    let mut beat_up_hits = 0u32;
+    state.side_mut(side).active[slot].beat_up_queue.clear();
+    state.side_mut(side).active[slot].bp_fixed = 0.0;
+    if choice.move_id == Choices::BEATUP {
+        let sd = state.side(side);
+        let mut q: Vec<f32> = Vec::new();
+        for &t in sd.ps_order.iter() {
+            let p = &sd.team[t];
+            if p.id == crate::pokemon::PokemonName::NONE || sd.species_names[t].is_empty() {
+                continue;
+            }
+            if t == idx as usize || (p.hp > 0 && p.status == PokemonStatus::NONE) {
+                let sid = crate::doubles::state::to_id(&sd.species_names[t]);
+                let atk = crate::doubles::species_types::species_data(&sid)
+                    .map(|d| d.base_stats.1)
+                    .unwrap_or(100);
+                q.push((5 + atk / 10) as f32);
+            }
+        }
+        beat_up_hits = q.len() as u32;
+        state.side_mut(side).active[slot].beat_up_queue = q;
+    }
     let hit_count: u32 = match choice.multihit {
+        _ if beat_up_hits > 0 => beat_up_hits,
         0 => 1,
         20 => {
             // 35-35-15-15 out of 100 for 2-3-4-5 hits (PS sample of 20).
@@ -2051,8 +2094,15 @@ fn execute_action_inner(
     let mut hits_done = 0u32;
     let mut drop_landed = false;
     let mut extra_order: Vec<String> = Vec::new();
+    let mut berserk_before: Vec<(Side, usize, i16)> = Vec::new();
 
     for _ in 0..hit_count {
+      if choice.move_id == Choices::BEATUP {
+          let a = &mut state.side_mut(side).active[slot];
+          if !a.beat_up_queue.is_empty() {
+              a.bp_fixed = a.beat_up_queue.remove(0);
+          }
+      }
       let hit_targets: Vec<(Side, usize)> =
           if is_spread { spread_list.clone() } else { vec![(target_side, target_slot)] };
       // PS `getSpreadDamage`: every target's crit + damage roll comes before
@@ -2061,7 +2111,7 @@ fn execute_action_inner(
           let sp = spread_count > 1;
           // A substitute's `onTryPrimaryHit` computes its damage first
           // (before `getSpreadDamage` covers the other targets).
-          let bypass = choice.flags.sound
+          let bypass = bypasses_substitute(choice)
               || state.side(side).team_member(idx).ability == Abilities::INFILTRATOR;
           let mut order: Vec<usize> = (0..hit_targets.len()).collect();
           order.sort_by_key(|&i| {
@@ -2113,7 +2163,7 @@ fn execute_action_inner(
             let sub_hp = state.side(target_side).active[target_slot].substitute_health;
             if sub_hp > 0
                 && (target_side, target_slot) != (side, slot)
-                && !choice.flags.sound
+                && !bypasses_substitute(choice)
                 && state.side(side).team_member(idx).ability != Abilities::INFILTRATOR
             {
                 let d = damage.min(sub_hp);
@@ -2211,6 +2261,17 @@ fn execute_action_inner(
             }
             total_damage = total_damage.saturating_add(damage);
             hit_damage = Some(damage);
+            // Berserk `onAfterMoveSecondary`: remember the HP before this move's
+            // first hit on the holder.
+            if damage > 0 && target_side != side {
+                if let Some(d) = state.side(target_side).slot_pokemon(target_slot) {
+                    if d.ability == Abilities::BERSERK
+                        && !berserk_before.iter().any(|&(s2, l2, _)| s2 == target_side && l2 == target_slot)
+                    {
+                        berserk_before.push((target_side, target_slot, d.hp + damage));
+                    }
+                }
+            }
             // Emergency Exit / Wimp Out `onEmergencyExit` (champions): crossing
             // 50% HP flags the holder to switch out after the action.
             if damage > 0 && target_side != side {
@@ -2580,6 +2641,65 @@ fn execute_action_inner(
             }
         }
 
+        // Heal Pulse `onHit`: heals the target by ceil(maxhp/2) (x0.75 with
+        // Mega Launcher); fails at full HP.
+        if choice.move_id == Choices::HEALPULSE && ti == 0 {
+            let mega = state.side(side).team_member(idx).ability == Abilities::MEGALAUNCHER;
+            if let Some(tidx) = state.side(target_side).active[target_slot].pokemon_index {
+                let pm = state.side_mut(target_side).team_member_mut(tidx);
+                let amount = if mega {
+                    ((pm.maxhp as i64 * 3072 + 2047) / 4096) as i16
+                } else {
+                    (pm.maxhp + 1) / 2
+                };
+                if pm.hp >= pm.maxhp {
+                    move_failed = true;
+                } else {
+                    pm.hp = (pm.hp + amount).min(pm.maxhp);
+                }
+            }
+        }
+
+        // Defog `onHit`: -1 evasion (unless behind a Substitute), clear the
+        // target side's screens and both sides' hazards, clear the terrain.
+        if choice.move_id == Choices::DEFOG && ti == 0 {
+            let mut success = false;
+            if state.side(target_side).active[target_slot].substitute_health <= 0 {
+                if let Some(tidx) = state.side(target_side).active[target_slot].pokemon_index {
+                    let before = state.side(target_side).team_boosts[tidx as usize].eva;
+                    apply_boosts(state, target_side, tidx, &StatBoosts { evasion: -1, ..Default::default() }, true);
+                    success = state.side(target_side).team_boosts[tidx as usize].eva != before;
+                }
+            }
+            let sc = &mut state.side_mut(target_side).side_conditions;
+            sc.reflect = 0;
+            sc.light_screen = 0;
+            sc.aurora_veil = 0;
+            sc.safeguard = 0;
+            sc.mist = 0;
+            for sd in [target_side, side] {
+                let sc = &mut state.side_mut(sd).side_conditions;
+                if sc.spikes > 0 || sc.toxic_spikes > 0 || sc.stealth_rock > 0 || sc.sticky_web > 0 {
+                    success = true;
+                }
+                sc.spikes = 0;
+                sc.toxic_spikes = 0;
+                sc.stealth_rock = 0;
+                sc.sticky_web = 0;
+            }
+            if state.terrain.terrain_type != crate::engine::state::Terrain::NONE {
+                state.terrain = crate::state::StateTerrain {
+                    terrain_type: crate::engine::state::Terrain::NONE,
+                    turns_remaining: 0,
+                };
+                // `clearTerrain` -> `eachEvent('TerrainChange')`.
+                let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+            }
+            if !success {
+                move_failed = true;
+            }
+        }
+
         // Acupressure `onHit`: +2 to a random stat below +6 (`sample`).
         if choice.move_id == Choices::ACUPRESSURE && ti == 0 {
             let (ts, tsl) = match resolved {
@@ -2606,6 +2726,19 @@ fn execute_action_inner(
                     }
                     apply_boosts(state, ts, tidx, &b, false);
                 }
+            }
+        }
+
+        // Taunt: `addVolatile('taunt')`, duration 3 (+1 when the target already
+        // acted this turn after its first turn out).
+        if choice.move_id == Choices::TAUNT && ti == 0 {
+            let tidx = state.side(target_side).active[target_slot].pokemon_index;
+            if state.side(target_side).active[target_slot].taunt > 0 {
+                move_failed = true;
+            } else {
+                let will_move = queue.iter().any(|a| a.side == target_side && Some(a.pokemon_index) == tidx);
+                let a = &mut state.side_mut(target_side).active[target_slot];
+                a.taunt = 3 + (a.active_turns > 0 && !will_move) as u8;
             }
         }
 
@@ -2660,7 +2793,13 @@ fn execute_action_inner(
         // Rest `onHit`: `setStatus('slp')` (draws the sleep duration), then the
         // sleep counter is forced to 3 and the user heals fully.
         if choice.move_id == Choices::REST && ti == 0 {
-            if status_immune(state, side, slot, PokemonStatus::SLEEP, false, side, slot) {
+            // `setStatus('slp')` replaces another status (only sleep itself is
+            // refused, handled in `onTry`).
+            let prev = state.side(side).team_member(idx).status;
+            state.side_mut(side).team_member_mut(idx).status = PokemonStatus::NONE;
+            let immune = status_immune(state, side, slot, PokemonStatus::SLEEP, false, side, slot);
+            state.side_mut(side).team_member_mut(idx).status = prev;
+            if immune {
                 move_failed = true;
             } else {
                 set_status(state, rng, side, idx, PokemonStatus::SLEEP);
@@ -3034,6 +3173,16 @@ fn execute_action_inner(
         }
     }
 
+    // Berserk: +1 SpA when the move took the holder from above to at/below 50%.
+    for &(bs, bl, before) in &berserk_before {
+        if let Some(d) = state.side(bs).slot_pokemon(bl) {
+            if d.hp > 0 && (d.hp as i32) * 2 <= d.maxhp as i32 && (before as i32) * 2 > d.maxhp as i32 {
+                let bidx = state.side(bs).active[bl].pokemon_index.unwrap();
+                apply_boosts(state, bs, bidx, &StatBoosts { special_attack: 1, ..Default::default() }, false);
+            }
+        }
+    }
+
     // lockedmove `onAfterMove`: removed when duration is 1; `onEnd` then
     // confuses the user unless trueDuration > 1.
     if let Some((1, t)) = state.side(side).active[slot].locked_move {
@@ -3106,6 +3255,94 @@ fn execute_action_inner(
     move_order.extend(extra_order);
 }
 
+/// PS `flags.bypasssub` (champions data): the move ignores a Substitute.
+fn bypasses_substitute(c: &Choice) -> bool {
+    const IDS: &[&str] = &[
+    "confide",
+    "conversion2",
+    "curse",
+    "disable",
+    "disarmingvoice",
+    "dragoncheer",
+    "echoedvoice",
+    "encore",
+    "growl",
+    "heartswap",
+    "holdhands",
+    "howl",
+    "hyperspacefury",
+    "hyperspacehole",
+    "junglehealing",
+    "mimic",
+    "playnice",
+    "relicsong",
+    "sketch",
+    "supersonic",
+    "afteryou",
+    "alluringvoice",
+    "aromaticmist",
+    "attract",
+    "bestow",
+    "boomburst",
+    "bugbuzz",
+    "chatter",
+    "clangingscales",
+    "clangoroussoulblaze",
+    "coaching",
+    "defog",
+    "destinybond",
+    "eeriespell",
+    "fairylock",
+    "foresight",
+    "gearup",
+    "grasswhistle",
+    "grudge",
+    "guardswap",
+    "haze",
+    "healbell",
+    "helpinghand",
+    "hypervoice",
+    "imprison",
+    "instruct",
+    "lifedew",
+    "magneticflux",
+    "mefirst",
+    "metalsound",
+    "miracleeye",
+    "nobleroar",
+    "odorsleuth",
+    "overdrive",
+    "partingshot",
+    "perishsong",
+    "powder",
+    "powerswap",
+    "psychicnoise",
+    "psychup",
+    "reflecttype",
+    "roar",
+    "roleplay",
+    "round",
+    "screech",
+    "sing",
+    "skillswap",
+    "snarl",
+    "snatch",
+    "snore",
+    "sparklingaria",
+    "spectralthief",
+    "speedswap",
+    "spite",
+    "taunt",
+    "teatime",
+    "torchsong",
+    "torment",
+    "uproar",
+    "whirlwind",
+    ];
+    let id = c.move_id.to_string().to_lowercase();
+    IDS.contains(&id.as_str())
+}
+
 fn choice_is_attack(c: &Choice) -> bool {
     matches!(c.category, MoveCategory::Physical | MoveCategory::Special)
 }
@@ -3139,6 +3376,7 @@ fn base_power_with_modifiers(
     speeds: (i32, i32),
     terrain: crate::engine::state::Terrain,
     ate_boosted: bool,
+    fallen: u8,
 ) -> f32 {
     let dynamic = dynamic_base_power(choice, attacker, Some(defender), speeds);
     let bp = if dynamic > 0.0 { dynamic } else { choice.base_power };
@@ -3165,6 +3403,10 @@ fn base_power_with_modifiers(
         }
         Abilities::FLAREBOOST if special && attacker.status == PokemonStatus::BURN => mods.push((19, 6144)),
         Abilities::PUNKROCK if f.sound => mods.push((7, 5325)),
+        // supremeoverlord.onBasePower (priority 21): `powMod[fallen]`.
+        Abilities::SUPREMEOVERLORD if fallen > 0 => {
+            mods.push((21, [4096, 4506, 4915, 5325, 5734, 6144][fallen.min(5) as usize]))
+        }
         // sheerforce.onBasePower (priority 21), when it removed the secondaries.
         Abilities::SHEERFORCE if has_secondaries(choice) => mods.push((21, 5325)),
         // TODO(PS parity): Rivalry (genders), Sand Force (weather), Analytic,
@@ -3455,7 +3697,11 @@ fn compute_hit_damage(
         // and Secret Sword (Atk vs SpD). Boosts follow the same stat.
         // Foul Play (`overrideOffensivePokemon: 'target'`): the
         // target's Atk stat and boosts.
-        let (base_atk, atk_boost_stat) = if choice.move_id == Choices::FOULPLAY {
+        let (base_atk, atk_boost_stat) = if choice.move_id == Choices::BODYPRESS {
+            // `overrideOffensiveStat: 'def'` (Wonder Room swaps the value).
+            let v = if state.wonder_room.active { attacker.special_defense } else { attacker.defense };
+            (v, att_boost.def)
+        } else if choice.move_id == Choices::FOULPLAY {
             (defender.attack, def_boost.atk)
         } else if is_physical {
             (attacker.attack, att_boost.atk)
@@ -3527,9 +3773,13 @@ fn compute_hit_damage(
                 speeds,
                 state.terrain.terrain_type,
                 ate_boosted,
+                state.side(side).active[slot].fallen,
             ),
         };
         let mut ctx = ctx;
+        if state.side(side).active[slot].bp_fixed > 0.0 {
+            ctx.base_power_override = state.side(side).active[slot].bp_fixed;
+        }
         if state.side(side).active[slot].bp_double {
             ctx.base_power_override = if ctx.base_power_override > 0.0 {
                 ctx.base_power_override
@@ -3682,6 +3932,46 @@ fn try_absorb(state: &mut DoublesState, ts: Side, tsl: usize, move_type: Pokemon
         A::FlashFire => state.side_mut(ts).active[tsl].flash_fire = true,
     }
     true
+}
+
+/// `futuremove.onEnd`: the delayed Future Sight / Doom Desire hit
+/// (`trySpreadMoveHit([target], source, hitMove, true)`): type immunity, an
+/// accuracy roll, then crit + damage roll. Skipped when the target slot is
+/// empty / fainted or the user is the target.
+// TODO(PS parity): source no longer active, secondaries, Infiltrator / Normalize.
+fn resolve_future_move(
+    state: &mut DoublesState,
+    rng: &mut Gen5Rng,
+    mv: Choices,
+    ss: Side,
+    si: PokemonIndex,
+    ts: Side,
+    tslot: usize,
+) {
+    let Some(sslot) = (0..2).find(|&sl| state.side(ss).active[sl].pokemon_index == Some(si)) else { return };
+    if !state.side(ts).slot_pokemon(tslot).map(|p| p.hp > 0).unwrap_or(false) || (ss, sslot) == (ts, tslot) {
+        return;
+    }
+    let Some(mut choice) = MOVES.get(&mv).cloned() else { return };
+    choice.accuracy = 100.0;
+    if state.side(ts).slot_pokemon(tslot).map(|d| crate::doubles::damage::type_mod(&choice.move_type, d).is_none()).unwrap_or(true) {
+        return;
+    }
+    let ab = state.side(ss).slot_boosts(sslot).map(|b| b.acc).unwrap_or(0);
+    let eb = state.side(ts).slot_boosts(tslot).map(|b| b.eva).unwrap_or(0);
+    if !roll_accuracy_boosted(choice.accuracy, ab, eb, rng) {
+        return;
+    }
+    let (damage, _) = compute_hit_damage(state, rng, ss, sslot, si, ts, tslot, &choice, false, false);
+    let damage = match state.side(ts).slot_pokemon(tslot) {
+        Some(d) => damage.min(d.hp.max(0)),
+        None => damage,
+    };
+    if damage > 0 {
+        apply_damage(state, ts, tslot, damage);
+    }
+    each_event_update(state, rng);
+    each_event_update(state, rng);
 }
 
 /// Cursed Body (PS data/abilities.ts `onDamagingHit`): 30% to Disable the
@@ -3953,6 +4243,14 @@ fn apply_on_switch_abilities(
             None => return false,
         }
     };
+    // Supreme Overlord `onStart`: `fallen = min(side.totalFainted, 5)`.
+    if ability == Abilities::SUPREMEOVERLORD {
+        let sd = state.side(side);
+        let fainted = sd.team.iter().enumerate().filter(|(i, p)| {
+            p.id != crate::pokemon::PokemonName::NONE && p.hp <= 0 && !sd.species_names[*i].is_empty()
+        }).count();
+        state.side_mut(side).active[slot].fallen = fainted.min(5) as u8;
+    }
     // Trace (`trace.onStart` -> `onUpdate`): copies a RANDOM adjacent foe's
     // ability, drawing `sample(possibleTargets)`. Foes with the `notrace`
     // flag or No Ability are excluded. Must happen before the copied
@@ -4242,10 +4540,18 @@ enum ResidualKind {
     Weather,
     /// brn / psn / tox `onResidual`.
     Status(Side, usize),
+    /// `taunt` duration countdown (order 15).
+    Taunt(Side, usize),
+    /// Healer / Shed Skin `onResidual` (order 5, subOrder 3).
+    CureStatus(Side, usize),
+    /// Moody `onResidual` (order 28, subOrder 2).
+    Moody(Side, usize),
     /// Ghost `curse` damage (order 12).
     Curse(Side, usize),
     /// `perishsong` countdown (order 24).
     Perish(Side, usize),
+    /// futuremove slot condition (order 3): the delayed hit.
+    FutureMove(Side, usize),
     /// Wish slot condition (order 4): heals on the second residual.
     Wish(Side, usize),
     /// `aquaring` `onResidual` (order 6).
@@ -4340,6 +4646,10 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
                 continue;
             }
             let speed = cached_speed(state, side, slot);
+            // futuremove slot condition (`onResidualOrder` 3).
+            if state.side(side).future_move[slot].is_some() {
+                push(3, speed, 2, ResidualKind::FutureMove(side, slot));
+            }
             // Wish slot condition (`onResidualOrder` 4).
             if state.side(side).wish[slot].is_some() {
                 push(4, speed, 2, ResidualKind::Wish(side, slot));
@@ -4397,6 +4707,9 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             if a.yawn > 0 {
                 push(23, speed, 2, ResidualKind::Yawn(side, slot));
             }
+            if a.taunt > 0 {
+                push(15, speed, 2, ResidualKind::Taunt(side, slot));
+            }
             if a.cursed {
                 push(12, speed, 2, ResidualKind::Curse(side, slot));
             }
@@ -4432,6 +4745,12 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
                 push(5, speed, 2, ResidualKind::GrassyHeal(side, slot));
             }
             // Abilities (subOrder 7 unless set).
+            if matches!(p.ability, Abilities::HEALER | Abilities::SHEDSKIN) {
+                push(5, speed, 3, ResidualKind::CureStatus(side, slot));
+            }
+            if p.ability == Abilities::MOODY {
+                push(28, speed, 2, ResidualKind::Moody(side, slot));
+            }
             if p.ability == Abilities::SPEEDBOOST {
                 push(28, speed, 2, ResidualKind::SpeedBoost(side, slot));
             }
@@ -4604,6 +4923,73 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
                 apply_damage(state, side, slot, dmg);
             }
             }
+            ResidualKind::Taunt(side, slot) => {
+                let a = &mut state.side_mut(side).active[slot];
+                a.taunt = a.taunt.saturating_sub(1);
+            }
+            ResidualKind::CureStatus(side, slot) => {
+                let Some(idx) = state.side(side).active[slot].pokemon_index else { continue };
+                let (ab, hp) = {
+                    let p = state.side(side).team_member(idx);
+                    (p.ability, p.hp)
+                };
+                if hp <= 0 {
+                    continue;
+                }
+                if ab == Abilities::SHEDSKIN {
+                    // 33/100 to cure its own status.
+                    if state.side(side).team_member(idx).status != PokemonStatus::NONE
+                        && rng.label("other: onResidual").random_chance(33, 100)
+                    {
+                        state.side_mut(side).team_member_mut(idx).status = PokemonStatus::NONE;
+                    }
+                } else {
+                    // Healer: 3/10 per statused adjacent ally.
+                    let al = 1 - slot;
+                    if let Some(aidx) = state.side(side).active[al].pokemon_index {
+                        let a = state.side(side).team_member(aidx);
+                        if a.hp > 0 && a.status != PokemonStatus::NONE && rng.label("other: onResidual").random_chance(3, 10) {
+                            state.side_mut(side).team_member_mut(aidx).status = PokemonStatus::NONE;
+                        }
+                    }
+                }
+            }
+            ResidualKind::Moody(side, slot) => {
+                // PS moody.onResidual: +2 to a random stat below +6, -1 to a
+                // different random stat above -6 (`sample` each; no accuracy /
+                // evasion).
+                let Some(idx) = state.side(side).active[slot].pokemon_index else { continue };
+                if state.side(side).team_member(idx).hp <= 0 {
+                    continue;
+                }
+                let tb = state.side(side).team_boosts[idx as usize].clone();
+                let vals = [tb.atk, tb.def, tb.spa, tb.spd, tb.spe];
+                let ups: Vec<usize> = (0..5).filter(|&n| vals[n] < 6).collect();
+                let plus = if ups.is_empty() {
+                    None
+                } else {
+                    Some(ups[rng.label("other: onResidual").random(ups.len() as u32) as usize])
+                };
+                let downs: Vec<usize> = (0..5).filter(|&n| vals[n] > -6 && Some(n) != plus).collect();
+                let minus = if downs.is_empty() {
+                    None
+                } else {
+                    Some(downs[rng.label("other: onResidual").random(downs.len() as u32) as usize])
+                };
+                let mut b = StatBoosts::default();
+                for (n, amt) in [(plus, 2i8), (minus, -1i8)] {
+                    if let Some(n) = n {
+                        match n {
+                            0 => b.attack = amt,
+                            1 => b.defense = amt,
+                            2 => b.special_attack = amt,
+                            3 => b.special_defense = amt,
+                            _ => b.speed = amt,
+                        }
+                    }
+                }
+                apply_boosts(state, side, idx, &b, false);
+            }
             ResidualKind::Curse(side, slot) => {
                 if let Some(p) = state.side(side).slot_pokemon(slot) {
                     if p.hp > 0 {
@@ -4623,6 +5009,17 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
                     let hp = state.side(side).slot_pokemon(slot).map(|p| p.hp).unwrap_or(0);
                     apply_damage(state, side, slot, hp);
                 }
+            }
+            ResidualKind::FutureMove(side, slot) => {
+                let Some((mv, ss, si, seen)) = state.side(side).future_move[slot] else { continue };
+                // `getOverflowedTurnCount() < endingTurn` skips the first two
+                // residuals (cast turn and the next one).
+                if seen < 2 {
+                    state.side_mut(side).future_move[slot] = Some((mv, ss, si, seen + 1));
+                    continue;
+                }
+                state.side_mut(side).future_move[slot] = None;
+                resolve_future_move(state, rng, mv, ss, si, side, slot);
             }
             ResidualKind::Wish(side, slot) => {
                 if let Some((hp, seen)) = state.side(side).wish[slot] {
@@ -4890,6 +5287,7 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
         for a in &mut s.active {
             a.counter_vol = None;
             a.mirror_coat_vol = None;
+            a.active_turns = a.active_turns.saturating_add(1);
             a.move_result_last_turn = a.move_result_this_turn;
             a.move_result_this_turn = None;
             a.flinched = false;

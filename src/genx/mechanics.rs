@@ -471,6 +471,10 @@ pub fn toxic_always_hits(move_id: Choices, user: &Pokemon) -> bool {
 /// (`move.type === X && attacker.hp <= attacker.maxhp / 3` -> x1.5).
 // TODO(PS parity): Huge Power, Gorilla Tactics, Hustle, Defeatist, ...
 pub fn attacker_stat_modifier(attacker: &Pokemon, choice: &Choice) -> i64 {
+    // Huge Power / Pure Power `onModifyAtk`: x2 (physical moves).
+    if matches!(attacker.ability, Abilities::HUGEPOWER | Abilities::PUREPOWER) && choice.category == MoveCategory::Physical {
+        return 8192;
+    }
     let pinch = (attacker.hp as i32) * 3 <= attacker.maxhp as i32;
     let boosted = match attacker.ability {
         Abilities::OVERGROW => choice.move_type == PokemonType::GRASS,

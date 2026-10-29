@@ -85,6 +85,15 @@ pub struct ActiveSlot {
     /// `yawn` volatile: remaining duration (0 = none) and the user who
     /// applied it (for the sleep `trySetStatus` when it ends).
     pub yawn: u8,
+    /// Beat Up: base power for the current hit / the remaining hits' base powers.
+    pub bp_fixed: f32,
+    pub beat_up_queue: Vec<f32>,
+    /// Supreme Overlord `fallen` count fixed at switch-in (max 5).
+    pub fallen: u8,
+    /// `taunt` volatile: remaining duration (0 = none).
+    pub taunt: u8,
+    /// PS `activeTurns`: end-of-turn count since switch-in.
+    pub active_turns: u8,
     /// Illusion ended (hit by a damaging move): the log shows the real species.
     pub illusion_broken: bool,
     /// `curse` volatile (Ghost Curse): loses 1/4 max HP each residual (order 12).
@@ -191,6 +200,11 @@ impl ActiveSlot {
             stats_raised_this_turn: false,
             partial_trap: None,
             yawn: 0,
+            bp_fixed: 0.0,
+            beat_up_queue: Vec::new(),
+            fallen: 0,
+            taunt: 0,
+            active_turns: 0,
             illusion_broken: false,
             cursed: false,
             bp_double: false,
@@ -267,6 +281,8 @@ pub struct DoublesSide {
     pub ps_order: [usize; 6],
     /// Wish slot condition per position: (heal amount, residuals seen).
     pub wish: [Option<(i16, u8)>; 2],
+    /// `futuremove` slot condition per position: (move, source side, source index, residuals seen).
+    pub future_move: [Option<(Choices, Side, PokemonIndex, u8)>; 2],
     /// Side conditions in insertion order (PS object key order).
     pub sc_order: Vec<String>,
     /// Supersweet Syrup already triggered (PS `syrupTriggered`, once per
@@ -612,7 +628,7 @@ pub struct ReplayInput {
     pub winner: String,
 }
 
-fn to_id(s: &str) -> String {
+pub fn to_id(s: &str) -> String {
     s.to_lowercase()
         .chars()
         .filter(|c| c.is_ascii_alphanumeric())
@@ -850,6 +866,7 @@ impl DoublesState {
             speed_cache: [0; 6],
             ps_order: [0, 1, 2, 3, 4, 5],
             wish: [None, None],
+            future_move: [None, None],
             sc_order: Vec::new(),
             syrup_triggered: [false; 6],
         };
@@ -864,6 +881,7 @@ impl DoublesState {
             speed_cache: [0; 6],
             ps_order: [0, 1, 2, 3, 4, 5],
             wish: [None, None],
+            future_move: [None, None],
             sc_order: Vec::new(),
             syrup_triggered: [false; 6],
         };

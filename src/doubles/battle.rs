@@ -791,7 +791,15 @@ pub fn run_battle_fuzz(
                             };
                             // A locked charge move that is not the chosen one (Dive
                             // called by Copycat): PS runs the locked move instead.
+                            // Uproar lock (PS `lockedmove` from `uproar`): the user keeps
+                            // using Uproar whatever was sent (no PP, priority 0).
+                            let uproar_lock = s.active[slot].uproar > 0 && mv.move_id != Choices::UPROAR && !*struggle;
+                            let prio = if uproar_lock { 0 } else { prio };
                             let (mv, no_pp) = match s.active[slot].charging {
+                                _ if uproar_lock => match MOVES.get(&Choices::UPROAR).cloned() {
+                                    Some(l) => (l, true),
+                                    None => (mv, false),
+                                },
                                 Some((m, _)) if m != mv.move_id && !*struggle
                                     && ![&p.moves.m0, &p.moves.m1, &p.moves.m2, &p.moves.m3].iter().any(|x| x.id == m) =>
                                 {
@@ -1097,8 +1105,8 @@ pub fn run_battle_fuzz(
                         // Baton Pass `copyVolatileFrom`: the passable volatiles.
                         let baton_extra = if state.side(side).active[slot].baton_passing {
                             let a = &state.side(side).active[slot];
-                            // `partiallytrapped` has no `noCopy`: it passes too.
-                            Some((a.cursed, a.focus_energy, a.leech_seed, a.ingrain, a.aqua_ring, a.heal_block, a.partial_trap.clone()))
+                            // `partiallytrapped` and `octolock` have no `noCopy`: they pass too.
+                            Some((a.cursed, a.focus_energy, a.leech_seed, a.ingrain, a.aqua_ring, a.heal_block, a.partial_trap.clone(), a.octolock))
                         } else {
                             None
                         };
@@ -1132,7 +1140,7 @@ pub fn run_battle_fuzz(
                                 }
                             }
                         }
-                        if let Some((cursed, fe, ls, ing, aq, hb, pt)) = baton_extra {
+                        if let Some((cursed, fe, ls, ing, aq, hb, pt, oc)) = baton_extra {
                             let a = &mut state.side_mut(side).active[slot];
                             a.cursed = cursed;
                             a.focus_energy = fe;
@@ -1141,6 +1149,7 @@ pub fn run_battle_fuzz(
                             a.aqua_ring = aq;
                             a.heal_block = hb;
                             a.partial_trap = pt;
+                            a.octolock = oc;
                         }
                         if let Some((boosts, confusion, sub)) = passed {
                             if let Some(new_idx) = state.side(side).active[slot].pokemon_index {
@@ -1945,6 +1954,15 @@ fn execute_action_inner(
         } else if sp.contains("combat") {
             modified.move_type = PokemonType::FIGHTING;
         }
+    }
+    // Aura Wheel `onModifyType` (PS data/moves.ts aurawheel): Dark while the user
+    // is Morpeko-Hangry, else Electric.
+    if modified.move_id == Choices::AURAWHEEL {
+        modified.move_type = if state.side(side).team_member(idx).id == crate::pokemon::PokemonName::MORPEKOHANGRY {
+            PokemonType::DARK
+        } else {
+            PokemonType::ELECTRIC
+        };
     }
     // Electrify `onModifyType` (priority -2): any move but Struggle becomes Electric.
     if state.side(side).active[slot].electrify && modified.move_id != Choices::STRUGGLE {
@@ -3039,6 +3057,22 @@ fn execute_action_inner(
         ) | (Choices::BLIZZARD, Weather::HAIL | Weather::SNOW)
     );
 
+    // Octolock `onTryImmunity`: Ghost targets are immune (PS typechart `trapped`
+    // immunity; only Octolock checks it, the Bind family does not). No draw.
+    let traps = choice.volatile_status.as_ref().is_some_and(|v| v.volatile_status == PokemonVolatileStatus::OCTOLOCK);
+    if traps && !is_self && !is_field && (side, slot) != (target_side, target_slot) {
+        let ghost = state
+            .side(target_side)
+            .slot_pokemon(target_slot)
+            .map(|p| p.has_type(&PokemonType::GHOST))
+            .unwrap_or(false);
+        if ghost {
+            state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+            push_order();
+            return;
+        }
+    }
+
     // Accuracy roll (drawn even at 100%; skipped for always-hit / 0.0).
     if std::env::var("PE_DEBUG_DMG").is_ok() {
         eprintln!("REACHED_ACC {} {} target_slot={} has_target={}", name, choice.move_id, target_slot, has_target);
@@ -4100,6 +4134,14 @@ fn execute_action_inner(
                 }
                 PokemonVolatileStatus::PARTIALLYTRAPPED => {
                     try_partial_trap(state, rng, ts, tslot, side, idx)
+                }
+                PokemonVolatileStatus::OCTOLOCK => {
+                    // PS `addVolatile`: no-op while present; no draw.
+                    if state.side(ts).active[tslot].octolock.is_none()
+                        && state.side(ts).slot_pokemon(tslot).map(|p| p.hp > 0).unwrap_or(false)
+                    {
+                        state.side_mut(ts).active[tslot].octolock = Some((side, idx));
+                    }
                 }
                 PokemonVolatileStatus::HEALBLOCK => {
                     // data/moves.ts healblock.condition: duration 5 (2 from
@@ -5549,6 +5591,17 @@ fn execute_action_inner(
         let a = &mut state.side_mut(side).active[slot];
         a.leech_seed = None;
         a.partial_trap = None;
+    }
+
+    // Jaw Lock `onHit` (PS data/moves.ts jawlock): the user and the target both
+    // gain the `trapped` volatile (no-op while present; the target must be alive).
+    if choice.move_id == Choices::JAWLOCK && hits_done > 0 {
+        if state.side(side).slot_pokemon(slot).map(|p| p.hp > 0).unwrap_or(false) {
+            state.side_mut(side).active[slot].jaw_trapped = true;
+        }
+        if state.side(target_side).slot_pokemon(target_slot).map(|p| p.hp > 0).unwrap_or(false) {
+            state.side_mut(target_side).active[target_slot].jaw_trapped = true;
+        }
     }
 
     // PS `resolveFaints` right after the hit loop (before the recoil).
@@ -7738,6 +7791,7 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
         (p.hp > 0 && p.id != crate::pokemon::PokemonName::NONE, p.types)
     };
     let gravity_on = state.gravity.active;
+    let misty_on = state.terrain.terrain_type == crate::engine::state::Terrain::MISTYTERRAIN;
     let s = state.side_mut(side);
     s.active[slot] = ActiveSlot::empty();
     s.fainted_in_slot[slot] = None;
@@ -7788,7 +7842,8 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
         };
         let spikes_dmg = spikes_dmg + rock_dmg;
         // Safeguard `onSetStatus` blocks the hazard's status (source is a foe).
-        let new_status = if grounded && toxic_spikes > 0 && s.side_conditions.safeguard == 0 {
+        // Misty Terrain `onSetStatus`: grounded pokemon can't gain a status.
+        let new_status = if grounded && !misty_on && toxic_spikes > 0 && s.side_conditions.safeguard == 0 {
             let cur = s.team_member(idx).status;
             if cur == PokemonStatus::NONE {
                 if types.0 == PokemonType::POISON || types.1 == PokemonType::POISON {
@@ -7891,6 +7946,8 @@ enum ResidualKind {
     Encore(Side, usize),
     Ingrain(Side, usize),
     SyrupBomb(Side, usize),
+    /// `octolock` `onResidual` (order 14): def/spd -1 from the binder.
+    Octolock(Side, usize),
     HealBlock(Side, usize),
     /// `perishsong` countdown (order 24).
     Perish(Side, usize),
@@ -8123,6 +8180,9 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             if a.syrup_bomb.is_some() {
                 push(14, speed, 2, ResidualKind::SyrupBomb(side, slot));
             }
+            if a.octolock.is_some() {
+                push(14, speed, 2, ResidualKind::Octolock(side, slot));
+            }
             if a.heal_block > 0 {
                 push(20, speed, 2, ResidualKind::HealBlock(side, slot));
             }
@@ -8303,9 +8363,11 @@ fn sorted_actives(state: &DoublesState, rng: &mut Gen5Rng, label: &'static str) 
         .collect()
 }
 
-/// End-of-turn `DisableMove` event tie draws (see `end_turn_disable_moves`
-/// call site). Consumes the PRNG draws PS's `speedSort` makes when a pokemon
-/// has more than one `onDisableMove` handler (Taunt + Throat Chop, ...).
+/// End-of-turn `DisableMove` and `TrapPokemon` event tie draws, per alive
+/// active pokemon in PS `endTurn` order (sides, then slots). Each event's
+/// handler list is speed-sorted and every exact tie group is shuffled.
+/// `DisableMove`: Taunt + Throat Chop, ... `TrapPokemon`: `trapped`,
+/// `partiallytrapped`, `octolock` and Fairy Lock `onTrapPokemon`.
 fn end_turn_disable_moves(state: &DoublesState, rng: &mut Gen5Rng) {
     for (s, sl) in [(Side::One, 0usize), (Side::One, 1), (Side::Two, 0), (Side::Two, 1)] {
         let ss = state.side(s);
@@ -8343,31 +8405,53 @@ fn end_turn_disable_moves(state: &DoublesState, rng: &mut Gen5Rng) {
         if state.gravity.active {
             hs.push((4294967296, 0, 2));
         }
-        if hs.len() < 2 {
-            continue;
+        if hs.len() >= 2 {
+            sort_handler_ties(&mut hs, rng, "speed tie (move order)");
         }
-        // `speedSort` over the handlers: shuffle every exact tie group.
-        let key = |e: &(i64, i32, i64)| (e.0, -(e.1 as i64), e.2);
-        let mut sorted = 0usize;
-        while sorted + 1 < hs.len() {
-            let mut next_indexes = vec![sorted];
-            for i in (sorted + 1)..hs.len() {
-                match key(&hs[i]).cmp(&key(&hs[next_indexes[0]])) {
-                    std::cmp::Ordering::Less => next_indexes = vec![i],
-                    std::cmp::Ordering::Equal => next_indexes.push(i),
-                    std::cmp::Ordering::Greater => {}
-                }
-            }
-            for (i, &index) in next_indexes.iter().enumerate() {
-                if index != sorted + i {
-                    hs.swap(sorted + i, index);
-                }
-            }
-            if next_indexes.len() > 1 {
-                shuffle(&mut hs, sorted, sorted + next_indexes.len(), rng, "speed tie (move order)");
-            }
-            sorted += next_indexes.len();
+        // `TrapPokemon` runs for the same pokemon right after its DisableMove.
+        let mut ts: Vec<(i64, i32, i64)> = Vec::new();
+        if a.jaw_trapped {
+            ts.push((4294967296, speed, 2));
         }
+        if a.partial_trap.is_some() {
+            ts.push((4294967296, speed, 2));
+        }
+        if a.octolock.is_some() {
+            ts.push((4294967296, speed, 2));
+        }
+        // Fairy Lock field condition: a field handler (subOrder 5, speed 0).
+        if state.fairy_lock.active {
+            ts.push((4294967296, 0, 5));
+        }
+        if ts.len() >= 2 {
+            sort_handler_ties(&mut ts, rng, "speed tie (trap)");
+        }
+    }
+}
+
+/// PS `speedSort` over a handler list keyed by (order, speed, subOrder):
+/// shuffle every exact tie group, one PRNG draw per swap.
+fn sort_handler_ties(hs: &mut [(i64, i32, i64)], rng: &mut Gen5Rng, label: &'static str) {
+    let key = |e: &(i64, i32, i64)| (e.0, -(e.1 as i64), e.2);
+    let mut sorted = 0usize;
+    while sorted + 1 < hs.len() {
+        let mut next_indexes = vec![sorted];
+        for i in (sorted + 1)..hs.len() {
+            match key(&hs[i]).cmp(&key(&hs[next_indexes[0]])) {
+                std::cmp::Ordering::Less => next_indexes = vec![i],
+                std::cmp::Ordering::Equal => next_indexes.push(i),
+                std::cmp::Ordering::Greater => {}
+            }
+        }
+        for (i, &index) in next_indexes.iter().enumerate() {
+            if index != sorted + i {
+                hs.swap(sorted + i, index);
+            }
+        }
+        if next_indexes.len() > 1 {
+            shuffle(hs, sorted, sorted + next_indexes.len(), rng, label);
+        }
+        sorted += next_indexes.len();
     }
 }
 
@@ -8395,10 +8479,12 @@ fn end_of_turn(
     let handlers = collect_residual_handlers(state);
     if std::env::var("PE_DEBUG_RES").is_ok() { eprintln!("=== residual ({} handlers) ===", handlers.len()); for h in &handlers { let nm = match &h.kind { ResidualKind::GrassyHeal(sd, sl) | ResidualKind::ThroatChop(sd, sl) | ResidualKind::Stall(sd, sl) => state.side(*sd).active[*sl].pokemon_index.map(|i| state.side(*sd).team_member(i).id.to_string()).unwrap_or_default(), _ => String::new() }; eprintln!("RES order={} sub={} speed={} kind={:?} [{}]", h.order, h.sub_order, h.speed, h.kind, nm); } }
     let handlers = sort_residual_handlers(handlers, rng, "speed tie (residual)");
+    // A wipe by an immediate faint ends the residual at once (PS `fieldEvent`
+    // stops when the battle ends). A wipe by Perish song does not: PS defers
+    // that faint until after the residual action, so the rest of it still runs.
+    let mut perish_wipe = false;
     for h in handlers {
-        // PS `fieldEvent`: faints are resolved after every handler; once a
-        // side is wiped out the battle has ended and no handler runs.
-        if state.battle_is_over() != 0.0 {
+        if state.battle_is_over() != 0.0 && !perish_wipe {
             return;
         }
         match h.kind {
@@ -8634,6 +8720,25 @@ fn end_of_turn(
                 state.side_mut(side).active[slot].syrup_bomb = Some((ss, si, d - 1));
                 apply_boosts(state, side, tidx, &StatBoosts { speed: -1, ..Default::default() }, ss != side);
             }
+            ResidualKind::Octolock(side, slot) => {
+                // PS octolock `onResidual` (no duration): ends silently once
+                // its binder is no longer active or fainted; else boost
+                // def/spd -1 from the binder.
+                let Some((ss, si)) = state.side(side).active[slot].octolock else { continue };
+                let Some(tidx) = state.side(side).active[slot].pokemon_index else { continue };
+                let src_active = (0..2).any(|sl| state.side(ss).active[sl].pokemon_index == Some(si));
+                if !src_active || state.side(ss).team_member(si).hp <= 0 {
+                    state.side_mut(side).active[slot].octolock = None;
+                    continue;
+                }
+                apply_boosts(
+                    state,
+                    side,
+                    tidx,
+                    &StatBoosts { defense: -1, special_defense: -1, ..Default::default() },
+                    ss != side,
+                );
+            }
             ResidualKind::Ingrain(side, slot) => {
                 // PS ingrain `onResidual`: heal baseMaxhp / 16.
                 if let Some(idx) = state.side(side).active[slot].pokemon_index {
@@ -8722,6 +8827,9 @@ fn end_of_turn(
                     // `onEnd`: `target.faint()`.
                     let hp = state.side(side).slot_pokemon(slot).map(|p| p.hp).unwrap_or(0);
                     apply_damage(state, side, slot, hp);
+                    if state.battle_is_over() != 0.0 {
+                        perish_wipe = true;
+                    }
                 }
             }
             ResidualKind::FutureMove(side, slot) => {

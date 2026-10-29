@@ -160,6 +160,12 @@ pub struct ActiveSlot {
     pub heal_block: u8,
     /// `syrupbomb` volatile: (source side, source team index, duration).
     pub syrup_bomb: Option<(Side, PokemonIndex, u8)>,
+    /// `octolock` volatile: the binder (side, team index). No duration; it
+    /// ends once the binder is no longer active.
+    pub octolock: Option<(Side, PokemonIndex)>,
+    /// `trapped` volatile (Jaw Lock, both binders): no switching; ends with the
+    /// volatiles. PS data/conditions.ts trapped.
+    pub jaw_trapped: bool,
     /// PS `pokemon.hurtThisTurn`: lost HP earlier this turn (Assurance).
     pub hurt_this_turn: bool,
     /// PS `pokemon.newlySwitched`: switched in since the turn started (Payback).
@@ -297,6 +303,8 @@ impl ActiveSlot {
             ingrain: false,
             heal_block: 0,
             syrup_bomb: None,
+            octolock: None,
+            jaw_trapped: false,
             hurt_this_turn: false,
             newly_switched: false,
             twoturn_fired: false,

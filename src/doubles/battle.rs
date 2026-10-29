@@ -2413,6 +2413,21 @@ fn execute_action_inner(
         t.stall = None;
     }
 
+    // Psychic Terrain `onTryHit`: priority moves aimed at a grounded foe fail.
+    // PS data/moves.ts psychicterrain.condition.
+    // TODO(PS parity): semi-invulnerable targets, spread moves.
+    if !is_self
+        && !is_field
+        && action.priority > 0
+        && target_side != side
+        && state.terrain.terrain_type == crate::engine::state::Terrain::PSYCHICTERRAIN
+        && state.side(target_side).slot_pokemon(target_slot).is_some_and(|d| d.is_grounded())
+    {
+        state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+        push_order();
+        return;
+    }
+
     // Armor Tail / Queenly Majesty / Dazzling `onFoeTryMove`: priority moves
     // aimed at the holder's side fail (no draw). PS data/abilities.ts armortail.
     // TODO(PS parity): `target: all` moves.
@@ -6774,6 +6789,8 @@ enum ResidualKind {
     Moody(Side, usize),
     /// Harvest `onResidual` (order 28, subOrder 2): the roll only.
     Harvest(Side, usize),
+    /// Hunger Switch `onResidual` (order 29): Morpeko changes forme.
+    HungerSwitch(Side, usize),
     /// Ghost `curse` damage (order 12).
     Curse(Side, usize),
     LeechSeed(Side, usize),
@@ -6926,6 +6943,9 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
                 if p.ability == Abilities::HARVEST {
                     push(28, speed, 2, ResidualKind::Harvest(side, slot));
                 }
+                if p.ability == Abilities::HUNGERSWITCH {
+                    push(29, speed, 7, ResidualKind::HungerSwitch(side, slot));
+                }
                 if p.ability == Abilities::SPEEDBOOST {
                     push(28, speed, 2, ResidualKind::SpeedBoost(side, slot));
                 }
@@ -7050,6 +7070,9 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             }
             if p.ability == Abilities::HARVEST {
                 push(28, speed, 2, ResidualKind::Harvest(side, slot));
+            }
+            if p.ability == Abilities::HUNGERSWITCH {
+                push(29, speed, 7, ResidualKind::HungerSwitch(side, slot));
             }
             if p.ability == Abilities::SPEEDBOOST {
                 push(28, speed, 2, ResidualKind::SpeedBoost(side, slot));
@@ -7405,6 +7428,25 @@ fn end_of_turn(
                         }
                     }
                 }
+            }
+            ResidualKind::HungerSwitch(side, slot) => {
+                // PS hungerswitch.onResidual: `formeChange` Morpeko <-> Morpeko-Hangry.
+                // `setSpecies` resets the cached speed to the raw stat until the
+                // next `updateSpeed`.
+                let Some(idx) = state.side(side).active[slot].pokemon_index else { continue };
+                let p = state.side(side).team_member(idx);
+                if p.hp <= 0 {
+                    continue;
+                }
+                let new_id = match p.id {
+                    crate::pokemon::PokemonName::MORPEKO => crate::pokemon::PokemonName::MORPEKOHANGRY,
+                    crate::pokemon::PokemonName::MORPEKOHANGRY => crate::pokemon::PokemonName::MORPEKO,
+                    _ => continue,
+                };
+                let raw = p.speed;
+                let s = state.side_mut(side);
+                s.team_member_mut(idx).id = new_id;
+                s.speed_cache[idx as usize] = raw as _;
             }
             ResidualKind::Harvest(side, slot) => {
                 // PS harvest.onResidual: `isWeather(sun) || randomChance(1, 2)`.

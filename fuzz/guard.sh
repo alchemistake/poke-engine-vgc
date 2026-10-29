@@ -79,8 +79,9 @@ OUT=$(node fuzz/fuzz.js --seed 0 --count 100 2>&1)
 if [ -z "$OUT" ]; then
   SCORE=100
 else
-  K=$(echo "$OUT" | grep -oE 'test #[0-9]+ of' | head -1 | grep -oE '[0-9]+')
-  SCORE=$(( ${K:-1} - 1 ))
+  # The first failing seed (from the report's `reproduce:` line) is the score.
+  SCORE=$(echo "$OUT" | grep -oE 'reproduce: node fuzz/fuzz.js --seed [0-9]+' | head -1 | grep -oE '[0-9]+$')
+  SCORE=${SCORE:-0}
 fi
 BEST=$(cat fuzz/SCORE 2>/dev/null || echo 0)
 echo "score: $SCORE (consecutive passing battles from seed 0; baseline fuzz/SCORE = $BEST)"

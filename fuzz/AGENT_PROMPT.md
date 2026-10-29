@@ -29,7 +29,8 @@ cargo build --release --features champions --no-default-features
 
 **The cycle:**
 1. **Find the first failure.**
-   `node fuzz/fuzz.js --seed 0 --count 100`
+   `node fuzz/fuzz.js --seed 0 --count 100` (runs on all CPU cores; each
+   passing battle is checked with one engine run; under a second for 100)
    No output and exit 0 means all 100 pass: stop and report.
    Otherwise copy the `reproduce:` line (e.g. `--seed 2 --count 1`). That
    seed is the score.

@@ -42,6 +42,11 @@ function parseArgs() {
     workdir: path.join(__dirname, 'work'),
     engine: path.resolve(__dirname, '..', 'target', 'release', 'poke-engine'),
     verbose: false,
+    // Internal (parallel workers): test seeds are seed, seed+step, ...; on
+    // the first failure print `FAIL <seed>` and exit 1 without a report.
+    step: 1,
+    checkOnly: false,
+    jobs: Math.max(1, require('os').cpus().length),
   };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--seed') opts.seed = parseInt(args[++i], 10);
@@ -49,6 +54,9 @@ function parseArgs() {
     else if (args[i] === '--workdir') opts.workdir = path.resolve(args[++i]);
     else if (args[i] === '--engine') opts.engine = path.resolve(args[++i]);
     else if (args[i] === '--verbose') opts.verbose = true;
+    else if (args[i] === '--jobs') opts.jobs = Math.max(1, parseInt(args[++i], 10));
+    else if (args[i] === '--step') opts.step = parseInt(args[++i], 10);
+    else if (args[i] === '--check-only') opts.checkOnly = true;
     else {
       console.error(`unknown argument: ${args[i]}`);
       process.exit(2);
@@ -357,6 +365,8 @@ const DRAW_HINTS = {
   'fractional priority': 'Quick Draw `onFractionalPriority` 30% roll when the queue is built (`resolveAction`). Engine: the resolve loop in `run_battle_fuzz` + `mechanics::fractional_priority`.',
   'drag in': 'Roar / Whirlwind / Dragon Tail / Circle Throw pick a random replacement (`dragIn` -> `getRandomSwitchable`, PS `side.pokemon` order). Engine: `drag_in_all`, `possible_switches`.',
   trace: 'Trace `onUpdate` picks a random valid adjacent foe (`sample`). Engine: the Trace branch of `apply_on_switch_abilities`.',
+  stall: 'Protect-family success roll after consecutive use (`stall.onStallMove`, `randomChance(1, counter)`). Engine: the stall check in `execute_action`.',
+  'residual roll': 'A roll inside an end-of-turn `onResidual` handler (Moody `sample`, Shed Skin / Hydration / Healer chances). Engine: `ResidualKind` handlers in `end_of_turn`.',
   ability: 'An ability `onDamagingHit` roll (Static, Flame Body, Effect Spore, ...) in data/abilities.ts.',
   sample: 'A `sample()` inside a move effect (Tri Attack / Dire Claw status pick, ...).',
   'fickle beam': 'Fickle Beam `onBasePower` 30% roll.',
@@ -1155,9 +1165,112 @@ function failTest(opts, t, info) {
   process.exit(1);
 }
 
+// The controller PRNG, battle seed and teams of one test (all derived from
+// the test seed, so a test can be rebuilt identically).
+function makeTest(testSeed) {
+  const controller = new PRNG([
+    testSeed & 0xffff,
+    (testSeed + 1) & 0xffff,
+    (testSeed + 2) & 0xffff,
+    (testSeed + 3) & 0xffff,
+  ]);
+  // 1. Battle seed (4 x 16-bit words), from the controller stream.
+  const battleSeed = [0, 0, 0, 0].map(() => controller.random(65536));
+  // 2. Two fully random teams, from the controller stream.
+  const teamA = genTeam(controller, MOD_DEX);
+  const teamB = genTeam(controller, MOD_DEX);
+  return { controller, battleSeed, teamA, teamB };
+}
+
+// Fast pass/fail check of one test: play the whole PS battle, run the
+// engine ONCE on all its turns, and compare every turn's state and the
+// winner. The engine is deterministic, so turn n of this run equals the
+// stepwise run with `stop_after: n`. Any doubt (PS error, engine error,
+// mismatch) returns false and the caller re-runs the test stepwise.
+function fastCheck(opts, dir, testSeed) {
+  const { controller, battleSeed, teamA, teamB } = makeTest(testSeed);
+  let initSnap = null;
+  const snaps = [];
+  let meta;
+  try {
+    meta = stepPSBattle(
+      battleSeed,
+      teamA,
+      teamB,
+      controller,
+      (snap) => {
+        initSnap = snap;
+      },
+      (snap) => {
+        snaps.push(snap);
+      }
+    );
+  } catch (e) {
+    return false;
+  }
+  let pe;
+  try {
+    pe = runEngineTurn(opts, dir, battleSeed, meta, meta.turns, meta.turns.length);
+  } catch (e) {
+    return false;
+  }
+  if (!pe || pe.error || !initSnap || pe.turns.length < snaps.length + 1) return false;
+  const same = (psSnap, peTurn) => {
+    const { moveOrderRaw: _a, turn: _t1, ...psC } = normalizePSState(psSnap);
+    const { moveOrderRaw: _b, turn: _t2, ...peC } = normalizePETurn(peTurn);
+    const diffs = [];
+    deepDiff(psC, peC, '', diffs);
+    return diffs.length === 0;
+  };
+  if (!same(initSnap, pe.turns[0])) return false;
+  for (let n = 1; n <= snaps.length; n++) {
+    if (!same(snaps[n - 1], pe.turns[n])) return false;
+  }
+  return pe.winner === meta.winner;
+}
+
+// Parallel sweep: worker j checks seeds seed+j, seed+j+jobs, ... (each stops
+// at its first failure). The lowest failing seed is then re-run here as a
+// single test, which prints the normal report. Same result as a sequential
+// sweep: the first failing seed in order.
+function runParallel(opts) {
+  const { spawn } = require('child_process');
+  const jobs = Math.min(opts.jobs, opts.count);
+  let pending = jobs;
+  const failing = [];
+  for (let j = 0; j < jobs; j++) {
+    const count = Math.ceil((opts.count - j) / jobs);
+    const child = spawn(
+      process.execPath,
+      [__filename, '--seed', String(opts.seed + j), '--count', String(count), '--step', String(jobs),
+        '--check-only', '--jobs', '1', '--engine', opts.engine,
+        '--workdir', path.join(opts.workdir, `worker-${j}`)],
+      { stdio: ['ignore', 'pipe', 'inherit'] }
+    );
+    let out = '';
+    child.stdout.on('data', (d) => (out += d));
+    child.on('close', () => {
+      const m = out.match(/FAIL (\d+)/);
+      if (m) failing.push(parseInt(m[1], 10));
+      if (--pending === 0) {
+        if (!failing.length) process.exit(0);
+        const first = Math.min(...failing);
+        // Re-run the first failing seed alone, in this process: full report.
+        process.argv = [process.argv[0], __filename, '--seed', String(first), '--count', '1', '--jobs', '1',
+          '--engine', opts.engine, '--workdir', opts.workdir];
+        main();
+      }
+    });
+  }
+}
+
 function main() {
   const opts = parseArgs();
   fs.mkdirSync(opts.workdir, { recursive: true });
+  if (opts.jobs > 1 && opts.count > 1 && !opts.checkOnly && !opts.verbose) {
+    runParallel(opts);
+    return;
+  }
 
   // Passing tests print nothing unless --verbose; a mismatch prints the full
   // report (and exits 1).
@@ -1171,24 +1284,23 @@ function main() {
     // Controller PRNG: one per test, seeded from (tester seed + test index),
     // so test #k of `--seed S` reproduces alone as `--seed S+k-1 --count 1`.
     // Separate from the battle seed.
-    const testSeed = opts.seed + t;
-    const controller = new PRNG([
-      testSeed & 0xffff,
-      (testSeed + 1) & 0xffff,
-      (testSeed + 2) & 0xffff,
-      (testSeed + 3) & 0xffff,
-    ]);
-
-    // 1. Battle seed (4 x 16-bit words), from the controller stream.
-    const battleSeed = [0, 0, 0, 0].map(() => controller.random(65536));
-
-    // 2. Two fully random teams, from the controller stream.
-    const teamA = genTeam(controller, MOD_DEX);
-    const teamB = genTeam(controller, MOD_DEX);
-
-    const info = { battleSeed, teamA, teamB };
+    const testSeed = opts.seed + t * opts.step;
     const dir = path.join(opts.workdir, `test-${t + 1}`);
     fs.mkdirSync(dir, { recursive: true });
+
+    // Fast path: whole PS battle, ONE engine run, compare every turn. Only a
+    // failing battle is re-run stepwise below, which builds the report.
+    if (!opts.verbose && fastCheck(opts, dir, testSeed)) {
+      continue;
+    }
+    if (opts.checkOnly) {
+      // Parallel worker: report the failing seed to the parent and stop.
+      process.stdout.write(`FAIL ${testSeed}\n`);
+      process.exit(1);
+    }
+
+    const { controller, battleSeed, teamA, teamB } = makeTest(testSeed);
+    const info = { battleSeed, teamA, teamB };
 
     log(`test #${t + 1}: battle seed=${battleSeed.join(', ')}`);
     log('Team A:');

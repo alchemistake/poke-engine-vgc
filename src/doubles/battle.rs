@@ -1972,7 +1972,7 @@ fn execute_action_inner(
         let mut ok = will_act;
         if ok {
             if let Some((counter, _)) = state.side(side).active[slot].stall {
-                ok = rng.label("other: onStallMove").random_chance(1, counter.max(1) as u32);
+                ok = rng.label("stall").random_chance(1, counter.max(1) as u32);
                 if !ok {
                     state.side_mut(side).active[slot].stall = None;
                 }
@@ -4053,7 +4053,7 @@ fn execute_action_inner(
                 let tidx = state.side(target_side).active[target_slot].pokemon_index;
                 if !shield {
                     if let Some(tidx) = tidx {
-                        if rng.label("other: onSourceDamagingHit").random_chance(3, 10) {
+                        if rng.label("ability").random_chance(3, 10) {
                             try_set_status(state, rng, target_side, target_slot, PokemonStatus::POISON, side, idx);
                             let _ = tidx;
                         }
@@ -4175,6 +4175,12 @@ fn execute_action_inner(
     }
 
     // Self-destruct moves faint the user after dealing damage.
+    // Healing Wish / Lunar Dance: add the slot condition before the user
+    // faints (PS data/moves.ts healingwish `slotCondition`).
+    if matches!(choice.move_id, Choices::HEALINGWISH | Choices::LUNARDANCE) {
+        state.side_mut(side).healing_wish_slot[slot] = true;
+    }
+
     // PS `useMoveInner`: `selfdestruct: 'always'` faints the user (HP 0).
     if choice.selfdestruct {
         let hp = state.side(side).slot_pokemon(slot).map(|p| p.hp).unwrap_or(0);
@@ -5629,6 +5635,27 @@ fn apply_side_condition(state: &mut DoublesState, side: Side, c: PokemonSideCond
 /// `clearVolatile` resets its boosts), and apply entry hazards. On-switch
 /// abilities are applied by the caller.
 fn switch_in(state: &mut DoublesState, side: Side, slot: usize, position: usize) {
+    switch_in_inner(state, side, slot, position);
+    // Healing Wish / Lunar Dance `condition.onSwap` (on switch-in): a hurt
+    // or statused replacement is fully healed and cured; otherwise the
+    // condition keeps waiting. PS data/moves.ts healingwish / lunardance.
+    // TODO(PS parity): Lunar Dance also restores PP (and triggers on PP).
+    if state.side(side).healing_wish_slot[slot] {
+        let s = state.side_mut(side);
+        if let Some(idx) = s.active[slot].pokemon_index {
+            let p = s.team_member_mut(idx);
+            if p.hp > 0 && (p.hp < p.maxhp || p.status != PokemonStatus::NONE) {
+                p.hp = p.maxhp;
+                p.status = PokemonStatus::NONE;
+                p.sleep_turns = 0;
+                s.toxic_stage[idx as usize] = 0;
+                s.healing_wish_slot[slot] = false;
+            }
+        }
+    }
+}
+
+fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: usize) {
     // PS `switchIn` swaps the two pokemon's places in `side.pokemon`.
     {
         let order = &mut state.side_mut(side).ps_order;
@@ -6321,7 +6348,7 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
                 if ab == Abilities::SHEDSKIN {
                     // 33/100 to cure its own status.
                     if state.side(side).team_member(idx).status != PokemonStatus::NONE
-                        && rng.label("other: onResidual").random_chance(33, 100)
+                        && rng.label("residual roll").random_chance(33, 100)
                     {
                         state.side_mut(side).team_member_mut(idx).status = PokemonStatus::NONE;
                     }
@@ -6330,7 +6357,7 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
                     let al = 1 - slot;
                     if let Some(aidx) = state.side(side).active[al].pokemon_index {
                         let a = state.side(side).team_member(aidx);
-                        if a.hp > 0 && a.status != PokemonStatus::NONE && rng.label("other: onResidual").random_chance(3, 10) {
+                        if a.hp > 0 && a.status != PokemonStatus::NONE && rng.label("residual roll").random_chance(3, 10) {
                             state.side_mut(side).team_member_mut(aidx).status = PokemonStatus::NONE;
                         }
                     }
@@ -6350,13 +6377,13 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
                 let plus = if ups.is_empty() {
                     None
                 } else {
-                    Some(ups[rng.label("other: onResidual").random(ups.len() as u32) as usize])
+                    Some(ups[rng.label("residual roll").random(ups.len() as u32) as usize])
                 };
                 let downs: Vec<usize> = (0..5).filter(|&n| vals[n] > -6 && Some(n) != plus).collect();
                 let minus = if downs.is_empty() {
                     None
                 } else {
-                    Some(downs[rng.label("other: onResidual").random(downs.len() as u32) as usize])
+                    Some(downs[rng.label("residual roll").random(downs.len() as u32) as usize])
                 };
                 let mut b = StatBoosts::default();
                 for (n, amt) in [(plus, 2i8), (minus, -1i8)] {

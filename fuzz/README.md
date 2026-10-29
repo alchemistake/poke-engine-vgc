@@ -130,3 +130,13 @@ Replays the battle of `--seed S --count 1` and prints, for turn T, PS's
 protocol lines, every PRNG draw (with its purpose, see `fuzz_purpose.js`),
 every modifier with the effect that applied it, and every event that changed a
 value. Use it when the PRNG draws line up but a number differs.
+
+## Speed
+
+- Each battle is first checked with a fast path: the whole PS battle, ONE
+  engine run over all its turns, then every turn and the winner are
+  compared. Only a failing battle is re-run stepwise (one engine run per
+  turn) to build the report, so reports are unchanged.
+- `--jobs N` (default: all CPU cores) splits the seeds across worker
+  processes; the lowest failing seed is re-run in the main process for the
+  report. `--jobs 1` runs sequentially. `--verbose` disables both.

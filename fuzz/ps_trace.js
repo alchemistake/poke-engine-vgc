@@ -123,6 +123,7 @@ process.on('exit', () => {
 });
 console.log = () => {};
 console.error = () => {};
-process.argv = [process.argv[0], 'fuzz.js', '--seed', String(SEED), '--count', '1', '--workdir',
+// --verbose: no fast path, so the battle is played (and traced) once.
+process.argv = [process.argv[0], 'fuzz.js', '--seed', String(SEED), '--count', '1', '--verbose', '--workdir',
   path.join(__dirname, "work", "trace")];
 require('./fuzz.js');

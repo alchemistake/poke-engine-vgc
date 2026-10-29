@@ -338,6 +338,10 @@ pub struct DoublesSide {
     /// Supersweet Syrup already triggered (PS `syrupTriggered`, once per
     /// battle per pokemon).
     pub syrup_triggered: [bool; 6],
+    /// Healing Wish / Lunar Dance slot conditions per active slot (PS
+    /// `slotCondition: 'healingwish' | 'lunardance'`): they wait for the next
+    /// pokemon switched into that slot.
+    pub healing_wish_slot: [bool; 2],
     /// PS `moveSlot.used` per team member / move slot (set by `deductPP`).
     pub moves_used: [[bool; 4]; 6],
     /// PS `pokemon.attackedBy` entries with damage (`getLastDamagedBy`), per
@@ -935,6 +939,7 @@ impl DoublesState {
             future_move: [None, None],
             sc_order: Vec::new(),
             syrup_triggered: [false; 6],
+            healing_wish_slot: [false; 2],
             moves_used: [[false; 4]; 6],
             damaged_by: std::array::from_fn(|_| Vec::new()),
             saved_stats: [None; 6],
@@ -954,6 +959,7 @@ impl DoublesState {
             future_move: [None, None],
             sc_order: Vec::new(),
             syrup_triggered: [false; 6],
+            healing_wish_slot: [false; 2],
             moves_used: [[false; 4]; 6],
             damaged_by: std::array::from_fn(|_| Vec::new()),
             saved_stats: [None; 6],

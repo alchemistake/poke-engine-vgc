@@ -207,6 +207,23 @@ fn faint_pokemon(state: &mut DoublesState, side: Side, slot: usize) {
     }
 }
 
+/// PS `faintMessages`: resolve the pending faints that `pick` selects. Until
+/// then a fainted pokemon keeps its cached speed (it still counts in
+/// `eachEvent` sorts). `clearVolatile` -> `setSpecies` then resets
+/// `pokemon.speed` to the raw stat, which later sorts read.
+fn resolve_faints(state: &mut DoublesState, pick: impl Fn(Side, usize) -> bool) {
+    let mut faints = std::mem::take(&mut state.unresolved_faints);
+    faints.retain(|&(side, slot, idx)| {
+        if !pick(side, slot) {
+            return true;
+        }
+        let s = state.side_mut(side);
+        s.speed_cache[idx as usize] = s.team_member(idx).speed;
+        false
+    });
+    state.unresolved_faints = faints;
+}
+
 /// Apply damage to a specific slot; returns true if the pokemon fainted.
 fn apply_damage(state: &mut DoublesState, side: Side, slot: usize, amount: i16) -> bool {
     if amount <= 0 {
@@ -996,7 +1013,7 @@ pub fn run_battle_fuzz(
             // Phazing (PS `runAction`: `forceSwitchFlag` -> `dragIn`) happens
             // before faints are resolved.
             drag_in_all(state, rng);
-            state.unresolved_faints.clear();
+            resolve_faints(state, |_, _| true);
             if state.battle_is_over() != 0.0 {
                 break;
             }
@@ -1597,7 +1614,7 @@ fn execute_action_inner(
         return;
     }
 
-    state.unresolved_faints.clear();
+    resolve_faints(state, |_, _| true);
 
     // PS `runMove` resolves the target before the BeforeMove checks.
     // Stalwart / Propeller Tail set `tracksTarget` (`getTarget` with an active
@@ -5062,7 +5079,7 @@ fn execute_action_inner(
 
 
     // PS `resolveFaints` right after the hit loop (before the recoil).
-    state.unresolved_faints.clear();
+    resolve_faints(state, |_, _| true);
 
     // Recoil (after all hits): round(damage * fraction), min 1.
     if total_damage > 0 && choice.move_id == Choices::STRUGGLE {
@@ -5107,7 +5124,7 @@ fn execute_action_inner(
         // ...and resolved right after the loop, before its closing `eachEvent`.
         // (Healing Wish / Lunar Dance keep the user: their one `eachEvent` comes first.)
         if !matches!(choice.move_id, Choices::HEALINGWISH | Choices::LUNARDANCE) {
-            state.unresolved_faints.retain(|&(fs, fsl, _)| (fs, fsl) != (side, slot));
+            resolve_faints(state, |fs, fsl| (fs, fsl) == (side, slot));
         }
     }
 
@@ -8142,7 +8159,7 @@ fn end_of_turn(
     }
 
     // End of the `residual` action (faints are resolved before its eachEvent).
-    state.unresolved_faints.clear();
+    resolve_faints(state, |_, _| true);
     if state.battle_is_over() == 0.0 {
         each_event_update(state, rng);
     }

@@ -520,9 +520,16 @@ function stepPSBattle(battleSeed, teamA, teamB, controller, onInit, onTurn) {
           return [NO_TARGET];
         }
       };
+      // A move disabled with `isHidden` (Imprison) looks enabled in a fresh
+      // request; PS reveals it only by rejecting the choice ("Unavailable
+      // choice"), which marks it disabled in the side's active request.
+      const live = side.activeRequest && side.activeRequest.active && side.activeRequest.active[slot];
+      const revealedDisabled = (m) =>
+        !!(live && live.moves && live.moves.some((lm) => lm.id === m.id && lm.disabled));
       const valid = data.moves
         .map((m, i) => ({ m, i }))
-        .filter((x) => !x.m.disabled && x.m.pp > 0 && targetsFor(x.m.target).length > 0);
+        .filter((x) => !x.m.disabled && !revealedDisabled(x.m) && x.m.pp > 0 &&
+          targetsFor(x.m.target).length > 0);
       if (valid.length === 0) {
         // No usable moves (all disabled / 0 PP / no valid target). Prefer the
         // Struggle entry if the request offers one; otherwise pick the first
@@ -596,18 +603,34 @@ function stepPSBattle(battleSeed, teamA, teamB, controller, onInit, onTurn) {
       // PS can disable a move reactively as the first side commits (Taunt,
       // Intimidate-free "unavailable" updates, ...), so a pre-fetched request
       // for the second side can go stale.
-      const buildFor = (si) => moveActionsFor(si);
-      const aActs = buildFor(0);
       // `switches`: every forced switch PS requested during this turn, in
       // request order — mid-turn pivots (Volt Switch / U-turn) and
       // end-of-turn faint replacements. Kept apart from a/b so the slot's
       // original move choice is never overwritten.
-      cur = { a: aActs, b: [], switches: [] };
+      cur = { a: [], b: [], switches: [] };
       turns.push(cur);
-      battle.choose('p1', actsToStr(aActs));
-      const bActs = buildFor(1);
-      cur.b = bActs;
-      battle.choose('p2', actsToStr(bActs));
+      // Like a real player: if PS answers "Unavailable choice" (a hidden
+      // disable such as Imprison, now revealed in the active request), choose
+      // again. Any other choice error is a harness bug and propagates.
+      const chooseSide = (sid, si, key) => {
+        const side = si === 0 ? battle.p1 : battle.p2;
+        for (let attempt = 0; ; attempt++) {
+          const acts = moveActionsFor(si);
+          cur[key] = acts;
+          try {
+            battle.choose(sid, actsToStr(acts));
+            return;
+          } catch (e) {
+            if (attempt < 8 && /^\[Unavailable choice\]/.test(e.message)) {
+              side.clearChoice();
+              continue;
+            }
+            throw e;
+          }
+        }
+      };
+      chooseSide('p1', 0, 'a');
+      chooseSide('p2', 1, 'b');
     } else if (battle.requestState === 'switch') {
       const reqs = battle.getRequests('switch');
       for (const [sid, side, key, order, si] of [

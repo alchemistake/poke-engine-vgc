@@ -134,6 +134,10 @@ pub struct ActiveSlot {
     pub glaive_rush: bool,
     /// `ingrain` volatile: heals 1/16 max HP each residual (order 7).
     pub ingrain: bool,
+    /// `healblock` volatile: remaining duration (0 = none).
+    pub heal_block: u8,
+    /// `syrupbomb` volatile: (source side, source team index, duration).
+    pub syrup_bomb: Option<(Side, PokemonIndex, u8)>,
     /// PS `pokemon.hurtThisTurn`: lost HP earlier this turn (Assurance).
     pub hurt_this_turn: bool,
     /// The `twoturnmove` volatile (duration 2) is still around for this
@@ -250,6 +254,8 @@ impl ActiveSlot {
             last_move: None,
             glaive_rush: false,
             ingrain: false,
+            heal_block: 0,
+            syrup_bomb: None,
             hurt_this_turn: false,
             twoturn_fired: false,
             encore: None,

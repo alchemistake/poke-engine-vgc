@@ -252,7 +252,9 @@ pub fn calculate_damage(
     if choice.move_type != PokemonType::TYPELESS {
         let is_stab = attacker.types.0 == choice.move_type || attacker.types.1 == choice.move_type;
         if is_stab {
-            base = modify(base, 1.5, 1.0);
+            // Adaptability `onModifySTAB`: 2 instead of 1.5.
+            let stab = if attacker.ability == crate::engine::abilities::Abilities::ADAPTABILITY { 2.0 } else { 1.5 };
+            base = modify(base, stab, 1.0);
         }
     }
 
@@ -331,21 +333,22 @@ pub fn roll_accuracy_boosted(
     accuracy: f32,
     acc_boost: i8,
     eva_boost: i8,
-    hustle_physical: bool,
+    // `onModifyAccuracy` chain pieces from abilities: (priority 0, priority -1),
+    // 4096-based (see `accuracy_ability_mods` in battle.rs).
+    ability_mods: (i32, i32),
     rng: &mut Gen5Rng,
 ) -> bool {
     let mut acc = accuracy as i32;
-    // `runEvent('ModifyAccuracy')`: handlers chain, applied once.
-    // Gravity `onModifyAccuracy` (priority 0): chainModify([6840, 4096]).
-    // Hustle `onSourceModifyAccuracy` (priority -1, physical moves):
-    // chainModify([3277, 4096]). PS data/abilities.ts hustle.
+    // `runEvent('ModifyAccuracy')`: handlers chain, applied once, higher
+    // priority first. Gravity `onModifyAccuracy` (priority 0):
+    // chainModify([6840, 4096]); abilities (Hustle, Compound Eyes, Sand Veil,
+    // Snow Cloak, Tangled Feet) are priority -1.
     let mut m: i32 = 4096;
     if GRAVITY.with(|g| g.get()) {
         m = (m * 6840 + 2048) >> 12;
     }
-    if hustle_physical {
-        m = (m * 3277 + 2048) >> 12;
-    }
+    m = (m * ability_mods.0 + 2048) >> 12;
+    m = (m * ability_mods.1 + 2048) >> 12;
     if m != 4096 {
         acc = (acc * m + 2047) / 4096;
     }

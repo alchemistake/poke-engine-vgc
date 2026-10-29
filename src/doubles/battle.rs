@@ -561,6 +561,49 @@ fn apply_queue_change(
     }
 }
 
+/// Abilities' `ModifyAccuracy` chain pieces: (priority 0, priority -1), each a
+/// 4096-based multiplier. Priority 0: Victory Star (`onAnyModifyAccuracy`, an
+/// ally of the holder, x4506). Priority -1: Hustle (physical), Compound Eyes
+/// (x5325), and the target's Sand Veil / Snow Cloak (x3277 in sand / snow) and
+/// Tangled Feet (x0.5 while confused) unless the attacker ignores its ability.
+/// PS data/abilities.ts.
+fn accuracy_ability_mods(
+    state: &DoublesState,
+    side: Side,
+    idx: PokemonIndex,
+    tside: Side,
+    tslot: usize,
+    choice: &Choice,
+) -> (i32, i32) {
+    let chain = |m: i32, x: i32| (m * x + 2048) >> 12;
+    let attacker = state.side(side).team_member(idx);
+    let mut pre = 4096;
+    if (0..2).any(|sl| {
+        state.side(side).slot_pokemon(sl).map(|p| p.hp > 0 && p.ability == Abilities::VICTORYSTAR).unwrap_or(false)
+    }) {
+        pre = chain(pre, 4506);
+    }
+    let mut post = 4096;
+    if attacker.ability == Abilities::HUSTLE && choice.category == MoveCategory::Physical {
+        post = chain(post, 3277);
+    }
+    if attacker.ability == Abilities::COMPOUNDEYES {
+        post = chain(post, 5325);
+    }
+    if let Some(t) = state.side(tside).slot_pokemon(tslot) {
+        if !crate::engine::abilities::ignores_target_ability(attacker, choice, &t.ability) {
+            let w = state.weather.weather_type;
+            match t.ability {
+                Abilities::SANDVEIL if w == Weather::SAND => post = chain(post, 3277),
+                Abilities::SNOWCLOAK if matches!(w, Weather::HAIL | Weather::SNOW) => post = chain(post, 3277),
+                Abilities::TANGLEDFEET if state.side(tside).active[tslot].confusion > 0 => post = chain(post, 2048),
+                _ => {}
+            }
+        }
+    }
+    (pre, post)
+}
+
 /// PS `getLastDamagedBy(true)`: the last attacker from the other side that
 /// damaged `(side, idx)` — (attacker side, attacker slot, damage, turn).
 fn last_damaged_by(state: &DoublesState, side: Side, idx: PokemonIndex) -> Option<(Side, usize, i16, u32)> {
@@ -2500,8 +2543,6 @@ fn execute_action_inner(
         if !choice.always_hit && !toxic_hits && !weather_guaranteed && choice.accuracy > 0.0 {
             let ab = state.side(side).slot_boosts(slot).map(|b| b.acc).unwrap_or(0);
             let user_no_guard = state.side(side).team_member(idx).ability == Abilities::NOGUARD;
-            let hustle_phys = state.side(side).team_member(idx).ability == Abilities::HUSTLE
-                && choice.category == MoveCategory::Physical;
             let ignore_eva = ignores_evasion(state.side(side).team_member(idx).ability, choice.move_id);
             let st = &*state;
             spread_list.retain(|&(ts, tsl)| {
@@ -2520,7 +2561,7 @@ fn execute_action_inner(
                 } else {
                     st.side(ts).slot_boosts(tsl).map(|b| b.eva).unwrap_or(0)
                 };
-                roll_accuracy_boosted(choice.accuracy, ab, eb, hustle_phys, rng)
+                roll_accuracy_boosted(choice.accuracy, ab, eb, accuracy_ability_mods(st, side, idx, ts, tsl, choice), rng)
             });
         }
         if spread_list.is_empty() {
@@ -2548,9 +2589,8 @@ fn execute_action_inner(
         } else {
             state.side(target_side).slot_boosts(target_slot).map(|b| b.eva).unwrap_or(0)
         };
-        let hustle_phys = state.side(side).team_member(idx).ability == Abilities::HUSTLE
-            && choice.category == MoveCategory::Physical;
-        if !roll_accuracy_boosted(choice.accuracy, ab, eb, hustle_phys, rng) {
+        let mods = accuracy_ability_mods(state, side, idx, target_side, target_slot, choice);
+        if !roll_accuracy_boosted(choice.accuracy, ab, eb, mods, rng) {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
             push_order();
             return;
@@ -2702,7 +2742,7 @@ fn execute_action_inner(
                 total_damage = total_damage.saturating_add(d);
                 if let Some(frac) = choice.drain {
                     let heal = ((d as f32) * frac).ceil() as i16;
-                    if heal > 0 {
+                    if heal > 0 && state.side(side).active[slot].heal_block == 0 {
                         let s = state.side_mut(side);
                         let pm = s.team_member_mut(idx);
                         pm.hp = (pm.hp + heal).min(pm.maxhp);
@@ -2908,7 +2948,7 @@ fn execute_action_inner(
             // Drain: heal the attacker for a fraction of the damage dealt.
             if let Some(frac) = choice.drain {
                 let heal = ((damage as f32) * frac).round() as i16;
-                if heal > 0 {
+                if heal > 0 && state.side(side).active[slot].heal_block == 0 {
                     let s = state.side_mut(side);
                     if let Some(p) = s.active[slot].pokemon_index {
                         let pm = s.team_member_mut(p);
@@ -3190,6 +3230,22 @@ fn execute_action_inner(
                 }
                 PokemonVolatileStatus::PARTIALLYTRAPPED => {
                     try_partial_trap(state, rng, ts, tslot, side, idx)
+                }
+                PokemonVolatileStatus::HEALBLOCK => {
+                    // data/moves.ts healblock.condition: duration 5 (2 from
+                    // Psychic Noise, 7 with Persistent); no refresh while active.
+                    if state.side(ts).active[tslot].heal_block > 0 {
+                        move_failed = true;
+                    } else {
+                        let persistent = state.side(side).team_member(idx).ability == Abilities::PERSISTENT;
+                        state.side_mut(ts).active[tslot].heal_block = if choice.move_id == Choices::PSYCHICNOISE {
+                            2
+                        } else if persistent {
+                            7
+                        } else {
+                            5
+                        };
+                    }
                 }
                 other => {
                     // TODO(PS parity): model remaining volatiles (Leech Seed,
@@ -3903,6 +3959,14 @@ fn execute_action_inner(
                     Effect::VolatileStatus(vv) => {
                         if *vv == PokemonVolatileStatus::PROTECT {
                             state.side_mut(ts).active[tslot].protected = true;
+                        }
+                        // Syrup Bomb condition: duration 4, source = the user
+                        // (no refresh while present). PS data/moves.ts syrupbomb.
+                        if *vv == PokemonVolatileStatus::SYRUPBOMB
+                            && state.side(ts).active[tslot].syrup_bomb.is_none()
+                            && state.side(ts).slot_pokemon(tslot).map(|p| p.hp > 0).unwrap_or(false)
+                        {
+                            state.side_mut(ts).active[tslot].syrup_bomb = Some((side, idx, 4));
                         }
                         // TODO(PS parity): other secondary volatiles.
                     }
@@ -5065,9 +5129,8 @@ fn resolve_future_move(
         0
     };
     let eb = state.side(ts).slot_boosts(tslot).map(|b| b.eva).unwrap_or(0);
-    let hustle_phys = state.side(ss).team_member(si).ability == Abilities::HUSTLE
-        && choice.category == MoveCategory::Physical;
-    if !roll_accuracy_boosted(choice.accuracy, ab, eb, hustle_phys, rng) {
+    let mods = accuracy_ability_mods(state, ss, si, ts, tslot, &choice);
+    if !roll_accuracy_boosted(choice.accuracy, ab, eb, mods, rng) {
         return;
     }
     let (damage, _) = compute_hit_damage(state, rng, ss, sslot, si, ts, tslot, &choice, false, false);
@@ -5714,6 +5777,8 @@ enum ResidualKind {
     Roost(Side, usize),
     Encore(Side, usize),
     Ingrain(Side, usize),
+    SyrupBomb(Side, usize),
+    HealBlock(Side, usize),
     /// `perishsong` countdown (order 24).
     Perish(Side, usize),
     /// futuremove slot condition (order 3): the delayed hit.
@@ -5920,6 +5985,12 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             if a.ingrain {
                 push(7, speed, 2, ResidualKind::Ingrain(side, slot));
             }
+            if a.syrup_bomb.is_some() {
+                push(14, speed, 2, ResidualKind::SyrupBomb(side, slot));
+            }
+            if a.heal_block > 0 {
+                push(20, speed, 2, ResidualKind::HealBlock(side, slot));
+            }
             if a.roost_orig.is_some() {
                 push(25, speed, 2, ResidualKind::Roost(side, slot));
             }
@@ -6064,6 +6135,13 @@ fn sorted_actives(state: &DoublesState, rng: &mut Gen5Rng, label: &'static str) 
             // A pokemon that fainted in the current hit loop still counts
             // until faints are resolved (`unresolved_faints`).
             state.side(s).speed_cache[idx as usize] as i32
+        } else if label == "speed tie (switch-in)" && state.side(s).fainted_in_slot[sl].is_some() {
+            // `runSwitch` sorts `getAllActive(true)`: a fainted pokemon still
+            // sitting in its slot counts, with its stale cached speed.
+            // Its `ModifySpe` handlers (status, boosts) no longer run, so the
+            // stored speed is the raw stat.
+            let (idx, _) = state.side(s).fainted_in_slot[sl].unwrap();
+            state.side(s).team_member(idx).speed as i32
         } else {
             continue;
         };
@@ -6106,7 +6184,13 @@ fn end_turn_disable_moves(state: &DoublesState, rng: &mut Gen5Rng) {
         if a.disabled.is_some() {
             hs.push((4294967296, speed, 2));
         }
-        // TODO(PS parity): encore / torment / healblock / choicelock / belch /
+        if a.heal_block > 0 {
+            hs.push((4294967296, speed, 2));
+        }
+        if a.encore.is_some() {
+            hs.push((4294967296, speed, 2));
+        }
+        // TODO(PS parity): torment / choicelock / belch /
         // stuffcheeks volatiles, Imprison `onFoeDisableMove`.
         if ss.team_member(xidx).ability == Abilities::GORILLATACTICS {
             hs.push((4294967296, speed, 7));
@@ -6288,11 +6372,31 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
                 }
                 apply_boosts(state, side, idx, &b, false);
             }
+            ResidualKind::HealBlock(side, slot) => {
+                // `fieldEvent`: duration--; at 0 the volatile ends (`onEnd`).
+                let a = &mut state.side_mut(side).active[slot];
+                a.heal_block = a.heal_block.saturating_sub(1);
+            }
+            ResidualKind::SyrupBomb(side, slot) => {
+                // `fieldEvent`: duration--; at 0 the volatile ends. `onUpdate`
+                // removes it when the source is no longer active; `onResidual`:
+                // `boost({spe: -1}, pokemon, source)`.
+                let Some((ss, si, d)) = state.side(side).active[slot].syrup_bomb else { continue };
+                let Some(tidx) = state.side(side).active[slot].pokemon_index else { continue };
+                let src_active = (0..2).any(|sl| state.side(ss).active[sl].pokemon_index == Some(si));
+                if !src_active || d <= 1 {
+                    state.side_mut(side).active[slot].syrup_bomb = None;
+                    continue;
+                }
+                state.side_mut(side).active[slot].syrup_bomb = Some((ss, si, d - 1));
+                apply_boosts(state, side, tidx, &StatBoosts { speed: -1, ..Default::default() }, ss != side);
+            }
             ResidualKind::Ingrain(side, slot) => {
                 // PS ingrain `onResidual`: heal baseMaxhp / 16.
                 if let Some(idx) = state.side(side).active[slot].pokemon_index {
+                    let blocked = state.side(side).active[slot].heal_block > 0;
                     let pm = state.side_mut(side).team_member_mut(idx);
-                    if pm.hp > 0 && pm.hp < pm.maxhp {
+                    if pm.hp > 0 && pm.hp < pm.maxhp && !blocked {
                         pm.hp = (pm.hp + (pm.maxhp / 16).max(1)).min(pm.maxhp);
                     }
                 }
@@ -6349,8 +6453,11 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
                     if ooze_src {
                         apply_damage(state, ss, sslot, dealt);
                     } else if let Some(sidx) = state.side(ss).active[sslot].pokemon_index {
+                        let blocked = state.side(ss).active[sslot].heal_block > 0;
                         let m = state.side_mut(ss).team_member_mut(sidx);
-                        m.hp = (m.hp + dealt).min(m.maxhp);
+                        if !blocked {
+                            m.hp = (m.hp + dealt).min(m.maxhp);
+                        }
                     }
                 }
             }
@@ -6393,7 +6500,7 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
                     } else {
                         state.side_mut(side).wish[slot] = None;
                         if let Some(p) = state.side(side).slot_pokemon(slot) {
-                            if p.hp > 0 {
+                            if p.hp > 0 && state.side(side).active[slot].heal_block == 0 {
                                 let idx = state.side(side).active[slot].pokemon_index.unwrap();
                                 let pm = state.side_mut(side).team_member_mut(idx);
                                 pm.hp = (pm.hp + hp).min(pm.maxhp);
@@ -6404,7 +6511,7 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
             }
             ResidualKind::AquaRing(side, slot) => {
                 if let Some(p) = state.side(side).slot_pokemon(slot) {
-                    if p.hp > 0 {
+                    if p.hp > 0 && state.side(side).active[slot].heal_block == 0 {
                         let idx = state.side(side).active[slot].pokemon_index.unwrap();
                         let pm = state.side_mut(side).team_member_mut(idx);
                         pm.hp = (pm.hp + (pm.maxhp / 16).max(1)).min(pm.maxhp);
@@ -6549,7 +6656,7 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
                     let s = state.side(side);
                     let Some(idx) = s.active[slot].pokemon_index else { continue };
                     let p = s.team_member(idx);
-                    if p.is_grounded() && p.hp < p.maxhp {
+                    if p.is_grounded() && p.hp < p.maxhp && s.active[slot].heal_block == 0 {
                         Some((idx, p.hp, p.maxhp))
                     } else {
                         None

@@ -2313,7 +2313,7 @@ fn execute_action_inner(
             let d = state.side(ts).slot_pokemon(tsl).unwrap().clone();
             // Semi-invulnerable target, minus the moves that still hit it
             // (Earthquake vs Dig, ...; PS `onInvulnerability`).
-            if let Some((m, _)) = state.side(ts).active[tsl].charging {
+            if let Some((m, _)) = state.side(ts).active[tsl].charging.filter(|_| !state.side(ts).active[tsl].charge_aborted) {
                 let hits_anyway = match m {
                     Choices::DIG => matches!(choice.move_id, Choices::EARTHQUAKE | Choices::MAGNITUDE),
                     Choices::FLY | Choices::BOUNCE => matches!(
@@ -2384,7 +2384,14 @@ fn execute_action_inner(
     }
     let toxic_hits = crate::engine::mechanics::toxic_always_hits(choice.move_id, state.side(side).team_member(idx));
     if !is_self && !is_ally && !is_field && !toxic_hits {
-        if let Some((charging, _)) = state.side(target_side).active[target_slot].charging {
+        // An aborted charge (confusion self-hit, ...) already lost its `twoturnmove`
+        // volatile: no semi-invulnerability (the residual handler lingers).
+        if let Some((charging, _)) = state
+            .side(target_side)
+            .active[target_slot]
+            .charging
+            .filter(|_| !state.side(target_side).active[target_slot].charge_aborted)
+        {
             let hits_anyway = match charging {
                 Choices::DIG => matches!(choice.move_id, Choices::EARTHQUAKE | Choices::MAGNITUDE),
                 Choices::FLY | Choices::BOUNCE => matches!(
@@ -2609,20 +2616,6 @@ fn execute_action_inner(
     } else {
         choice.base_power
     };
-    // Uproar `onTryHit`: cures sleep on every active pokemon.
-    if choice.move_id == Choices::UPROAR {
-        for sd in [Side::One, Side::Two] {
-            for sl in 0..2 {
-                if let Some(ti) = state.side(sd).active[sl].pokemon_index {
-                    let pm = state.side_mut(sd).team_member_mut(ti);
-                    if pm.status == PokemonStatus::SLEEP {
-                        pm.status = PokemonStatus::NONE;
-                    }
-                }
-            }
-        }
-    }
-
     // Brick Break / Psychic Fangs / Raging Bull `onTryHit`: shatter the
     // target side's screens before the hit (even through a Substitute).
     // TODO(PS parity): Raging Bull's type-dependent variants.
@@ -2922,6 +2915,21 @@ fn execute_action_inner(
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
             push_order();
             return;
+        }
+    }
+
+    // Uproar `onTryHit` (move-level, so after the immunity and accuracy steps):
+    // cures sleep on every active pokemon.
+    if choice.move_id == Choices::UPROAR {
+        for sd in [Side::One, Side::Two] {
+            for sl in 0..2 {
+                if let Some(ti) = state.side(sd).active[sl].pokemon_index {
+                    let pm = state.side_mut(sd).team_member_mut(ti);
+                    if pm.status == PokemonStatus::SLEEP {
+                        pm.status = PokemonStatus::NONE;
+                    }
+                }
+            }
         }
     }
 

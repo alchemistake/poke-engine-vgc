@@ -1916,6 +1916,9 @@ fn execute_action_inner(
                     pm.defense = def;
                     pm.special_attack = spa;
                     pm.special_defense = spd;
+                    // `formeChange` -> `setSpecies`: the cached speed is the raw stat.
+                    let raw = pm.speed;
+                    state.side_mut(side).speed_cache[idx as usize] = raw as _;
                 }
             }
         }
@@ -4208,6 +4211,12 @@ fn execute_action_inner(
             }
         }
 
+        // Imprison (data/moves.ts imprison): a self-targeted `volatileStatus`
+        // does not land, so the move fails with no `eachEvent`.
+        // TODO(PS parity): the foe's `onFoeBeforeMove` block (Imprison is not modelled).
+        if choice.move_id == Choices::IMPRISON && ti == 0 && is_self {
+            move_failed = true;
+        }
         // Defog `onHit`: -1 evasion (unless behind a Substitute), clear the
         // target side's screens and both sides' hazards, clear the terrain.
         if choice.move_id == Choices::DEFOG && ti == 0 {

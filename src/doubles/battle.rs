@@ -6622,6 +6622,20 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
                         continue;
                     }
                     let Some(idx) = state.side(side).active[slot].pokemon_index else { continue };
+                    // Semi-invulnerable (Dig / Fly / Bounce / Dive / Sink /
+                    // Sky Drop charge turn): immune to sandstorm (PS
+                    // `runStatusImmunity` -> `Immunity` event).
+                    // Phantom Force is NOT semi-invulnerable (hidden only).
+                    if let Some((mv, _)) = &state.side(side).active[slot].charging {
+                        if matches!(mv,
+                            crate::choices::Choices::DIG
+                            | crate::choices::Choices::FLY
+                            | crate::choices::Choices::BOUNCE
+                            | crate::choices::Choices::DIVE
+                            | crate::choices::Choices::SKYDROP) {
+                            continue;
+                        }
+                    }
                     let p2 = state.side(side).team_member(idx);
                     let types = p2.types;
                     let immune = [PokemonType::ROCK, PokemonType::GROUND, PokemonType::STEEL]

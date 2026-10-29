@@ -3991,6 +3991,32 @@ fn execute_action_inner(
             }
         }
 
+        // Entrainment (`onTryHit` + `onHit` -> `target.setAbility(source.ability)`).
+        // PS data/moves.ts entrainment, sim/pokemon.ts setAbility. No draws.
+        if choice.move_id == Choices::ENTRAINMENT {
+            let (ts, tsl) = if is_ally { (side, ally_slot) } else { (target_side, target_slot) };
+            let src_ability = state.side(side).team_member(idx).ability;
+            let target = state.side(ts).active[tsl].pokemon_index.map(|ti| {
+                (ti, state.side(ts).team_member(ti).clone())
+            });
+            match target {
+                Some((ti, tm))
+                    if !(ts == side && tsl == slot)
+                        && tm.hp > 0
+                        && tm.ability != src_ability
+                        && !crate::engine::mechanics::cant_suppress(tm.ability)
+                        && tm.ability != Abilities::TRUANT
+                        && !crate::engine::mechanics::no_entrain(src_ability)
+                        && !crate::engine::mechanics::cant_suppress(src_ability) =>
+                {
+                    state.side_mut(ts).team_member_mut(ti).ability = src_ability;
+                    // The new ability's Start event (Intimidate, Drought, ...).
+                    let _ = apply_on_switch_abilities(state, ts, tsl, rng);
+                }
+                _ => move_failed = true,
+            }
+        }
+
         // Psych Up (`onHit`): copy the target's stat stages onto the user.
         // TODO(PS parity): also copies crit-stage volatiles (Focus Energy,
         // Dragon Cheer).

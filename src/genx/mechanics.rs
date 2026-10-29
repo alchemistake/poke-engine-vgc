@@ -277,6 +277,73 @@ pub fn fractional_priority(ability: Abilities, category: MoveCategory) -> Option
     }
 }
 
+/// Abilities with the `cantsuppress` flag (data/abilities.ts): Entrainment,
+/// Mummy, Lingering Aroma and friends can't replace them (`setAbility`).
+pub fn cant_suppress(a: Abilities) -> bool {
+    matches!(
+        a,
+        Abilities::ASONEGLASTRIER
+            | Abilities::ASONESPECTRIER
+            | Abilities::BATTLEBOND
+            | Abilities::COMATOSE
+            | Abilities::DISGUISE
+            | Abilities::GULPMISSILE
+            | Abilities::ICEFACE
+            | Abilities::MULTITYPE
+            | Abilities::POWERCONSTRUCT
+            | Abilities::RKSSYSTEM
+            | Abilities::SCHOOLING
+            | Abilities::SHIELDSDOWN
+            | Abilities::STANCECHANGE
+            | Abilities::TERASHIFT
+            | Abilities::ZENMODE
+            | Abilities::ZEROTOHERO
+    )
+}
+
+/// Abilities with the `noentrain` flag (data/abilities.ts): they can't be
+/// copied by Entrainment (`onTryHit`).
+pub fn no_entrain(a: Abilities) -> bool {
+    matches!(
+        a,
+        Abilities::ASONEGLASTRIER
+            | Abilities::ASONESPECTRIER
+            | Abilities::BATTLEBOND
+            | Abilities::COMATOSE
+            | Abilities::COMMANDER
+            | Abilities::DISGUISE
+            | Abilities::EMBODYASPECTCORNERSTONE
+            | Abilities::EMBODYASPECTHEARTHFLAME
+            | Abilities::EMBODYASPECTTEAL
+            | Abilities::EMBODYASPECTWELLSPRING
+            | Abilities::FLOWERGIFT
+            | Abilities::FORECAST
+            | Abilities::HUNGERSWITCH
+            | Abilities::ICEFACE
+            | Abilities::ILLUSION
+            | Abilities::IMPOSTER
+            | Abilities::MULTITYPE
+            | Abilities::NEUTRALIZINGGAS
+            | Abilities::POISONPUPPETEER
+            | Abilities::POWERCONSTRUCT
+            | Abilities::POWEROFALCHEMY
+            | Abilities::PROTOSYNTHESIS
+            | Abilities::QUARKDRIVE
+            | Abilities::RECEIVER
+            | Abilities::RKSSYSTEM
+            | Abilities::SCHOOLING
+            | Abilities::SHIELDSDOWN
+            | Abilities::STANCECHANGE
+            | Abilities::TERAFORMZERO
+            | Abilities::TERASHELL
+            | Abilities::TERASHIFT
+            | Abilities::TRACE
+            | Abilities::WONDERGUARD
+            | Abilities::ZENMODE
+            | Abilities::ZEROTOHERO
+    )
+}
+
 /// Abilities with the `failskillswap` flag (data/abilities.ts).
 pub fn fails_skill_swap(a: Abilities) -> bool {
     matches!(
@@ -473,6 +540,11 @@ pub fn toxic_always_hits(move_id: Choices, user: &Pokemon) -> bool {
 pub fn attacker_stat_modifier(attacker: &Pokemon, choice: &Choice) -> i64 {
     // Huge Power / Pure Power `onModifyAtk`: x2 (physical moves).
     if matches!(attacker.ability, Abilities::HUGEPOWER | Abilities::PUREPOWER) && choice.category == MoveCategory::Physical {
+        return 8192;
+    }
+    // Water Bubble `onModifyAtk` / `onModifySpA`: x2 on Water moves (both
+    // categories). PS data/abilities.ts waterbubble.
+    if attacker.ability == Abilities::WATERBUBBLE && choice.move_type == PokemonType::WATER {
         return 8192;
     }
     let pinch = (attacker.hp as i32) * 3 <= attacker.maxhp as i32;

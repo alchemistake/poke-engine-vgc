@@ -2894,11 +2894,14 @@ fn execute_action_inner(
     }
 
     // Prankster-boosted Status moves: Dark foes are immune (PS
-    // sim/battle-actions.ts `hitStepTryImmunity`, gen >= 7). No draw.
+    // sim/battle-actions.ts `hitStepTryImmunity`, gen >= 7). No draw. PS
+    // skips `isAlly` targets, so a move aimed at the user's own side (Wonder
+    // Room's `all` target resolves to the user) is not affected.
     if choice.category == MoveCategory::Status
         && !is_self
         && !is_ally
         && !is_field
+        && target_side != side
         && state.side(side).slot_pokemon(slot).map(|p| p.ability) == Some(Abilities::PRANKSTER)
         && state
             .side(target_side)
@@ -6362,7 +6365,7 @@ fn compute_hit_damage(
             attack_boost: atk_boost_stat,
             defense_base: base_def,
             defense_boost: def_boost_stat,
-            weather: state.weather.weather_type,
+            weather: if weather_suppressed(state) { Weather::NONE } else { state.weather.weather_type },
             // PS data/moves.ts reflect / lightscreen / auroraveil
             // `onAnyModifyDamage`: skipped when `move.infiltrates`
             // (data/abilities.ts infiltrator.onModifyMove).
@@ -9093,7 +9096,7 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
                     attack_boost,
                     defense_base,
                     defense_boost,
-                    weather: state.weather.weather_type,
+                    weather: if weather_suppressed(state) { Weather::NONE } else { state.weather.weather_type },
                     reflect: false,
                     light_screen: false,
                     defender_mod: 4096,

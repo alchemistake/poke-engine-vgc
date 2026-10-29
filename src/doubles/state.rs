@@ -490,6 +490,8 @@ pub struct DoublesState {
     /// After You `onHit`: the target's queued action moves to the front
     /// (`queue.prioritizeAction`), applied by the battle loop.
     pub queue_prioritize: Option<(Side, usize)>,
+    /// Quash `onHit`: the target's queued action is moved last (`order = 201`).
+    pub queue_quash: Option<(Side, usize)>,
     /// Gravity `onFieldStart`: queued moves cancelled (`queue.cancelMove`).
     pub queue_cancel: Vec<(Side, usize)>,
     /// Wonder Room's `onModifyMove` has run since it started (PS fixes the
@@ -1024,6 +1026,7 @@ impl DoublesState {
             last_move: None,
             queue_change: None,
             queue_prioritize: None,
+            queue_quash: None,
             queue_cancel: Vec::new(),
             wonder_room_seen: false,
             side_one,

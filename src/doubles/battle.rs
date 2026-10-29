@@ -1006,6 +1006,16 @@ pub fn run_battle_fuzz(
                     }
                 }
             }
+            // Quash `onHit`: the target's action moves to the end (order 201).
+            if let Some((ts, tsl)) = state.queue_quash.take() {
+                if let Some(tidx) = state.side(ts).active[tsl].pokemon_index {
+                    if let Some(j) = (i..actions.len()).find(|&j| actions[j].side == ts && actions[j].pokemon_index == tidx) {
+                        let mut a = actions.remove(j);
+                        a.priority = -100;
+                        actions.push(a);
+                    }
+                }
+            }
             // After You `onHit` -> `queue.prioritizeAction(action)`.
             // PS sim/battle-queue.ts prioritizeAction.
             if let Some((ts, tsl)) = state.queue_prioritize.take() {
@@ -2336,6 +2346,8 @@ fn execute_action_inner(
     let mut spread_list: Vec<(Side, usize)> = Vec::new();
     // PS `trySpreadMoveHit`: `spreadHit` is set from the original target list.
     let mut spread_count = 0usize;
+    // Flash Fire `onTryHit` sets `move.accuracy = true` for the rest of the move.
+    let mut flash_fire_used = false;
     if is_spread {
         let mut cands: Vec<(Side, usize)> = Vec::new();
         if move_ty == "allAdjacent" && slot_alive(state, side, 1 - slot) {
@@ -2386,6 +2398,9 @@ fn execute_action_inner(
                 }
             }
             if (ts, tsl) != (side, slot) && try_absorb(state, ts, tsl, choice.move_type) {
+                if d.ability == Abilities::FLASHFIRE && choice.move_type == PokemonType::FIRE {
+                    flash_fire_used = true;
+                }
                 continue;
             }
             if (d.ability == Abilities::SOUNDPROOF && choice.flags.sound)
@@ -2908,7 +2923,7 @@ fn execute_action_inner(
     }
     if is_spread {
         // PS `hitStepAccuracy`: one roll per target, in target order.
-        if !choice.always_hit && !toxic_hits && !weather_guaranteed && choice.accuracy > 0.0 {
+        if !choice.always_hit && !toxic_hits && !weather_guaranteed && !flash_fire_used && choice.accuracy > 0.0 {
             let ab = state.side(side).slot_boosts(slot).map(|b| b.acc).unwrap_or(0);
             let user_no_guard = state.side(side).team_member(idx).ability == Abilities::NOGUARD;
             let ignore_eva = ignores_evasion(state.side(side).team_member(idx).ability, choice.move_id);
@@ -4166,6 +4181,18 @@ fn execute_action_inner(
             }
         }
 
+        // Quash (PS data/moves.ts quash.onHit): the target's queued action gets
+        // `order = 201` and moves after every other move; fails without one.
+        if choice.move_id == Choices::QUASH && ti == 0 {
+            let tidx = state.side(target_side).active[target_slot].pokemon_index;
+            let will_move = tidx.is_some()
+                && queue.iter().any(|q| q.side == target_side && Some(q.pokemon_index) == tidx);
+            if will_move {
+                state.queue_quash = Some((target_side, target_slot));
+            } else {
+                move_failed = true;
+            }
+        }
         // After You (PS data/moves.ts afteryou.onHit): fails when the target
         // has no queued action; otherwise it moves next.
         if choice.move_id == Choices::AFTERYOU && ti == 0 {

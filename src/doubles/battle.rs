@@ -2311,11 +2311,29 @@ fn execute_action_inner(
                 continue;
             }
             let d = state.side(ts).slot_pokemon(tsl).unwrap().clone();
+            // Semi-invulnerable target, minus the moves that still hit it
+            // (Earthquake vs Dig, ...; PS `onInvulnerability`).
             if let Some((m, _)) = state.side(ts).active[tsl].charging {
+                let hits_anyway = match m {
+                    Choices::DIG => matches!(choice.move_id, Choices::EARTHQUAKE | Choices::MAGNITUDE),
+                    Choices::FLY | Choices::BOUNCE => matches!(
+                        choice.move_id,
+                        Choices::GUST
+                            | Choices::TWISTER
+                            | Choices::SKYUPPERCUT
+                            | Choices::THUNDER
+                            | Choices::HURRICANE
+                            | Choices::SMACKDOWN
+                            | Choices::THOUSANDARROWS
+                    ),
+                    Choices::DIVE => matches!(choice.move_id, Choices::SURF | Choices::WHIRLPOOL),
+                    _ => false,
+                };
                 if matches!(
                     m,
                     Choices::DIG | Choices::DIVE | Choices::FLY | Choices::BOUNCE | Choices::PHANTOMFORCE | Choices::SHADOWFORCE | Choices::SKYDROP
-                ) {
+                ) && !hits_anyway
+                {
                     continue;
                 }
             }
@@ -5717,7 +5735,21 @@ fn compute_hit_damage(
                 && (state.side(target_side).side_conditions.light_screen > 0
                     || state.side(target_side).side_conditions.aurora_veil > 0),
             defender_mod: {
-                let m = crate::engine::mechanics::defender_damage_modifier(defender, choice);
+                let mut m = crate::engine::mechanics::defender_damage_modifier(defender, choice);
+                // Semi-invulnerable `onSourceModifyDamage`: x2 for the moves that
+                // still hit (dig: earthquake / magnitude, fly + bounce: gust /
+                // twister, dive: surf / whirlpool). PS data/moves.ts.
+                if let Some((c, _)) = state.side(target_side).active[target_slot].charging {
+                    let double = match c {
+                        Choices::DIG => matches!(choice.move_id, Choices::EARTHQUAKE | Choices::MAGNITUDE),
+                        Choices::FLY | Choices::BOUNCE => matches!(choice.move_id, Choices::GUST | Choices::TWISTER),
+                        Choices::DIVE => matches!(choice.move_id, Choices::SURF | Choices::WHIRLPOOL),
+                        _ => false,
+                    };
+                    if double {
+                        m = (m * 8192 + 2048) >> 12;
+                    }
+                }
                 // Glaive Rush `onSourceModifyDamage`: x2 (chained).
                 if state.side(target_side).active[target_slot].glaive_rush {
                     (m * 8192 + 2048) >> 12
@@ -5729,6 +5761,7 @@ fn compute_hit_damage(
                 defender.ability,
                 Abilities::FILTER | Abilities::SOLIDROCK | Abilities::PRISMARMOR
             ) && !crate::engine::abilities::ignores_target_ability(attacker, choice, &defender.ability),
+            sniper: attacker.ability == Abilities::SNIPER,
             no_crit: matches!(defender.ability, Abilities::SHELLARMOR | Abilities::BATTLEARMOR)
                 && !crate::engine::abilities::ignores_target_ability(attacker, choice, &defender.ability),
             guts: attacker.ability == Abilities::GUTS,
@@ -7945,6 +7978,33 @@ fn end_of_turn(
             }
         }
     }
+    // The `instaswitch` actions are speed-sorted (by the switching pokemon's
+    // speed; exact ties shuffle: PS `queue.sort`), which also fixes the order
+    // the replacements enter.
+    if pending_vec.len() >= 2 {
+        let mut hs: Vec<ResidualHandler> = Vec::new();
+        for (i, &(sd, sl, _)) in pending_vec.iter().enumerate() {
+            let sdd = state.side(sd);
+            let who = sdd.active[sl].pokemon_index.or_else(|| sdd.fainted_in_slot[sl].map(|f| f.0));
+            let speed = who.map(|w| sdd.speed_cache[w as usize] as i32).unwrap_or(0);
+            hs.push(ResidualHandler {
+                order: 0,
+                priority: 0,
+                speed,
+                sub_order: 0,
+                kind: ResidualKind::Status(sd, i),
+            });
+        }
+        let sorted = sort_residual_handlers(hs, rng, "speed tie (move order)");
+        let old = pending_vec.clone();
+        pending_vec = sorted
+            .into_iter()
+            .filter_map(|h| match h.kind {
+                ResidualKind::Status(_, i) => Some(old[i]),
+                _ => None,
+            })
+            .collect();
+    }
     let pending_switches: &[(Side, usize, usize)] = &pending_vec;
     check_fainted(state);
 
@@ -8194,6 +8254,7 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
                     defender_mod: 4096,
                     solid_rock: false,
                     no_crit: false,
+                    sniper: false,
                     guts: attacker.ability == Abilities::GUTS,
                     attack_mod: crate::engine::mechanics::attacker_stat_modifier(attacker, &action.choice),
                     crit_bonus: 0,

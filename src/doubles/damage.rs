@@ -127,6 +127,8 @@ pub struct DamageCtx {
     pub solid_rock: bool,
     /// Shell Armor / Battle Armor `onCriticalHit` (the crit roll is still drawn).
     pub no_crit: bool,
+    /// Attacker has Sniper (`onModifyDamage`: x1.5 on a critical hit).
+    pub sniper: bool,
     /// Effective base power after multiplier effects (Helping Hand);
     /// 0.0 = use `choice.base_power`.
     pub base_power_override: f32,
@@ -299,6 +301,9 @@ pub fn calculate_damage(
     }
     if ctx.solid_rock && tm > 0 {
         chain_in(3072);
+    }
+    if ctx.sniper && crit {
+        chain_in(6144);
     }
     // PS `runEvent('ModifyDamage')` -> `speedSort` over the handlers; the
     // screens share order / priority / subOrder (4) / speed, so they shuffle.

@@ -85,6 +85,24 @@ pub struct ActiveSlot {
     /// `yawn` volatile: remaining duration (0 = none) and the user who
     /// applied it (for the sleep `trySetStatus` when it ends).
     pub yawn: u8,
+    /// `noretreat` volatile (No Retreat already used).
+    pub no_retreat: bool,
+    /// `focusenergy` volatile: +2 critical-hit stages.
+    pub focus_energy: bool,
+    /// `attract` volatile: the infatuating pokemon (side, team index).
+    pub attract: Option<(Side, PokemonIndex)>,
+    /// `aquaring` volatile: heals 1/16 max HP each residual (order 6).
+    pub aqua_ring: bool,
+    /// `counter` / `mirrorcoat` volatiles (duration 1): the last foe slot that
+    /// hit this pokemon with a physical / special move, and twice the damage.
+    pub counter_vol: Option<(Option<(Side, usize)>, i16)>,
+    pub mirror_coat_vol: Option<(Option<(Side, usize)>, i16)>,
+    /// PS `moveThisTurnResult` / `moveLastTurnResult` (false = the move failed;
+    /// None = undefined or null). Stomping Tantrum reads the last turn's.
+    pub move_result_this_turn: Option<bool>,
+    pub move_result_last_turn: Option<bool>,
+    /// `allyswitch` volatile: (counter, duration).
+    pub ally_switch: Option<(u16, u8)>,
     /// `uproar` volatile: remaining duration (0 = none). Locks the move.
     pub uproar: u8,
     /// `stall` volatile (Protect / Detect / Endure counter): (counter, duration).
@@ -156,6 +174,15 @@ impl ActiveSlot {
             stats_raised_this_turn: false,
             partial_trap: None,
             yawn: 0,
+            no_retreat: false,
+            focus_energy: false,
+            attract: None,
+            aqua_ring: false,
+            counter_vol: None,
+            mirror_coat_vol: None,
+            move_result_this_turn: None,
+            move_result_last_turn: None,
+            ally_switch: None,
             uproar: 0,
             stall: None,
             endure: false,
@@ -305,6 +332,8 @@ pub struct DoublesState {
     pub weather: StateWeather,
     pub terrain: StateTerrain,
     pub trick_room: StateTrickRoom,
+    /// Wonder Room pseudo-weather (Def and Sp. Def swapped), duration 5.
+    pub wonder_room: StateTrickRoom,
     pub turn: u32,
     /// Pokemon that reached 0 HP during the current move's hit loop. PS only
     /// resolves faints after the loop, so its per-hit `eachEvent` still sorts
@@ -829,6 +858,10 @@ impl DoublesState {
                 active: false,
                 turns_remaining: 0,
             },
+            wonder_room: StateTrickRoom {
+                active: false,
+                turns_remaining: 0,
+            },
             turn: 1,
             unresolved_faints: Vec::new(),
         };
@@ -918,7 +951,9 @@ pub struct FullSlot {
 #[derive(Debug, Clone, Serialize)]
 pub struct SideConditionEntry {
     pub id: String,
-    pub duration: i8,
+    /// `None` for conditions without a duration (hazards): PS reports none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration: Option<i8>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1010,49 +1045,52 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<String>) -> FuzzTurnS
     let sc_entries = |sc: &SideConditions| -> Vec<SideConditionEntry> {
         let mut v = vec![];
         if sc.reflect != 0 {
-            v.push(SideConditionEntry { id: "reflect".into(), duration: sc.reflect });
+            v.push(SideConditionEntry { id: "reflect".into(), duration: Some(sc.reflect) });
         }
         if sc.light_screen != 0 {
-            v.push(SideConditionEntry { id: "lightscreen".into(), duration: sc.light_screen });
+            v.push(SideConditionEntry { id: "lightscreen".into(), duration: Some(sc.light_screen) });
         }
         if sc.aurora_veil != 0 {
-            v.push(SideConditionEntry { id: "auroraveil".into(), duration: sc.aurora_veil });
+            v.push(SideConditionEntry { id: "auroraveil".into(), duration: Some(sc.aurora_veil) });
         }
         if sc.tailwind != 0 {
-            v.push(SideConditionEntry { id: "tailwind".into(), duration: sc.tailwind });
+            v.push(SideConditionEntry { id: "tailwind".into(), duration: Some(sc.tailwind) });
         }
         if sc.safeguard != 0 {
-            v.push(SideConditionEntry { id: "safeguard".into(), duration: sc.safeguard });
+            v.push(SideConditionEntry { id: "safeguard".into(), duration: Some(sc.safeguard) });
         }
         if sc.lucky_chant != 0 {
-            v.push(SideConditionEntry { id: "luckychant".into(), duration: sc.lucky_chant });
+            v.push(SideConditionEntry { id: "luckychant".into(), duration: Some(sc.lucky_chant) });
         }
         if sc.spikes != 0 {
-            v.push(SideConditionEntry { id: "spikes".into(), duration: sc.spikes });
+            v.push(SideConditionEntry { id: "spikes".into(), duration: None });
         }
         if sc.stealth_rock != 0 {
-            v.push(SideConditionEntry { id: "stealthrock".into(), duration: sc.stealth_rock });
+            v.push(SideConditionEntry { id: "stealthrock".into(), duration: None });
         }
         if sc.sticky_web != 0 {
-            v.push(SideConditionEntry { id: "stickyweb".into(), duration: sc.sticky_web });
+            v.push(SideConditionEntry { id: "stickyweb".into(), duration: None });
         }
         if sc.toxic_spikes != 0 {
-            v.push(SideConditionEntry { id: "toxicspikes".into(), duration: sc.toxic_spikes });
+            v.push(SideConditionEntry { id: "toxicspikes".into(), duration: None });
         }
         if sc.protect != 0 {
-            v.push(SideConditionEntry { id: "protect".into(), duration: sc.protect });
+            v.push(SideConditionEntry { id: "protect".into(), duration: Some(sc.protect) });
         }
         if sc.quick_guard != 0 {
-            v.push(SideConditionEntry { id: "quickguard".into(), duration: sc.quick_guard });
+            v.push(SideConditionEntry { id: "quickguard".into(), duration: Some(sc.quick_guard) });
         }
         if sc.wide_guard != 0 {
-            v.push(SideConditionEntry { id: "wideguard".into(), duration: sc.wide_guard });
+            v.push(SideConditionEntry { id: "wideguard".into(), duration: Some(sc.wide_guard) });
         }
         v
     };
     let mut pseudo_weather: Vec<String> = vec![];
     if state.trick_room.active {
         pseudo_weather.push("trickroom".into());
+    }
+    if state.wonder_room.active {
+        pseudo_weather.push("wonderroom".into());
     }
     if state.side_one.side_conditions.tailwind > 0 || state.side_two.side_conditions.tailwind > 0 {
         pseudo_weather.push("tailwind".into());

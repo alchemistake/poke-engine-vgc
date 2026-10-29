@@ -99,6 +99,8 @@ pub struct DamageCtx {
     /// The attacker ability's ModifyAtk / ModifySpA modifier (4096 = none),
     /// from `mechanics::attacker_stat_modifier`.
     pub attack_mod: i64,
+    /// Extra critical-hit stages (Focus Energy +2).
+    pub crit_bonus: i32,
     /// Effective base power after multiplier effects (Helping Hand);
     /// 0.0 = use `choice.base_power`.
     pub base_power_override: f32,
@@ -137,7 +139,7 @@ pub fn calculate_damage(
     // critical roll (drawn in getDamage, before the damage roll).
     // Standard moves have critRatio 1 (1/24); crit-boosting moves (1/8) are
     // handled via `crit_ratio`; guaranteed-crit moves skip the roll.
-    let cm = crit_mult(choice.crit_ratio);
+    let cm = crit_mult(choice.crit_ratio + ctx.crit_bonus);
     let mut crit = choice.move_id.guaranteed_crit();
     if !crit && cm > 0 {
         crit = rng.label("crit").random_chance(1, cm as u32);

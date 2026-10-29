@@ -1147,6 +1147,11 @@ fn resort_queue(state: &mut DoublesState, rng: &mut Gen5Rng, queue: &mut [Action
 ///   6. per secondary       -> `random(100)`
 ///
 /// Type-immune and fixed-damage moves make no crit/damage draws.
+thread_local! {
+    /// PS `queue.willMove(target)` is false for every other active: Analytic.
+    static ANALYTIC_NO_MOVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 fn execute_action(
     state: &mut DoublesState,
     rng: &mut Gen5Rng,
@@ -1156,6 +1161,17 @@ fn execute_action(
 ) {
     let will_act = !queue.is_empty();
     crate::doubles::damage::set_gravity(state.gravity.active);
+    // Analytic: every other (unfainted) active has no pending action.
+    ANALYTIC_NO_MOVE.with(|c| {
+        c.set(![Side::One, Side::Two].iter().any(|&sd| {
+            (0..2).any(|sl| {
+                let a = &state.side(sd).active[sl];
+                (sd, sl) != (action.side, action.slot)
+                    && state.side(sd).slot_pokemon(sl).map(|p| p.hp > 0).unwrap_or(false)
+                    && queue.iter().any(|q| q.side == sd && Some(q.pokemon_index) == a.pokemon_index)
+            })
+        }))
+    });
     let before = state.side(action.side).active[action.slot].charging;
     let was_recharging = state.side(action.side).active[action.slot].recharging;
     let order_len = move_order.len();
@@ -3492,7 +3508,14 @@ fn execute_action_inner(
                 match &sec.effect {
                     Effect::Flinch => {
                         // Focus Punch's volatile blocks flinch (`onTryAddVolatile`).
-                        if !state.side(ts).active[tslot].focus_punch {
+                        // Inner Focus `onTryAddVolatile`: flinch is blocked.
+                        // TODO(PS parity): Mold Breaker.
+                        let inner_focus = state
+                            .side(ts)
+                            .slot_pokemon(tslot)
+                            .map(|p| p.ability == Abilities::INNERFOCUS)
+                            .unwrap_or(false);
+                        if !state.side(ts).active[tslot].focus_punch && !inner_focus {
                             state.side_mut(ts).active[tslot].flinched = true;
                         }
                     }
@@ -3521,7 +3544,12 @@ fn execute_action_inner(
                     }
                     Effect::VolatileStatus(PokemonVolatileStatus::FLINCH) => {
                         // Focus Punch's volatile blocks flinch (`onTryAddVolatile`).
-                        if !state.side(ts).active[tslot].focus_punch {
+                        let inner_focus = state
+                            .side(ts)
+                            .slot_pokemon(tslot)
+                            .map(|p| p.ability == Abilities::INNERFOCUS)
+                            .unwrap_or(false);
+                        if !state.side(ts).active[tslot].focus_punch && !inner_focus {
                             state.side_mut(ts).active[tslot].flinched = true;
                         }
                     }
@@ -3910,6 +3938,8 @@ fn base_power_with_modifiers(
         Abilities::IRONFIST if f.punch => mods.push((23, 4915)),
         Abilities::RECKLESS if choice.recoil.is_some() || choice.crash.is_some() => mods.push((23, 4915)),
         Abilities::TOUGHCLAWS if f.contact => mods.push((21, 5325)),
+        // Analytic `onBasePower`: no other active has a move left in the queue.
+        Abilities::ANALYTIC if ANALYTIC_NO_MOVE.with(|c| c.get()) => mods.push((21, 5325)),
         Abilities::STRONGJAW if f.bite => mods.push((19, 6144)),
         Abilities::MEGALAUNCHER if f.pulse => mods.push((19, 6144)),
         Abilities::SHARPNESS if f.slicing => mods.push((19, 6144)),
@@ -4588,8 +4618,16 @@ fn resolve_future_move(
     ts: Side,
     tslot: usize,
 ) {
-    let Some(sslot) = (0..2).find(|&sl| state.side(ss).active[sl].pokemon_index == Some(si)) else { return };
-    if !state.side(ts).slot_pokemon(tslot).map(|p| p.hp > 0).unwrap_or(false) || (ss, sslot) == (ts, tslot) {
+    // PS futuremove `onEnd`: the source may have fainted or switched out; the
+    // move is still resolved with its stats (`trySpreadMoveHit([target], data.source, ...)`).
+    // A source that is no longer active has its boosts / volatiles cleared.
+    let src_slot = (0..2).find(|&sl| state.side(ss).active[sl].pokemon_index == Some(si));
+    let sslot = src_slot.unwrap_or_else(|| {
+        (0..2).find(|&sl| state.side(ss).active[sl].pokemon_index.is_none()).unwrap_or(0)
+    });
+    if !state.side(ts).slot_pokemon(tslot).map(|p| p.hp > 0).unwrap_or(false)
+        || (src_slot.is_some() && (ss, sslot) == (ts, tslot))
+    {
         return;
     }
     let Some(mut choice) = MOVES.get(&mv).cloned() else { return };
@@ -4597,7 +4635,11 @@ fn resolve_future_move(
     if state.side(ts).slot_pokemon(tslot).map(|d| crate::doubles::damage::type_mod(&choice.move_type, d).is_none()).unwrap_or(true) {
         return;
     }
-    let ab = state.side(ss).slot_boosts(sslot).map(|b| b.acc).unwrap_or(0);
+    let ab = if src_slot.is_some() {
+        state.side(ss).slot_boosts(sslot).map(|b| b.acc).unwrap_or(0)
+    } else {
+        0
+    };
     let eb = state.side(ts).slot_boosts(tslot).map(|b| b.eva).unwrap_or(0);
     let hustle_phys = state.side(ss).team_member(si).ability == Abilities::HUSTLE
         && choice.category == MoveCategory::Physical;

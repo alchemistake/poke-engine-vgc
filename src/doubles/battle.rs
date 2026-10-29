@@ -795,7 +795,7 @@ pub fn run_battle_fuzz(
                                     Some((m, _)) if m == charge_id => s.active[slot].charge_target as i8 + 1,
                                     // A locked move (Thrash, ...) reuses
                                     // `lastMoveTargetLoc` (side.ts `chooseMove`).
-                                    _ if s.active[slot].locked_move.is_some() || s.active[slot].uproar > 0 => {
+                                    _ if s.active[slot].locked_move.is_some() || s.active[slot].uproar > 0 || (s.active[slot].recharging && matches!(p.ability, Abilities::STALWART | Abilities::PROPELLERTAIL)) => {
                                         s.active[slot].last_target_loc
                                     }
                                     _ => *target,
@@ -2356,7 +2356,7 @@ fn execute_action_inner(
             {
                 continue;
             }
-            if damaging && crate::doubles::damage::type_mod(&choice.move_type, &d).is_none() {
+            if damaging && crate::doubles::damage::type_mod_by(state.side(side).team_member(idx), &choice.move_type, &d).is_none() {
                 continue;
             }
             spread_list.push((ts, tsl));
@@ -2723,7 +2723,7 @@ fn execute_action_inner(
         && !is_field
     {
         if let Some(def) = state.side(target_side).slot_pokemon(target_slot) {
-            if crate::doubles::damage::type_mod(&choice.move_type, def).is_none() {
+            if crate::doubles::damage::type_mod_by(state.side(side).team_member(idx), &choice.move_type, def).is_none() {
                 state.side_mut(side).active[slot].move_result_this_turn = Some(false);
                 push_order();
                 return;
@@ -5428,6 +5428,18 @@ fn illusion_disguise(sd: &crate::doubles::state::DoublesSide, idx: PokemonIndex)
     None
 }
 
+/// PS `field.suppressingWeather()`: an active Cloud Nine / Air Lock holder.
+fn weather_suppressed(state: &DoublesState) -> bool {
+    [Side::One, Side::Two].iter().any(|&s| {
+        (0..2).any(|sl| {
+            state
+                .side(s)
+                .slot_pokemon(sl)
+                .is_some_and(|p| p.hp > 0 && matches!(p.ability, Abilities::CLOUDNINE | Abilities::AIRLOCK))
+        })
+    })
+}
+
 /// PS `side.totalFainted`: fainted members of the battle team.
 fn side_total_fainted(state: &DoublesState, side: Side) -> u32 {
     let sd = state.side(side);
@@ -5484,6 +5496,11 @@ fn dynamic_base_power(
         // PS tripleaxel / triplekick basePowerCallback: 20 (10) * move.hit.
         Choices::TRIPLEAXEL => 20.0 * hit_number as f32,
         Choices::TRIPLEKICK => 10.0 * hit_number as f32,
+        // PS eruption / waterspout / dragonenergy basePowerCallback:
+        // floor(150 * hp / maxhp), at least 1.
+        Choices::ERUPTION | Choices::WATERSPOUT | Choices::DRAGONENERGY => {
+            ((150 * attacker.hp as i32 / attacker.maxhp.max(1) as i32).max(1)) as f32
+        }
         // PS venoshock / barbbarrage basePowerCallback: doubled on a poisoned
         // target; infernalparade: on any status (or Comatose).
         Choices::VENOSHOCK | Choices::BARBBARRAGE => {
@@ -7542,6 +7559,11 @@ fn end_of_turn(
                 }
                 // `onFieldResidual` -> `eachEvent('Weather')` then
                 // `eachEvent('Update')`: two speed sorts of the actives.
+                // PS `isWeather` is false while Cloud Nine / Air Lock is active
+                // (`field.suppressingWeather()`): no weather event runs.
+                if weather_suppressed(state) {
+                    continue;
+                }
                 let order = sorted_actives(state, rng, "speed tie (eachEvent)");
                 for (side, slot) in order {
                     // Ability `onWeather` handlers (PS data/abilities.ts icebody /

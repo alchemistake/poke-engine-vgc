@@ -60,6 +60,26 @@ pub fn set_gravity(on: bool) {
     GRAVITY.with(|g| g.set(on));
 }
 
+/// `type_mod` for a given attacker: Scrappy / Mind's Eye let Normal and Fighting
+/// moves hit Ghost types (PS data/abilities.ts scrappy.onModifyMove ignoreImmunity).
+pub fn type_mod_by(attacker: &Pokemon, attacking_type: &PokemonType, defender: &Pokemon) -> Option<i32> {
+    use crate::engine::abilities::Abilities;
+    if matches!(attacker.ability, Abilities::SCRAPPY | Abilities::MINDSEYE)
+        && matches!(*attacking_type, PokemonType::NORMAL | PokemonType::FIGHTING)
+        && (defender.types.0 == PokemonType::GHOST || defender.types.1 == PokemonType::GHOST)
+    {
+        let mut d = defender.clone();
+        if d.types.0 == PokemonType::GHOST {
+            d.types.0 = PokemonType::TYPELESS;
+        }
+        if d.types.1 == PokemonType::GHOST {
+            d.types.1 = PokemonType::TYPELESS;
+        }
+        return type_mod(attacking_type, &d);
+    }
+    type_mod(attacking_type, defender)
+}
+
 pub fn type_mod(attacking_type: &PokemonType, defender: &Pokemon) -> Option<i32> {
     let mult = crate::engine::damage_calc::type_effectiveness_modifier(attacking_type, defender);
     if mult == 0.0 {
@@ -159,7 +179,7 @@ pub fn calculate_damage(
     }
 
     // Type immunity is checked in getDamage BEFORE any draws.
-    let mut tm = type_mod(&choice.move_type, defender)?;
+    let mut tm = type_mod_by(attacker, &choice.move_type, defender)?;
     if ctx.disguise {
         // disguise.onEffectiveness returns 0 (after the immunity check).
         tm = 0;

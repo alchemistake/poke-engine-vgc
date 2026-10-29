@@ -477,6 +477,8 @@ pub struct DoublesState {
     /// After You `onHit`: the target's queued action moves to the front
     /// (`queue.prioritizeAction`), applied by the battle loop.
     pub queue_prioritize: Option<(Side, usize)>,
+    /// Gravity `onFieldStart`: queued moves cancelled (`queue.cancelMove`).
+    pub queue_cancel: Vec<(Side, usize)>,
 }
 
 impl DoublesState {
@@ -1006,6 +1008,7 @@ impl DoublesState {
             last_move: None,
             queue_change: None,
             queue_prioritize: None,
+            queue_cancel: Vec::new(),
             side_one,
             side_two,
             weather: StateWeather {

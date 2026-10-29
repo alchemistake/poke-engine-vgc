@@ -987,6 +987,19 @@ pub fn run_battle_fuzz(
             if let Some((es, esl, em)) = state.queue_change.take() {
                 apply_queue_change(state, rng, &mut actions, i, es, esl, em);
             }
+            // Gravity: `queue.cancelMove(pokemon)` for pokemon whose Fly / Bounce ended.
+            for (cs, csl) in std::mem::take(&mut state.queue_cancel) {
+                if let Some(cidx) = state.side(cs).active[csl].pokemon_index {
+                    let mut k = i;
+                    while k < actions.len() {
+                        if actions[k].side == cs && actions[k].pokemon_index == cidx {
+                            actions.remove(k);
+                        } else {
+                            k += 1;
+                        }
+                    }
+                }
+            }
             // After You `onHit` -> `queue.prioritizeAction(action)`.
             // PS sim/battle-queue.ts prioritizeAction.
             if let Some((ts, tsl)) = state.queue_prioritize.take() {
@@ -2082,7 +2095,7 @@ fn execute_action_inner(
     }
 
     // Quick Guard `onTry`: `!!this.queue.willAct()` (PS data/moves.ts quickguard).
-    if choice.move_id == Choices::QUICKGUARD && !will_act {
+    if matches!(choice.move_id, Choices::QUICKGUARD | Choices::WIDEGUARD) && !will_act {
         state.side_mut(side).active[slot].move_result_this_turn = Some(false);
         push_order();
         return;
@@ -2265,6 +2278,11 @@ fn execute_action_inner(
         for (ts, tsl) in cands {
             // PS checkMoveBypassesProtect: only moves with the `protect` flag are blocked.
             if state.side(ts).active[tsl].protected && choice.flags.protect {
+                continue;
+            }
+            // Wide Guard `onTryHit` (spread moves with the protect flag).
+            // PS data/moves.ts wideguard.
+            if state.side(ts).side_conditions.wide_guard > 0 && choice.flags.protect {
                 continue;
             }
             let d = state.side(ts).slot_pokemon(tsl).unwrap().clone();
@@ -2926,6 +2944,17 @@ fn execute_action_inner(
       for (ti, &(hts, htsl)) in hit_targets.iter().enumerate() {
         target_side = hts;
         target_slot = htsl;
+        // Substitute `onTryPrimaryHit` for a spread Status move: this target
+        // is skipped (the accuracy roll was already drawn).
+        if is_spread
+            && choice.category == MoveCategory::Status
+            && (hts, htsl) != (side, slot)
+            && state.side(hts).active[htsl].substitute_health > 0
+            && !bypasses_substitute(choice)
+            && state.side(side).team_member(idx).ability != Abilities::INFILTRATOR
+        {
+            continue;
+        }
         // The target as it was when the hit started (a KO clears the slot).
         let hit_target_pi = state.side(hts).active[htsl].pokemon_index;
         // Damage this hit dealt (PS `damagedTargets`), for DamagingHit.
@@ -4193,8 +4222,8 @@ fn execute_action_inner(
                 }
             } else if !apply_side_condition(state, cs, sc.condition) {
                 move_failed = true;
-            } else if choice.move_id == Choices::QUICKGUARD {
-                // quickguard `onHitSide`: `source.addVolatile('stall')`.
+            } else if matches!(choice.move_id, Choices::QUICKGUARD | Choices::WIDEGUARD) {
+                // quickguard / wideguard `onHitSide`: `source.addVolatile('stall')`.
                 let a = &mut state.side_mut(side).active[slot];
                 a.stall = match a.stall {
                     None => Some((3, 2)),
@@ -4298,6 +4327,18 @@ fn execute_action_inner(
             } else {
                 state.gravity = crate::state::StateTrickRoom { active: true, turns_remaining: 5 };
                 crate::doubles::damage::set_gravity(true);
+                // `onFieldStart`: Fly / Bounce charges end (volatile removed,
+                // queued move cancelled). PS data/moves.ts gravity.condition.
+                // TODO(PS parity): Sky Drop, Telekinesis, `-activate` log.
+                for gs in [Side::One, Side::Two] {
+                    for gsl in 0..2 {
+                        let a = &mut state.side_mut(gs).active[gsl];
+                        if matches!(a.charging, Some((Choices::FLY | Choices::BOUNCE, _))) {
+                            a.charging = None;
+                            state.queue_cancel.push((gs, gsl));
+                        }
+                    }
+                }
             }
         }
         if choice.move_id == Choices::MAGICROOM {
@@ -6366,6 +6407,7 @@ fn apply_side_condition(state: &mut DoublesState, side: Side, c: PokemonSideCond
         PokemonSideCondition::Stealthrock if sc.stealth_rock == 0 => sc.stealth_rock = 1,
         PokemonSideCondition::StickyWeb if sc.sticky_web == 0 => sc.sticky_web = 1,
         PokemonSideCondition::QuickGuard if sc.quick_guard == 0 => sc.quick_guard = 1,
+        PokemonSideCondition::WideGuard if sc.wide_guard == 0 => sc.wide_guard = 1,
         PokemonSideCondition::Reflect
         | PokemonSideCondition::LightScreen
         | PokemonSideCondition::AuroraVeil
@@ -6377,6 +6419,7 @@ fn apply_side_condition(state: &mut DoublesState, side: Side, c: PokemonSideCond
         | PokemonSideCondition::ToxicSpikes
         | PokemonSideCondition::Stealthrock
         | PokemonSideCondition::QuickGuard
+        | PokemonSideCondition::WideGuard
         | PokemonSideCondition::StickyWeb => return false,
         _ => {}
     }
@@ -6669,6 +6712,9 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
         }
         // quickguard (duration 1, side condition: subOrder 4, no order).
         if state.side(side).side_conditions.quick_guard > 0 {
+            push(NO_ORDER, 0, 4, ResidualKind::Marker);
+        }
+        if state.side(side).side_conditions.wide_guard > 0 {
             push(NO_ORDER, 0, 4, ResidualKind::Marker);
         }
         for slot in 0..2 {
@@ -7672,6 +7718,7 @@ fn end_of_turn(
             &mut sc.lucky_chant,
             &mut sc.mist,
             &mut sc.quick_guard,
+            &mut sc.wide_guard,
         ] {
             if *d > 0 {
                 *d -= 1;

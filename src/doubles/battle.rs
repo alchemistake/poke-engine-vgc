@@ -171,6 +171,7 @@ pub fn effective_speed(state: &DoublesState, side: Side, slot: usize) -> Option<
 fn faint_pokemon(state: &mut DoublesState, side: Side, slot: usize) {
     if let Some(idx) = state.side(side).active[slot].pokemon_index {
         state.unresolved_faints.push((side, slot, idx));
+        state.faint_log.push(side);
     }
     // Destiny Bond `onAfterFaint`: the last attacker also faints.
     // PS data/conditions.ts destinybond.onAfterFaint.
@@ -1097,11 +1098,23 @@ pub fn run_battle_fuzz(
             }
         }
 
+        // Pivot-style answers not used mid-turn: Emergency Exit / Wimp Out
+        // switches caused by residual damage.
+        let mut ee_switches: Vec<(Side, usize, usize)> = Vec::new();
+        for (i, sw) in turn.switches.iter().enumerate() {
+            if !used_switches[i] && sw.pivot {
+                if let Some(position) = sw.position {
+                    let side = if sw.side == "a" { Side::One } else { Side::Two };
+                    ee_switches.push((side, sw.slot, position));
+                }
+            }
+        }
+
         // End of turn: residual damage, switches (with hazards), durations.
         rng.context = format!("turn {}: end of turn", turn_no);
         // PS stops at once when a side is wiped out: no residual step.
         if state.battle_is_over() == 0.0 {
-            end_of_turn(state, rng, &pending_switches);
+            end_of_turn(state, rng, &pending_switches, &ee_switches);
             update_forecast(state);
             state.side_one.sync_sc_order();
             state.side_two.sync_sc_order();
@@ -2832,6 +2845,7 @@ fn execute_action_inner(
     let mut berserk_before: Vec<(Side, usize, i16)> = Vec::new();
 
     state.side_mut(side).active[slot].hit_number = 1;
+    let faint_mark = state.faint_log.len();
     for hit_idx in 0..hit_count {
       state.side_mut(side).active[slot].hit_number = hit_idx as u8 + 1;
       // `multiaccuracy` (Triple Axel / Triple Kick): hits after the first roll
@@ -3885,6 +3899,24 @@ fn execute_action_inner(
         }
 
         // Worry Seed `onHit`: the target's ability becomes Insomnia (cures sleep).
+        // Soak `onHit`: `setType('Water')` (fails if already pure Water).
+        // PS data/moves.ts soak. The original types come back on switch-out
+        // (`type_change`, as for Libero).
+        // TODO(PS parity): `setType` refusals (Multitype, Arceus, Tera).
+        if choice.move_id == Choices::SOAK && ti == 0 && !move_failed {
+            if let Some(tidx) = state.side(target_side).active[target_slot].pokemon_index {
+                let cur = state.side(target_side).team_member(tidx).types;
+                if cur == (PokemonType::WATER, PokemonType::TYPELESS) {
+                    move_failed = true;
+                } else {
+                    if state.side(target_side).active[target_slot].type_change.is_none() {
+                        state.side_mut(target_side).active[target_slot].type_change = Some(cur);
+                    }
+                    state.side_mut(target_side).team_member_mut(tidx).types =
+                        (PokemonType::WATER, PokemonType::TYPELESS);
+                }
+            }
+        }
         // Simple Beam `onHit`: `setAbility('simple')` (PS data/moves.ts simplebeam).
         // Its `onTryHit` runs after the accuracy roll: it fails on Simple /
         // Truant / unsuppressable abilities.
@@ -4675,7 +4707,13 @@ fn execute_action_inner(
     // PS `useMoveInner`: `selfdestruct: 'always'` faints the user (HP 0).
     if choice.selfdestruct {
         let hp = state.side(side).slot_pokemon(slot).map(|p| p.hp).unwrap_or(0);
+        let before = state.faint_log.len();
         apply_damage(state, side, slot, hp);
+        // PS queues the user's faint before its victims' (`faintQueue` order).
+        if state.faint_log.len() > before && before >= faint_mark {
+            let f = state.faint_log.pop().unwrap();
+            state.faint_log.insert(faint_mark, f);
+        }
     }
 
     // Spit Up: `onAfterMove` removes the Stockpile volatile.
@@ -5599,6 +5637,31 @@ fn contact_abilities(
                 let maxhp = attacker.maxhp;
                 apply_damage(state, side, slot, (maxhp / 4).max(1));
             }
+        }
+        return;
+    }
+    // Mummy / Lingering Aroma `onDamagingHit`: the contact attacker's ability
+    // becomes the holder's unless it can't be suppressed or already matches.
+    // PS data/abilities.ts mummy / lingeringaroma.
+    if matches!(ability, Abilities::MUMMY | Abilities::LINGERINGAROMA) {
+        let a = state.side(side).team_member(idx).ability;
+        let cantsuppress = matches!(
+            a,
+            Abilities::MULTITYPE
+                | Abilities::STANCECHANGE
+                | Abilities::DISGUISE
+                | Abilities::ZENMODE
+                | Abilities::SCHOOLING
+                | Abilities::SHIELDSDOWN
+                | Abilities::POWERCONSTRUCT
+                | Abilities::COMATOSE
+                | Abilities::ICEFACE
+                | Abilities::GULPMISSILE
+                | Abilities::HUNGERSWITCH
+                | Abilities::BATTLEBOND
+        );
+        if !cantsuppress && a != ability {
+            state.side_mut(side).team_member_mut(idx).ability = ability;
         }
         return;
     }
@@ -6938,7 +7001,17 @@ fn end_turn_disable_moves(state: &DoublesState, rng: &mut Gen5Rng) {
 /// resolve faints (already done on damage), apply residual status/weather
 /// damage to the actives in speed order, switch in replacements (with
 /// hazard damage), then tick down weather / terrain / side-condition durations.
-fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[(Side, usize, usize)]) {
+fn end_of_turn(
+    state: &mut DoublesState,
+    rng: &mut Gen5Rng,
+    pending_in: &[(Side, usize, usize)],
+    ee_switches: &[(Side, usize, usize)],
+) {
+    // PS `runAction`: HP of every active before the action, for `EmergencyExit`.
+    let hp_before: Vec<(Side, usize, i16)> = [(Side::One, 0usize), (Side::One, 1), (Side::Two, 0), (Side::Two, 1)]
+        .iter()
+        .filter_map(|&(sd, sl)| state.side(sd).slot_pokemon(sl).map(|p| (sd, sl, p.hp)))
+        .collect();
     // Residual phase: PS `runAction('residual')` -> `fieldEvent('Residual')`
     // collects every Residual handler (field, side, per-active status /
     // volatiles / ability) and speed-sorts them with `comparePriority`,
@@ -6967,6 +7040,31 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
                 // `eachEvent('Update')`: two speed sorts of the actives.
                 let order = sorted_actives(state, rng, "speed tie (eachEvent)");
                 for (side, slot) in order {
+                    // Ability `onWeather` handlers (PS data/abilities.ts icebody /
+                    // raindish / dryskin / solarpower).
+                    // TODO(PS parity): Cloud Nine / Air Lock (`effectiveWeather`).
+                    if let Some(p) = state.side(side).slot_pokemon(slot) {
+                        let w = state.weather.weather_type;
+                        let rain = matches!(w, Weather::RAIN | Weather::HEAVYRAIN);
+                        let sun = matches!(w, Weather::SUN | Weather::HARSHSUN);
+                        let snow = matches!(w, Weather::HAIL | Weather::SNOW);
+                        let (hp, maxhp) = (p.hp, p.maxhp);
+                        let ab = p.ability;
+                        let heal = match ab {
+                            Abilities::ICEBODY if snow => maxhp / 16,
+                            Abilities::RAINDISH if rain => maxhp / 16,
+                            Abilities::DRYSKIN if rain => maxhp / 8,
+                            _ => 0,
+                        };
+                        if heal > 0 && hp > 0 && state.side(side).active[slot].heal_block == 0 {
+                            if let Some(idx) = state.side(side).active[slot].pokemon_index {
+                                let m = state.side_mut(side).team_member_mut(idx);
+                                m.hp = (m.hp + heal.max(1)).min(m.maxhp);
+                            }
+                        } else if sun && hp > 0 && matches!(ab, Abilities::DRYSKIN | Abilities::SOLARPOWER) {
+                            apply_indirect_damage(state, side, slot, (maxhp / 8).max(1));
+                        }
+                    }
                     if state.weather.weather_type != Weather::SAND {
                         continue;
                     }
@@ -7440,6 +7538,25 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
     if state.battle_is_over() == 0.0 {
         each_event_update(state, rng);
     }
+    // Emergency Exit / Wimp Out `onEmergencyExit` after the residual action:
+    // crossing 50% HP switches the holder out (the answer is the pivot-style
+    // choice). PS data/mods/champions/abilities.ts emergencyexit.
+    let mut pending_vec: Vec<(Side, usize, usize)> = pending_in.to_vec();
+    for &(sd, sl, before) in &hp_before {
+        let Some(p) = state.side(sd).slot_pokemon(sl) else { continue };
+        let (after, max) = (p.hp as i32, p.maxhp as i32);
+        if matches!(p.ability, Abilities::EMERGENCYEXIT | Abilities::WIMPOUT)
+            && after > 0
+            && after * 2 <= max
+            && (before as i32) * 2 > max
+            && state.side(sd).find_replacement().is_some()
+        {
+            if let Some(&(_, _, pos)) = ee_switches.iter().find(|&&(s2, l2, _)| s2 == sd && l2 == sl) {
+                pending_vec.push((sd, sl, pos));
+            }
+        }
+    }
+    let pending_switches: &[(Side, usize, usize)] = &pending_vec;
     check_fainted(state);
 
     // Switch in replacements (`instaswitch` actions), applying entry hazards,

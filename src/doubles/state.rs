@@ -466,6 +466,10 @@ pub struct DoublesState {
     /// resolves faints after the loop, so its per-hit `eachEvent` still sorts
     /// them: (side, slot, team index).
     pub unresolved_faints: Vec<(crate::doubles::state::Side, usize, PokemonIndex)>,
+    /// Sides of every fainted pokemon in `faint()` call order: with both sides
+    /// wiped out at once, PS gives the win to the side of the last one
+    /// (`checkWin(faintData)`, sim/battle.ts).
+    pub faint_log: Vec<Side>,
     /// Encore `onStart` (champions): the target's queued move must become
     /// this move (`queue.changeAction`), applied by the battle loop:
     /// (side, slot, move).
@@ -477,6 +481,10 @@ pub struct DoublesState {
 
 impl DoublesState {
     pub fn battle_is_over(&self) -> f32 {
+        if self.side_one.alive_team_count() == 0 && self.side_two.alive_team_count() == 0 {
+            // PS `checkWin`: the side of the last faint wins.
+            return if self.faint_log.last() == Some(&Side::One) { 1.0 } else { -1.0 };
+        }
         if self.side_one.alive_team_count() == 0 {
             return -1.0;
         }
@@ -1026,6 +1034,7 @@ impl DoublesState {
             },
             turn: 1,
             unresolved_faints: Vec::new(),
+            faint_log: Vec::new(),
         };
         state
     }

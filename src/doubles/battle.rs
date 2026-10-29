@@ -2456,6 +2456,18 @@ fn execute_action_inner(
             choice.move_id, target_slot, state.side(target_side).active[target_slot].charging
         );
     }
+    // Ally-targeted moves (Dragon Cheer, Coaching, ...) miss a semi-invulnerable ally.
+    if is_ally && !is_self && !is_field && choice.move_id != Choices::HELPINGHAND {
+        let a = &state.side(side).active[ally_slot];
+        if a.charging.is_some_and(|(m, _)| {
+            matches!(m, Choices::DIG | Choices::DIVE | Choices::FLY | Choices::BOUNCE | Choices::PHANTOMFORCE | Choices::SHADOWFORCE | Choices::SKYDROP)
+        }) && !a.charge_aborted
+        {
+            state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+            push_order();
+            return;
+        }
+    }
     let toxic_hits = crate::engine::mechanics::toxic_always_hits(choice.move_id, state.side(side).team_member(idx));
     if !is_self && !is_ally && !is_field && !toxic_hits {
         // An aborted charge (confusion self-hit, ...) already lost its `twoturnmove`
@@ -3159,7 +3171,7 @@ fn execute_action_inner(
 
     state.side_mut(side).active[slot].hit_number = 1;
     let faint_mark = state.faint_log.len();
-    for hit_idx in 0..hit_count {
+    'hit_loop: for hit_idx in 0..hit_count {
       state.side_mut(side).active[slot].hit_number = hit_idx as u8 + 1;
       // `multiaccuracy` (Triple Axel / Triple Kick): hits after the first roll
       // accuracy again; a miss ends the loop. PS sim/battle-actions.ts
@@ -3244,10 +3256,21 @@ fn execute_action_inner(
             slot_alive(state, target_side, target_slot)
         };
         if !is_self && !is_field && !target_ok {
-            if is_spread {
-                continue;
+            // PS `hitStepMoveHitLoop`: `if (targets.every(target => !target?.hp)) break;`
+            // A fainted target ends the hit loop (no further hits, no further
+            // `eachEvent('Update')`); for a spread move only the remaining
+            // (alive) targets would still be processed.
+            let mut any_alive = false;
+            for &(ts, tsl) in hit_targets.iter() {
+                if slot_alive(state, ts, tsl) {
+                    any_alive = true;
+                    break;
+                }
             }
-            break;
+            if !any_alive {
+                break 'hit_loop;
+            }
+            continue;
         }
 
         if is_attack && !is_self && !is_field && has_target {

@@ -85,6 +85,14 @@ pub struct ActiveSlot {
     /// `yawn` volatile: remaining duration (0 = none) and the user who
     /// applied it (for the sleep `trySetStatus` when it ends).
     pub yawn: u8,
+    /// Illusion ended (hit by a damaging move): the log shows the real species.
+    pub illusion_broken: bool,
+    /// `curse` volatile (Ghost Curse): loses 1/4 max HP each residual (order 12).
+    pub cursed: bool,
+    /// Set by the executing move's base-power callback precondition (Payback).
+    pub bp_double: bool,
+    /// `followme` (1) / `ragepowder` (2) volatile (duration 1): redirects foes' moves.
+    pub follow_me: u8,
     /// Which protect-like move set `protected`: 0 Protect/Detect, 1 King's
     /// Shield, 2 Spiky Shield, 3 Baneful Bunker, 4 Silk Trap, 5 Burning Bulwark.
     pub protect_kind: u8,
@@ -183,6 +191,10 @@ impl ActiveSlot {
             stats_raised_this_turn: false,
             partial_trap: None,
             yawn: 0,
+            illusion_broken: false,
+            cursed: false,
+            bp_double: false,
+            follow_me: 0,
             protect_kind: 0,
             perish: 0,
             flash_fire: false,
@@ -353,6 +365,8 @@ pub struct DoublesState {
     pub wonder_room: StateTrickRoom,
     /// Magic Room pseudo-weather (items suppressed), duration 5.
     pub magic_room: StateTrickRoom,
+    /// Gravity pseudo-weather (everything grounded, accuracy x1.67), duration 5.
+    pub gravity: StateTrickRoom,
     pub turn: u32,
     /// Pokemon that reached 0 HP during the current move's hit loop. PS only
     /// resolves faints after the loop, so its per-hit `eachEvent` still sorts
@@ -889,6 +903,10 @@ impl DoublesState {
                 active: false,
                 turns_remaining: 0,
             },
+            gravity: StateTrickRoom {
+                active: false,
+                turns_remaining: 0,
+            },
             turn: 1,
             unresolved_faints: Vec::new(),
         };
@@ -1130,6 +1148,9 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<String>) -> FuzzTurnS
     }
     if state.magic_room.active {
         pseudo_weather.push("magicroom".into());
+    }
+    if state.gravity.active {
+        pseudo_weather.push("gravity".into());
     }
     pseudo_weather.sort();
     // pokemon-showdown reports the weather CONDITION id (e.g. "raindance",

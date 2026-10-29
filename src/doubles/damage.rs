@@ -51,6 +51,15 @@ fn randomizer(base_damage: i64, rng: &mut Gen5Rng) -> i64 {
 /// Type effectiveness as an integer number of ×2 / ÷2 steps, matching how
 /// pokemon-showdown applies it (integer doubling / halving, not a float).
 /// Returns `None` when the defender is immune.
+thread_local! {
+    /// Gravity is up (set by the executing action): every pokemon is grounded.
+    static GRAVITY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub fn set_gravity(on: bool) {
+    GRAVITY.with(|g| g.set(on));
+}
+
 pub fn type_mod(attacking_type: &PokemonType, defender: &Pokemon) -> Option<i32> {
     let mult = crate::engine::damage_calc::type_effectiveness_modifier(attacking_type, defender);
     if mult == 0.0 {
@@ -59,7 +68,7 @@ pub fn type_mod(attacking_type: &PokemonType, defender: &Pokemon) -> Option<i32>
     // Ground moves miss airborne targets (Levitate, Air Balloon): PS
     // `runImmunity('Ground')` -> `isGrounded`.
     // TODO(PS parity): Gravity, Smack Down / Ingrain, Thousand Arrows.
-    if *attacking_type == PokemonType::GROUND && !defender.is_grounded() {
+    if *attacking_type == PokemonType::GROUND && !defender.is_grounded() && !GRAVITY.with(|g| g.get()) {
         return None;
     }
     Some(mult.log2().round() as i32)
@@ -99,6 +108,8 @@ pub struct DamageCtx {
     /// The attacker ability's ModifyAtk / ModifySpA modifier (4096 = none),
     /// from `mechanics::attacker_stat_modifier`.
     pub attack_mod: i64,
+    /// Defender's Disguise is intact: neutral effectiveness, no critical hit.
+    pub disguise: bool,
     /// The defender ability's ModifyDef / ModifySpD modifier (4096 = none).
     pub defense_mod: i64,
     /// Extra critical-hit stages (Focus Energy +2).
@@ -133,7 +144,11 @@ pub fn calculate_damage(
     }
 
     // Type immunity is checked in getDamage BEFORE any draws.
-    let tm = type_mod(&choice.move_type, defender)?;
+    let mut tm = type_mod(&choice.move_type, defender)?;
+    if ctx.disguise {
+        // disguise.onEffectiveness returns 0 (after the immunity check).
+        tm = 0;
+    }
 
     let level = attacker.level;
     let is_physical = choice.category == MoveCategory::Physical;
@@ -145,6 +160,10 @@ pub fn calculate_damage(
     let mut crit = choice.move_id.guaranteed_crit();
     if !crit && cm > 0 {
         crit = rng.label("crit").random_chance(1, cm as u32);
+    }
+    if ctx.disguise {
+        // disguise.onCriticalHit returns false (the roll is still drawn).
+        crit = false;
     }
 
     // Effective stats. A crit ignores negative offensive boosts and positive
@@ -286,6 +305,10 @@ pub fn calculate_damage(
 // TODO(PS parity): ModifyAccuracy / Accuracy events (Compound Eyes, items, ...).
 pub fn roll_accuracy_boosted(accuracy: f32, acc_boost: i8, eva_boost: i8, rng: &mut Gen5Rng) -> bool {
     let mut acc = accuracy as i32;
+    // Gravity `onModifyAccuracy`: chainModify([6840, 4096]).
+    if GRAVITY.with(|g| g.get()) {
+        acc = (acc * 6840 + 2047) / 4096;
+    }
     let boost = (acc_boost.clamp(-6, 6) as i32 - eva_boost as i32).clamp(-6, 6);
     if boost > 0 {
         acc = acc * (3 + boost) / 3;

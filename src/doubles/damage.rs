@@ -90,6 +90,9 @@ pub struct DamageCtx {
     pub defender_mod: i64,
     /// Attacker has the Guts ability (burn does not halve its damage).
     pub guts: bool,
+    /// The attacker ability's ModifyAtk / ModifySpA modifier (4096 = none),
+    /// from `mechanics::attacker_stat_modifier`.
+    pub attack_mod: i64,
     /// Effective base power after multiplier effects (Helping Hand);
     /// 0.0 = use `choice.base_power`.
     pub base_power_override: f32,
@@ -148,7 +151,11 @@ pub fn calculate_damage(
             def_b = 0;
         }
     }
-    let attack = crate::engine::mechanics::boost_stat(atk_b, ctx.attack_base).max(1);
+    let mut attack = crate::engine::mechanics::boost_stat(atk_b, ctx.attack_base).max(1);
+    // PS `runEvent('ModifyAtk'/'ModifySpA')`: chained modifier applied once.
+    if ctx.attack_mod != 4096 {
+        attack = ((attack as i64 * ctx.attack_mod + 2047) / 4096) as i16;
+    }
     let defense = crate::engine::mechanics::boost_stat(def_b, ctx.defense_base).max(1);
 
     // Fickle Beam (PS `onBasePower`, drawn in the BasePower event after

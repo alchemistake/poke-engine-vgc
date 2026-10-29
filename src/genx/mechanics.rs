@@ -465,6 +465,26 @@ pub fn toxic_always_hits(move_id: Choices, user: &Pokemon) -> bool {
     move_id == Choices::TOXIC && user.has_type(&PokemonType::POISON)
 }
 
+/// The attacker's ability in PS's `ModifyAtk` / `ModifySpA` step, as a
+/// 4096-based modifier (4096 = none): Overgrow / Blaze / Torrent / Swarm
+/// (`move.type === X && attacker.hp <= attacker.maxhp / 3` -> x1.5).
+// TODO(PS parity): Huge Power, Gorilla Tactics, Hustle, Defeatist, ...
+pub fn attacker_stat_modifier(attacker: &Pokemon, choice: &Choice) -> i64 {
+    let pinch = (attacker.hp as i32) * 3 <= attacker.maxhp as i32;
+    let boosted = match attacker.ability {
+        Abilities::OVERGROW => choice.move_type == PokemonType::GRASS,
+        Abilities::BLAZE => choice.move_type == PokemonType::FIRE,
+        Abilities::TORRENT => choice.move_type == PokemonType::WATER,
+        Abilities::SWARM => choice.move_type == PokemonType::BUG,
+        _ => false,
+    };
+    if boosted && pinch {
+        6144
+    } else {
+        4096
+    }
+}
+
 /// The defender's ability in PS's `ModifyDamage` step
 /// (`onSourceModifyDamage`), as a 4096-based modifier (4096 = none): Punk
 /// Rock / Ice Scales / Multiscale / Shadow Shield / Fluffy.

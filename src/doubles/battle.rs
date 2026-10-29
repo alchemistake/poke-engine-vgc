@@ -1452,6 +1452,7 @@ fn execute_action(
                     light_screen: state.side(target_side).side_conditions.light_screen > 0,
                     defender_mod: crate::engine::mechanics::defender_damage_modifier(defender, choice),
                     guts: attacker.ability == Abilities::GUTS,
+                    attack_mod: crate::engine::mechanics::attacker_stat_modifier(attacker, choice),
                     // Dynamic base power (Reversal / Flail) and Helping Hand
                     // (x1.5) are combined into the override.
                     base_power_override: base_power_with_modifiers(
@@ -1582,6 +1583,9 @@ fn execute_action(
                     state.side_mut(ts).active[tslot].protected = true;
                 }
                 PokemonVolatileStatus::CONFUSION => try_confuse(state, rng, ts, tslot),
+                PokemonVolatileStatus::PARTIALLYTRAPPED => {
+                    try_partial_trap(state, rng, ts, tslot, side, idx)
+                }
                 other => {
                     // TODO(PS parity): model remaining volatiles (Leech Seed,
                     // Substitute, Tar Shot, ...).
@@ -2085,6 +2089,30 @@ fn try_confuse(state: &mut DoublesState, rng: &mut Gen5Rng, ts: Side, tslot: usi
     state.side_mut(ts).active[tslot].confusion = t;
 }
 
+
+/// Add the `partiallytrapped` volatile (PS data/conditions.ts): no-op if the
+/// target already has it; otherwise `durationCallback` draws `random(5, 7)`.
+// TODO(PS parity): Grip Claw (8 turns) and Binding Band (1/6) items.
+fn try_partial_trap(
+    state: &mut DoublesState,
+    rng: &mut Gen5Rng,
+    ts: Side,
+    tslot: usize,
+    src_side: Side,
+    src_idx: PokemonIndex,
+) {
+    let Some(p) = state.side(ts).slot_pokemon(tslot) else { return };
+    if p.hp <= 0 || state.side(ts).active[tslot].partial_trap.is_some() {
+        return;
+    }
+    let d = rng.label("volatile duration").random_range(5, 7) as u8;
+    state.side_mut(ts).active[tslot].partial_trap = Some(crate::doubles::state::PartialTrap {
+        duration: d,
+        source_side: src_side,
+        source_idx: src_idx,
+        divisor: 8,
+    });
+}
 
 /// PS `trySetStatus` from a secondary `onHit`: fails on an existing status
 /// or a type immunity; sleep draws its duration.
@@ -2656,6 +2684,8 @@ enum ResidualKind {
     Weather,
     /// brn / psn / tox `onResidual`.
     Status(Side, usize),
+    /// `partiallytrapped` `onResidual` (duration 5, order 13).
+    PartialTrap(Side, usize),
     /// Speed Boost `onResidual`.
     SpeedBoost(Side, usize),
     /// Salt Cure `onResidual` (champions mod: 1/16, 1/8 vs Water / Steel).
@@ -2757,6 +2787,9 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             }
             if a.salt_cure {
                 push(13, speed, 2, ResidualKind::SaltCure(side, slot));
+            }
+            if a.partial_trap.is_some() {
+                push(13, speed, 2, ResidualKind::PartialTrap(side, slot));
             }
             // Grassy Terrain heal (`onResidualOrder` 5, subOrder 2).
             if state.terrain.terrain_type == crate::engine::state::Terrain::GRASSYTERRAIN {
@@ -2923,6 +2956,32 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
             if dmg > 0 {
                 apply_damage(state, side, slot, dmg);
             }
+            }
+            ResidualKind::PartialTrap(side, slot) => {
+                // PS `fieldEvent`: duration-- before the callback; at 0 the
+                // volatile ends without damage. `onResidual`: ends if the
+                // binder is no longer active, else damages baseMaxhp/divisor.
+                let Some(mut t) = state.side(side).active[slot].partial_trap else { continue };
+                if state.side(side).slot_pokemon(slot).map(|p| p.hp <= 0).unwrap_or(true) {
+                    continue;
+                }
+                t.duration -= 1;
+                if t.duration == 0 {
+                    state.side_mut(side).active[slot].partial_trap = None;
+                    continue;
+                }
+                state.side_mut(side).active[slot].partial_trap = Some(t);
+                let src_active = (0..2).any(|sl| {
+                    let a = &state.side(t.source_side).active[sl];
+                    a.pokemon_index == Some(t.source_idx)
+                        && state.side(t.source_side).team_member(t.source_idx).hp > 0
+                });
+                if !src_active {
+                    state.side_mut(side).active[slot].partial_trap = None;
+                    continue;
+                }
+                let maxhp = state.side(side).slot_pokemon(slot).map(|p| p.maxhp).unwrap_or(0);
+                apply_damage(state, side, slot, (maxhp / t.divisor).max(1));
             }
             ResidualKind::SaltCure(side, slot) => {
                 if let Some(p) = state.side(side).slot_pokemon(slot) {
@@ -3198,6 +3257,7 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
                     light_screen: false,
                     defender_mod: 4096,
                     guts: attacker.ability == Abilities::GUTS,
+                    attack_mod: crate::engine::mechanics::attacker_stat_modifier(attacker, &action.choice),
                     base_power_override: 0.0,
                 };
                 let outcome: DamageOutcome = calculate_damage(attacker, defender, &action.choice, rng, false, &ctx)

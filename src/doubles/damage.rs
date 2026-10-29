@@ -125,6 +125,8 @@ pub struct DamageCtx {
     /// Defender has Filter / Solid Rock / Prism Armor (`onSourceModifyDamage`:
     /// x0.75 on a super-effective hit; PS data/abilities.ts filter).
     pub solid_rock: bool,
+    /// Shell Armor / Battle Armor `onCriticalHit` (the crit roll is still drawn).
+    pub no_crit: bool,
     /// Effective base power after multiplier effects (Helping Hand);
     /// 0.0 = use `choice.base_power`.
     pub base_power_override: f32,
@@ -172,8 +174,8 @@ pub fn calculate_damage(
     if !crit && cm > 0 {
         crit = rng.label("crit").random_chance(1, cm as u32);
     }
-    if ctx.disguise {
-        // disguise.onCriticalHit returns false (the roll is still drawn).
+    if ctx.disguise || ctx.no_crit {
+        // disguise / shellarmor onCriticalHit returns false (the roll is still drawn).
         crit = false;
     }
 

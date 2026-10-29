@@ -112,6 +112,9 @@ pub struct ActiveSlot {
     pub active_turns: u8,
     /// Illusion ended (hit by a damaging move): the log shows the real species.
     pub illusion_broken: bool,
+    /// Illusion's disguise, fixed at switch-in (`onBeforeSwitchIn`): the last
+    /// unfainted pokemon after the holder then. `Some(None)` = no disguise.
+    pub illusion_target: Option<Option<usize>>,
     /// `curse` volatile (Ghost Curse): loses 1/4 max HP each residual (order 12).
     pub cursed: bool,
     /// Set by the executing move's base-power callback precondition (Payback).
@@ -256,6 +259,7 @@ impl ActiveSlot {
             taunt: 0,
             active_turns: 0,
             illusion_broken: false,
+            illusion_target: None,
             cursed: false,
             bp_double: false,
             follow_me: 0,

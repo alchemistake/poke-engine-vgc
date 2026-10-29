@@ -1550,23 +1550,22 @@ fn execute_action_inner(
         let sd = state.side(side);
         let mut disguise: Option<usize> = None;
         if sd.team_member(idx).ability == Abilities::ILLUSION && !sd.active[slot].illusion_broken {
-            let len = sd.ps_order.iter().filter(|&&t| sd.team[t].id != crate::pokemon::PokemonName::NONE).count();
-            let own = sd.ps_order.iter().position(|&t| t == idx as usize).unwrap_or(0);
-            let mut i = len;
-            while i > own + 1 {
-                i -= 1;
-                let t = sd.ps_order[i];
-                if sd.team[t].hp > 0 {
-                    disguise = Some(t);
-                    break;
-                }
-            }
+            disguise = match sd.active[slot].illusion_target {
+                Some(t) => t,
+                None => illusion_disguise(sd, idx),
+            };
         }
         match disguise {
             Some(t) => sd.species_names[t].clone(),
             None => sd.species_names[idx as usize].clone(),
         }
     };
+    if state.side(side).active[slot].illusion_target.is_none()
+        && state.side(side).team_member(idx).ability == Abilities::ILLUSION
+    {
+        let d = illusion_disguise(state.side(side), idx);
+        state.side_mut(side).active[slot].illusion_target = Some(d);
+    }
     let mut push_order = || {
         if std::env::var("PE_DEBUG_DMG").is_ok() {
             eprintln!("PUSHORDER {} {}", name, action.choice.move_id);
@@ -4095,6 +4094,34 @@ fn execute_action_inner(
         }
 
         // Worry Seed `onHit`: the target's ability becomes Insomnia (cures sleep).
+        // Gastro Acid: `volatileStatus: 'gastroacid'` suppresses the target's
+        // ability until it switches out (modelled as No Ability, which the
+        // switch-out reset undoes). Fails on unsuppressable abilities.
+        // PS data/moves.ts gastroacid. TODO(PS parity): Ability Shield.
+        if choice.move_id == Choices::GASTROACID && ti == 0 && !move_failed {
+            if let Some(tidx) = state.side(target_side).active[target_slot].pokemon_index {
+                let a = state.side(target_side).team_member(tidx).ability;
+                if matches!(
+                    a,
+                    Abilities::MULTITYPE
+                        | Abilities::STANCECHANGE
+                        | Abilities::DISGUISE
+                        | Abilities::ZENMODE
+                        | Abilities::SCHOOLING
+                        | Abilities::SHIELDSDOWN
+                        | Abilities::POWERCONSTRUCT
+                        | Abilities::COMATOSE
+                        | Abilities::ICEFACE
+                        | Abilities::GULPMISSILE
+                        | Abilities::HUNGERSWITCH
+                        | Abilities::BATTLEBOND
+                ) {
+                    move_failed = true;
+                } else if a != Abilities::NONE {
+                    state.side_mut(target_side).team_member_mut(tidx).ability = Abilities::NONE;
+                }
+            }
+        }
         // Soak `onHit`: `setType('Water')` (fails if already pure Water).
         // PS data/moves.ts soak. The original types come back on switch-out
         // (`type_change`, as for Libero).
@@ -5270,6 +5297,22 @@ fn apply_indirect_damage(state: &mut DoublesState, side: Side, slot: usize, dmg:
     apply_damage(state, side, slot, dmg)
 }
 
+/// Illusion `onBeforeSwitchIn`: the last unfainted pokemon after the holder in
+/// `side.pokemon` order.
+fn illusion_disguise(sd: &crate::doubles::state::DoublesSide, idx: PokemonIndex) -> Option<usize> {
+    let len = sd.ps_order.iter().filter(|&&t| sd.team[t].id != crate::pokemon::PokemonName::NONE).count();
+    let own = sd.ps_order.iter().position(|&t| t == idx as usize).unwrap_or(0);
+    let mut i = len;
+    while i > own + 1 {
+        i -= 1;
+        let t = sd.ps_order[i];
+        if sd.team[t].hp > 0 {
+            return Some(t);
+        }
+    }
+    None
+}
+
 /// PS `side.totalFainted`: fainted members of the battle team.
 fn side_total_fainted(state: &DoublesState, side: Side) -> u32 {
     let sd = state.side(side);
@@ -5502,6 +5545,9 @@ fn status_immune(
     src_slot: usize,
 ) -> bool {
     let Some(target) = state.side(ts).slot_pokemon(tslot) else { return true };
+    // Safeguard / Substitute block statuses from any other pokemon, allies
+    // included (`target !== source`, PS data/moves.ts safeguard.onSetStatus).
+    let from_opponent = from_opponent || (ts, tslot) != (src_side, src_slot);
     // Uproar `onAnySetStatus`: nobody can fall asleep while one is active.
     if status == PokemonStatus::SLEEP
         && [Side::One, Side::Two]
@@ -5656,6 +5702,8 @@ fn compute_hit_damage(
                 defender.ability,
                 Abilities::FILTER | Abilities::SOLIDROCK | Abilities::PRISMARMOR
             ) && !crate::engine::abilities::ignores_target_ability(attacker, choice, &defender.ability),
+            no_crit: matches!(defender.ability, Abilities::SHELLARMOR | Abilities::BATTLEARMOR)
+                && !crate::engine::abilities::ignores_target_ability(attacker, choice, &defender.ability),
             guts: attacker.ability == Abilities::GUTS,
             attack_mod: {
             let m = crate::engine::mechanics::attacker_stat_modifier(attacker, choice);
@@ -6677,6 +6725,11 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
             p.special_defense = st[3];
         }
         s.active[slot].pokemon_index = Some(idx);
+        s.active[slot].illusion_target = if s.team_member(idx).ability == Abilities::ILLUSION {
+            Some(illusion_disguise(s, idx))
+        } else {
+            None
+        };
         let boots = s.team_member(idx).item == crate::engine::items::Items::HEAVYDUTYBOOTS;
         let grounded = s.team_member(idx).is_grounded();
         // Stealth Rock `onSwitchIn`: maxhp * 2^typeMod / 8 (`damage` truncates,
@@ -7358,9 +7411,15 @@ fn end_of_turn(
                     }
                     let p2 = state.side(side).team_member(idx);
                     let types = p2.types;
+                    // `runStatusImmunity('sandstorm')`: types, and the abilities with
+                    // `onImmunity` (Overcoat, Sand Veil / Force / Rush).
                     let immune = [PokemonType::ROCK, PokemonType::GROUND, PokemonType::STEEL]
                         .iter()
-                        .any(|t| types.0 == *t || types.1 == *t);
+                        .any(|t| types.0 == *t || types.1 == *t)
+                        || matches!(
+                            p2.ability,
+                            Abilities::OVERCOAT | Abilities::SANDVEIL | Abilities::SANDFORCE | Abilities::SANDRUSH
+                        );
                     if !immune {
                         apply_indirect_damage(state, side, slot, (p2.maxhp / 16) as i16);
                     }
@@ -8107,6 +8166,7 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
                     light_screen: false,
                     defender_mod: 4096,
                     solid_rock: false,
+                    no_crit: false,
                     guts: attacker.ability == Abilities::GUTS,
                     attack_mod: crate::engine::mechanics::attacker_stat_modifier(attacker, &action.choice),
                     crit_bonus: 0,

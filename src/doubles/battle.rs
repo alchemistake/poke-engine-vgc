@@ -1506,10 +1506,9 @@ fn execute_action(
     // sim/battle-actions.ts recoilDamage.
     if move_order.len() > order_len
         && match action.choice.move_id {
-            Choices::STEELBEAM => {
+            Choices::STEELBEAM | Choices::MINDBLOWN | Choices::CHLOROBLAST => {
                 state.side(action.side).active[action.slot].move_result_this_turn == Some(false)
             }
-            Choices::MINDBLOWN | Choices::CHLOROBLAST => true,
             _ => false,
         }
     {
@@ -3431,7 +3430,7 @@ fn execute_action_inner(
 
         // Healing (Moonlight, Synthesis, etc.) — no draw.
         // Life Dew: `target: allies`, `heal: [1, 4]` for the user and its ally
-        // (floor of maxhp / 4); fails only if nobody could be healed.
+        // (maxhp / 4, rounded); fails only if nobody could be healed.
         // PS data/moves.ts lifedew, sim/battle.ts heal.
         if choice.move_id == Choices::LIFEDEW && ti == 0 {
             let mut healed = false;
@@ -3439,7 +3438,7 @@ fn execute_action_inner(
                 if let Some(tidx) = state.side(side).active[sl].pokemon_index {
                     let pm = state.side_mut(side).team_member_mut(tidx);
                     if pm.hp > 0 && pm.hp < pm.maxhp {
-                        pm.hp = (pm.hp + (pm.maxhp / 4).max(1)).min(pm.maxhp);
+                        pm.hp = (pm.hp + ((pm.maxhp as f32 / 4.0).round() as i16).max(1)).min(pm.maxhp);
                         healed = true;
                     }
                 }
@@ -3448,7 +3447,7 @@ fn execute_action_inner(
                 move_failed = true;
             }
         }
-        if let Some(h) = choice.heal.as_ref().filter(|_| choice.move_id != Choices::LIFEDEW) {
+        if let Some(h) = choice.heal.as_ref().filter(|_| !matches!(choice.move_id, Choices::LIFEDEW | Choices::STEELBEAM)) {
             let (ts, tslot) = if h.target == MoveTarget::User || is_self {
                 (side, slot)
             } else if h.target == MoveTarget::Ally {
@@ -4935,6 +4934,17 @@ fn execute_action_inner(
         }
     }
 
+    // Healing Wish / Lunar Dance (slot-condition moves) make exactly one
+    // hit-loop `eachEvent('Update')` in PS, while the user still counts as
+    // active (faints are resolved afterwards).
+    if hits_done == 0 && matches!(choice.move_id, Choices::HEALINGWISH | Choices::LUNARDANCE) && !move_failed {
+        each_event_update(state, rng);
+    }
+
+
+    // PS `resolveFaints` right after the hit loop (before the recoil).
+    state.unresolved_faints.clear();
+
     // Recoil (after all hits): round(damage * fraction), min 1.
     if total_damage > 0 && choice.move_id == Choices::STRUGGLE {
         // PS applyRecoilDamage `struggleRecoil`: round(baseMaxhp / 4), min 1,
@@ -4949,6 +4959,12 @@ fn execute_action_inner(
             state.side(side).team_member(idx).ability,
             Abilities::ROCKHEAD | Abilities::MAGICGUARD
         );
+        // `mindBlownRecoil` / `chloroblastRecoil`: round(maxhp / 2) after the hits
+        // (PS sim/battle-actions.ts recoilDamage).
+        if matches!(choice.move_id, Choices::STEELBEAM | Choices::MINDBLOWN | Choices::CHLOROBLAST) && !no_recoil {
+            let maxhp = state.side(side).team_member(idx).maxhp;
+            apply_damage(state, side, slot, ((maxhp as f32 / 2.0).round() as i16).max(1));
+        }
         if let Some(frac) = choice.recoil {
             if !no_recoil {
                 let recoil = ((total_damage as f32) * frac).round().max(1.0) as i16;
@@ -4969,17 +4985,12 @@ fn execute_action_inner(
             let f = state.faint_log.pop().unwrap();
             state.faint_log.insert(faint_mark, f);
         }
+        // ...and resolved right after the loop, before its closing `eachEvent`.
+        // (Healing Wish / Lunar Dance keep the user: their one `eachEvent` comes first.)
+        if !matches!(choice.move_id, Choices::HEALINGWISH | Choices::LUNARDANCE) {
+            state.unresolved_faints.retain(|&(fs, fsl, _)| (fs, fsl) != (side, slot));
+        }
     }
-
-    // Healing Wish / Lunar Dance (slot-condition moves) make exactly one
-    // hit-loop `eachEvent('Update')` in PS, while the user still counts as
-    // active (faints are resolved afterwards).
-    if hits_done == 0 && matches!(choice.move_id, Choices::HEALINGWISH | Choices::LUNARDANCE) && !move_failed {
-        each_event_update(state, rng);
-    }
-
-    // PS `resolveFaints` right after the hit loop.
-    state.unresolved_faints.clear();
 
     // End of PS's hit loop: one more `eachEvent('Update')` (after recoil).
     if hits_done > 0 {

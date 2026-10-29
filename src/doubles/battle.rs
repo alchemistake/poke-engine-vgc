@@ -3486,6 +3486,14 @@ fn execute_action_inner(
                 Choices::DOUBLETEAM => b.boosts.evasion = 1,
                 Choices::MINIMIZE => b.boosts.evasion = 2,
                 Choices::SWEETSCENT => b.boosts.evasion = -2,
+                // PS growth.onModifyMove: +2 Atk / SpA in harsh sunlight.
+                Choices::GROWTH
+                    if matches!(state.weather.weather_type, Weather::SUN | Weather::HARSHSUN)
+                        && !weather_suppressed(state) =>
+                {
+                    b.boosts.attack = 2;
+                    b.boosts.special_attack = 2;
+                }
                 _ => {}
             }
             let b = &b;
@@ -5041,22 +5049,6 @@ fn execute_action_inner(
                         false,
                     );
                 }
-                // Sand Spit `onDamagingHit`: `field.setWeather('sandstorm')`;
-                // fails if already up, else `eachEvent('WeatherChange')`.
-                // PS data/abilities.ts sandspit.
-                // TODO(PS parity): Smooth Rock duration, primal weather.
-                // Seed Sower `onDamagingHit`: `field.setTerrain('grassyterrain')`
-                // (fails if already up). PS data/abilities.ts seedsower.
-                // TODO(PS parity): Terrain Extender duration.
-                if ability == Abilities::SEEDSOWER
-                    && state.terrain.terrain_type != crate::engine::state::Terrain::GRASSYTERRAIN
-                {
-                    state.terrain = crate::state::StateTerrain {
-                        terrain_type: crate::engine::state::Terrain::GRASSYTERRAIN,
-                        turns_remaining: 5,
-                    };
-                    let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
-                }
                 if ability == Abilities::SANDSPIT && state.weather.weather_type != Weather::SAND {
                     state.weather = crate::state::StateWeather {
                         weather_type: Weather::SAND,
@@ -5077,6 +5069,22 @@ fn execute_action_inner(
             });
             if let Some(h) = holder {
                 let ability = state.side(target_side).team_member(h).ability;
+        // Sand Spit `onDamagingHit`: `field.setWeather('sandstorm')`;
+        // fails if already up, else `eachEvent('WeatherChange')`.
+        // PS data/abilities.ts sandspit.
+        // TODO(PS parity): Smooth Rock duration, primal weather.
+        // Seed Sower `onDamagingHit`: `field.setTerrain('grassyterrain')`
+        // (fails if already up). PS data/abilities.ts seedsower.
+        // TODO(PS parity): Terrain Extender duration.
+        if ability == Abilities::SEEDSOWER
+            && state.terrain.terrain_type != crate::engine::state::Terrain::GRASSYTERRAIN
+        {
+            state.terrain = crate::state::StateTerrain {
+                terrain_type: crate::engine::state::Terrain::GRASSYTERRAIN,
+                turns_remaining: 5,
+            };
+            let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+        }
                 if matches!(ability, Abilities::GOOEY | Abilities::TANGLINGHAIR)
                     && choice.flags.contact
                     && state.side(side).team_member(idx).ability != Abilities::LONGREACH
@@ -8293,7 +8301,12 @@ fn end_of_turn(
     // The `instaswitch` actions are speed-sorted (by the switching pokemon's
     // speed; exact ties shuffle: PS `queue.sort`), which also fixes the order
     // the replacements enter.
-    if pending_vec.len() >= 2 {
+    // (Repeated slots are consecutive replacement rounds, not one queue.)
+    let distinct = pending_vec
+        .iter()
+        .enumerate()
+        .all(|(i, &(a, b, _))| pending_vec.iter().skip(i + 1).all(|&(c, d, _)| (a, b) != (c, d)));
+    if pending_vec.len() >= 2 && distinct {
         let mut hs: Vec<ResidualHandler> = Vec::new();
         for (i, &(sd, sl, _)) in pending_vec.iter().enumerate() {
             let sdd = state.side(sd);

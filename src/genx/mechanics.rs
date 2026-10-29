@@ -572,6 +572,14 @@ pub fn attacker_stat_modifier(attacker: &Pokemon, choice: &Choice) -> i64 {
     if matches!(attacker.ability, Abilities::HUGEPOWER | Abilities::PUREPOWER) && choice.category == MoveCategory::Physical {
         return 8192;
     }
+    // Guts `onModifyAtk`: x1.5 for physical moves while statused (any status).
+    // PS data/abilities.ts guts.
+    if attacker.ability == Abilities::GUTS
+        && attacker.status != PokemonStatus::NONE
+        && choice.category == MoveCategory::Physical
+    {
+        return 6144;
+    }
     // Water Bubble `onModifyAtk` / `onModifySpA`: x2 on Water moves (both
     // categories). PS data/abilities.ts waterbubble.
     if attacker.ability == Abilities::WATERBUBBLE && choice.move_type == PokemonType::WATER {

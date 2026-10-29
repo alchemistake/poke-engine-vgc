@@ -105,6 +105,9 @@ pub struct DamageOutcome {
 /// `modifyDamage`.
 #[derive(Debug, Clone, Copy)]
 pub struct DamageCtx {
+    /// PS `addedType` of the defender (TYPELESS = none). Adds a third type to
+    /// the type chart lookup in `calculate_damage`.
+    pub added_type: PokemonType,
     /// Base offensive stat (boosts applied in `calculate_damage`; negative
     /// boosts dropped on a crit).
     pub attack_base: i16,
@@ -180,6 +183,13 @@ pub fn calculate_damage(
 
     // Type immunity is checked in getDamage BEFORE any draws.
     let mut tm = type_mod_by(attacker, &choice.move_type, defender)?;
+    // PS `runEffectiveness` / `runImmunity` also check `addedType`: its chart
+    // entry is multiplied in as a second type (Normal vs Trick-or-Treat Ghost: immune).
+    if ctx.added_type != PokemonType::TYPELESS {
+        let mut with_added = defender.clone();
+        with_added.types = (ctx.added_type, PokemonType::TYPELESS);
+        tm += type_mod_by(attacker, &choice.move_type, &with_added)?;
+    }
     // PS data/moves.ts freezedry.onEffectiveness: `if (type === 'Water') return 1;`
     // Each Water defender type is x2 (+1 step) whatever the chart says. Ice vs
     // Water is resisted (-1 step), so the Water part moves from -1 to +1: +2.

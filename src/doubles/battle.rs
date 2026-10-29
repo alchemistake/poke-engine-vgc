@@ -6346,6 +6346,16 @@ fn compute_hit_damage(
             atk_boost_stat
         };
         let def_boost_stat = if attacker.ability == Abilities::UNAWARE { 0 } else { def_boost_stat };
+        // PS `move.ignoreDefensive` (data/moves.ts chipaway, darkestlariat,
+        // sacredsword): `getDamage` sets `defBoosts = 0` (any sign).
+        let def_boost_stat = if matches!(
+            choice.move_id,
+            Choices::SACREDSWORD | Choices::CHIPAWAY | Choices::DARKESTLARIAT
+        ) {
+            0
+        } else {
+            def_boost_stat
+        };
         let ctx = DamageCtx {
             added_type: state.side(target_side).active[target_slot].added_type,
             attack_base: base_atk,
@@ -8913,6 +8923,24 @@ fn end_of_turn(
             a.stats_raised_this_turn = false;
             a.stats_lowered_this_turn = false;
             a.last_attacker = None;
+        }
+    }
+    // PS `endTurn` (sim/battle.ts): an active pokemon forgets the attacks whose
+    // source is no longer active (fainted or switched out), so a fainted
+    // attacker is never a Metal Burst / Comeuppance target later. Engine: a
+    // source counts as active while its slot holds a live pokemon.
+    for side in [Side::One, Side::Two] {
+        for sl in 0..2 {
+            let Some(pidx) = state.side(side).active[sl].pokemon_index else { continue };
+            if !state.side(side).slot_pokemon(sl).map(|p| p.hp > 0).unwrap_or(false) {
+                continue;
+            }
+            let kept: Vec<(Side, usize, i16, u32)> = state.side(side).damaged_by[pidx as usize]
+                .iter()
+                .filter(|e| state.side(e.0).slot_pokemon(e.1).map(|p| p.hp > 0).unwrap_or(false))
+                .copied()
+                .collect();
+            state.side_mut(side).damaged_by[pidx as usize] = kept;
         }
     }
 }

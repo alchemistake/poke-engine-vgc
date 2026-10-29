@@ -2786,6 +2786,10 @@ fn execute_action_inner(
     // TODO(PS parity): other failing status effects (boosts at +6, ...).
     let mut move_failed = false;
     let mut hits_done = 0u32;
+    // Cloud Nine / Air Lock `onEnd` (faint): the ability ending triggers
+    // `eachEvent('WeatherChange')` — a speed sort. Set when such a holder
+    // faints this move; consumed after the per-hit eachEvent.
+    let mut weather_suppress_fainted = false;
     let mut drop_landed = false;
     let mut extra_order: Vec<String> = Vec::new();
     let mut copy_move: Option<Choices> = None;
@@ -3011,7 +3015,19 @@ fn execute_action_inner(
             if damage > 0 {
                 // Track the last attacker for Destiny Bond `onAfterFaint`.
                 state.side_mut(target_side).active[target_slot].last_attacker = Some((side, idx));
+                // Read the ability before `apply_damage` clears the slot, to
+                // replicate Cloud Nine / Air Lock `onEnd` -> eachEvent.
+                let target_ability = state
+                    .side(target_side)
+                    .slot_pokemon(target_slot)
+                    .map(|p| p.ability);
                 if apply_damage(state, target_side, target_slot, damage) {
+                    if matches!(
+                        target_ability,
+                        Some(Abilities::CLOUDNINE) | Some(Abilities::AIRLOCK)
+                    ) {
+                        weather_suppress_fainted = true;
+                    }
                 // Target fainted. `onSourceAfterFaint` (Moxie, Chilling / Grim
                 // Neigh) boosts the attacker if it is still on the field. A
                 // faint that ends the battle runs `checkWin` first, so no
@@ -3210,6 +3226,81 @@ fn execute_action_inner(
                         move_failed = true;
                     }
                     pm.hp = (pm.hp + amount).min(pm.maxhp);
+                }
+            }
+        }
+
+        // Reflect Type `onHit` (PS data/moves.ts reflecttype): the user
+        // becomes the target's apparent types (type-change included).
+        // `setType` refuses on Arceus / Silvally (`species.num 493 / 773`).
+        // TODO(PS parity): target `addedType` (??? types -> Normal),
+        // Tera, substitutes in front of the target.
+        if choice.move_id == Choices::REFLECTTYPE && !is_self {
+            let user_locked = matches!(
+                state.side(side).team_member(idx).id,
+                crate::pokemon::PokemonName::ARCEUS
+                    | crate::pokemon::PokemonName::ARCEUSBUG
+                    | crate::pokemon::PokemonName::ARCEUSDARK
+                    | crate::pokemon::PokemonName::ARCEUSDRAGON
+                    | crate::pokemon::PokemonName::ARCEUSELECTRIC
+                    | crate::pokemon::PokemonName::ARCEUSFAIRY
+                    | crate::pokemon::PokemonName::ARCEUSFIGHTING
+                    | crate::pokemon::PokemonName::ARCEUSFIRE
+                    | crate::pokemon::PokemonName::ARCEUSFLYING
+                    | crate::pokemon::PokemonName::ARCEUSGHOST
+                    | crate::pokemon::PokemonName::ARCEUSGRASS
+                    | crate::pokemon::PokemonName::ARCEUSGROUND
+                    | crate::pokemon::PokemonName::ARCEUSICE
+                    | crate::pokemon::PokemonName::ARCEUSPOISON
+                    | crate::pokemon::PokemonName::ARCEUSPSYCHIC
+                    | crate::pokemon::PokemonName::ARCEUSROCK
+                    | crate::pokemon::PokemonName::ARCEUSSTEEL
+                    | crate::pokemon::PokemonName::ARCEUSWATER
+                    | crate::pokemon::PokemonName::SILVALLY
+                    | crate::pokemon::PokemonName::SILVALLYBUG
+                    | crate::pokemon::PokemonName::SILVALLYDARK
+                    | crate::pokemon::PokemonName::SILVALLYDRAGON
+                    | crate::pokemon::PokemonName::SILVALLYELECTRIC
+                    | crate::pokemon::PokemonName::SILVALLYFAIRY
+                    | crate::pokemon::PokemonName::SILVALLYFIGHTING
+                    | crate::pokemon::PokemonName::SILVALLYFIRE
+                    | crate::pokemon::PokemonName::SILVALLYFLYING
+                    | crate::pokemon::PokemonName::SILVALLYGHOST
+                    | crate::pokemon::PokemonName::SILVALLYGRASS
+                    | crate::pokemon::PokemonName::SILVALLYGROUND
+                    | crate::pokemon::PokemonName::SILVALLYICE
+                    | crate::pokemon::PokemonName::SILVALLYPOISON
+                    | crate::pokemon::PokemonName::SILVALLYPSYCHIC
+                    | crate::pokemon::PokemonName::SILVALLYROCK
+                    | crate::pokemon::PokemonName::SILVALLYSTEEL
+                    | crate::pokemon::PokemonName::SILVALLYWATER
+            );
+            if user_locked {
+                move_failed = true;
+            } else {
+                // `target.getTypes(true)`: apparent types, volatile type
+                // change first, `???` filtered out.
+                let (t0, t1) = {
+                    let s = state.side(target_side);
+                    let tc = s.active[target_slot].type_change;
+                    let base = s
+                        .slot_pokemon(target_slot)
+                        .map(|p| p.types)
+                        .unwrap_or((PokemonType::TYPELESS, PokemonType::TYPELESS));
+                    tc.unwrap_or(base)
+                };
+                if t0 == PokemonType::TYPELESS {
+                    move_failed = true;
+                } else {
+                    let new_types = (t0, t1);
+                    let orig = state.side(side).team_member(idx).types;
+                    if orig != new_types {
+                        let s = state.side_mut(side);
+                        if s.active[slot].type_change.is_none() {
+                            s.active[slot].type_change = Some(orig);
+                        }
+                        s.team_member_mut(idx).types = new_types;
+                    }
                 }
             }
         }
@@ -4360,6 +4451,12 @@ fn execute_action_inner(
         }
         hits_done += 1;
         each_event_update(state, rng);
+        // Cloud Nine / Air Lock `onEnd` (faint): `eachEvent('WeatherChange')`
+        // right after the hit that KO'd the holder. PS data/abilities.ts.
+        if weather_suppress_fainted {
+            weather_suppress_fainted = false;
+            each_event_update(state, rng);
+        }
     }
 
     if move_failed {
@@ -5841,6 +5938,13 @@ fn apply_on_switch_abilities(
             return false;
         }
         None => {}
+    }
+
+    // Cloud Nine / Air Lock (`onSwitchIn` -> `onStart`, PS
+    // data/abilities.ts): `eachEvent('WeatherChange')` — a speed sort of all
+    // actives, drawn even with no weather up. The caller performs the sort.
+    if matches!(ability, Abilities::CLOUDNINE | Abilities::AIRLOCK) {
+        return true;
     }
 
     // Curious Medicine (`curiousmedicine.onStart`): clear the adjacent ally's

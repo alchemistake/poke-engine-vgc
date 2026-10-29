@@ -3225,6 +3225,7 @@ fn execute_action_inner(
     // A hit that did nothing ends PS's hit loop with no `eachEvent`.
     // TODO(PS parity): other failing status effects (boosts at +6, ...).
     let mut move_failed = false;
+    let mut heal_fail_event = false;
     let mut hits_done = 0u32;
     // Hits that landed on a Substitute only: PS's closing `eachEvent` is skipped
     // (`damage` holds no number).
@@ -3716,6 +3717,8 @@ fn execute_action_inner(
                     && choice.volatile_status.is_none()
                     && choice.side_condition.is_none()
                     && choice.move_id != Choices::CURSE
+                    // Defog's table boost is empty: its `onHit` (-1 evasion) decides.
+                    && choice.move_id != Choices::DEFOG
                 {
                     // A boost-only status move that changed nothing (stat already
                     // at +/-6) fails: the hit loop ends without an `eachEvent`.
@@ -3781,10 +3784,24 @@ fn execute_action_inner(
                     // PS `heal` returns false (the move fails) at full HP.
                     if pm.hp >= pm.maxhp {
                         move_failed = true;
+                        // Moonlight family `onHit` returns NOT_FAIL on a failed heal.
+                        heal_fail_event = matches!(
+                            choice.move_id,
+                            Choices::SYNTHESIS | Choices::MORNINGSUN | Choices::MOONLIGHT
+                        );
                     }
                     pm.hp = (pm.hp + amount).min(pm.maxhp);
                 }
             }
+        }
+
+        // PS `spreadMoveHit` returns a 0 damage entry (NOT_FAIL), so the hit
+        // runs `eachEvent('Update')` twice: inside `spreadMoveHit` and after it
+        // in `hitStepMoveHitLoop` (sim/battle-actions.ts).
+        if heal_fail_event {
+            each_event_update(state, rng);
+            each_event_update(state, rng);
+            heal_fail_event = false;
         }
 
         // Reflect Type `onHit` (PS data/moves.ts reflecttype): the user
@@ -5358,7 +5375,13 @@ fn execute_action_inner(
                         false,
                     );
                 }
-                if ability == Abilities::SANDSPIT && state.weather.weather_type != Weather::SAND {
+            }
+            // Sand Spit `onDamagingHit` (PS data/abilities.ts sandspit): the
+            // holder sets sand even when this hit KO'd it (the hit's holder).
+            if let Some(pi) = hit_target_pi {
+                if state.side(target_side).team_member(pi).ability == Abilities::SANDSPIT
+                    && state.weather.weather_type != Weather::SAND
+                {
                     state.weather = crate::state::StateWeather {
                         weather_type: Weather::SAND,
                         turns_remaining: 5,
@@ -8233,7 +8256,11 @@ fn end_of_turn(
                 // `eachEvent('Update')`: two speed sorts of the actives.
                 // PS `isWeather` is false while Cloud Nine / Air Lock is active
                 // (`field.suppressingWeather()`): no weather event runs.
+                // PS `eachEvent` speed-sorts even when every handler is
+                // suppressed (`runEvent` skips them), so the two sorts still draw.
                 if weather_suppressed(state) {
+                    let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+                    let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
                     continue;
                 }
                 let order = sorted_actives(state, rng, "speed tie (eachEvent)");

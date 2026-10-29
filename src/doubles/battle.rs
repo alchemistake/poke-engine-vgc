@@ -3641,8 +3641,10 @@ fn execute_action_inner(
                 }
             } else if ghost_curse {
                 // no stat change
-            } else if defer_user_boost {
-                // applied after the loop
+            } else if defer_user_boost || (choice.move_id == Choices::CLANGINGSCALES && ti > 0) {
+                // Multi-hit: applied after the loop. Clanging Scales (PS
+                // `selfBoost`, not `self`): one user drop per move, so only
+                // the first target's pass applies it.
             } else if let Some(tidx) = state.side(ts).active[tslot].pokemon_index {
                 let before = state.side(ts).team_boosts[tidx as usize].clone();
                 apply_boosts(state, ts, tidx, &b.boosts, ts != side);
@@ -5840,36 +5842,20 @@ fn dynamic_base_power(
                 choice.base_power
             }
         }
-        // PS lastrespects.basePowerCallback: 50 + 50 * side.totalFainted.
-        Choices::LASTRESPECTS => 50.0 + 50.0 * total_fainted as f32,
+        Choices::LASTRESPECTS => m::last_respects_power(total_fainted),
         // PS tripleaxel / triplekick basePowerCallback: 20 (10) * move.hit.
         Choices::TRIPLEAXEL => 20.0 * hit_number as f32,
         Choices::TRIPLEKICK => 10.0 * hit_number as f32,
-        // PS eruption / waterspout / dragonenergy basePowerCallback:
-        // floor(150 * hp / maxhp), at least 1.
-        Choices::ERUPTION | Choices::WATERSPOUT | Choices::DRAGONENERGY => {
-            ((150 * attacker.hp as i32 / attacker.maxhp.max(1) as i32).max(1)) as f32
-        }
-        // PS venoshock / barbbarrage basePowerCallback: doubled on a poisoned
-        // target; infernalparade: on any status (or Comatose).
+        Choices::ERUPTION | Choices::WATERSPOUT | Choices::DRAGONENERGY => m::eruption_power(attacker.hp, attacker.maxhp),
         Choices::VENOSHOCK | Choices::BARBBARRAGE => {
-            if defender.is_some_and(|d| matches!(d.status, PokemonStatus::POISON | PokemonStatus::TOXIC)) {
+            if defender.is_some_and(m::venoshock_boosted) {
                 choice.base_power * 2.0
             } else {
                 choice.base_power
             }
         }
-        Choices::INFERNALPARADE => {
-            if defender.is_some_and(|d| d.status != PokemonStatus::NONE || d.ability == Abilities::COMATOSE) {
-                choice.base_power * 2.0
-            } else {
-                choice.base_power
-            }
-        }
-        // PS hex.basePowerCallback: doubled on a statused target (or Comatose).
-        Choices::HEX => {
-            let hit = defender.map(|d| d.status != PokemonStatus::NONE || d.ability == Abilities::COMATOSE);
-            if hit.unwrap_or(false) {
+        Choices::HEX | Choices::INFERNALPARADE => {
+            if defender.is_some_and(m::hex_boosted) {
                 choice.base_power * 2.0
             } else {
                 choice.base_power
@@ -6344,13 +6330,8 @@ fn compute_hit_damage(
             } * 2.0;
         }
         if matches!(choice.move_id, Choices::STOREDPOWER | Choices::POWERTRIP) {
-            // PS `basePowerCallback`: 20 + 20 * positiveBoosts().
             let b = state.side(side).slot_boosts(slot).cloned().unwrap_or_default();
-            let pos: i32 = [b.atk, b.def, b.spa, b.spd, b.spe, b.acc, b.eva]
-                .iter()
-                .map(|&v| (v as i32).max(0))
-                .sum();
-            let bp = (20 + 20 * pos) as f32;
+            let bp = crate::engine::mechanics::stored_power([b.atk, b.def, b.spa, b.spd, b.spe, b.acc, b.eva]);
             // Helping Hand-style multipliers ride on the override ratio.
             let ratio = if choice.base_power > 0.0 && ctx.base_power_override > 0.0 {
                 ctx.base_power_override / choice.base_power

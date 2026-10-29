@@ -309,8 +309,21 @@ mechanics live in `src/genx/mechanics.rs` (in doubles code:
 or a small context struct, and follow PS exactly. Both engines call them.
 Already shared: `immune_to_status` (+ `StatusContext`), `weight_hg`,
 `grass_knot_power`, `heavy_slam_power`, `electro_ball_power`,
-`gyro_ball_power`, `reversal_power`, `target_hp_power`,
-`stat_drop_reaction` (Defiant / Competitive), `THAWS_USER`.
+`gyro_ball_power`, `reversal_power`, `target_hp_power`, `eruption_power`,
+`stored_power`, `last_respects_power`, `hex_boosted` (Hex / Infernal
+Parade), `venoshock_boosted` (Venoshock / Barb Barrage),
+`stat_drop_reaction` (Defiant / Competitive), `THAWS_USER`, and the ability
+helpers below them (read the `pub fn` list:
+`grep -n "^pub fn" src/genx/mechanics.rs`).
+
+**Do not write a second copy of a mechanic.** More than 100 moves have
+special code in both `src/genx/` and `src/doubles/`. Each copy can drift
+(example: singles Eruption used `bp * hp / maxhp` as a float, PS and doubles
+use `floor(150 * hp / maxhp)`). Before you add a `Choices::X` or
+`Abilities::X` arm in `src/doubles/`, do the check:
+`grep -n "Choices::X\b" src/genx/*.rs`. If it has a hit, follow step 2
+below. A commit that adds a formula to `src/doubles/` that `src/genx/`
+already has is wrong, even when the fuzzer passes.
 
 When the fuzzer needs a mechanic:
 1. Search `src/genx/` for it (`grep -n ABILITYNAME src/genx/*.rs`).

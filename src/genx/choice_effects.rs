@@ -155,9 +155,8 @@ pub fn modify_choice(
         }
         Choices::LASTRESPECTS => {
             // Technically not correct because of reviving moves but good enough
-            let mut bp_boost = 1.0;
-            bp_boost += 1.0 * attacking_side.num_fainted_pkmn() as f32;
-            attacker_choice.base_power *= bp_boost
+            attacker_choice.base_power =
+                super::mechanics::last_respects_power(attacking_side.num_fainted_pkmn() as u32);
         }
         Choices::CLANGOROUSSOUL => {
             let attacker = attacking_side.get_active_immutable();
@@ -228,8 +227,8 @@ pub fn modify_choice(
                 });
             }
         }
-        Choices::HEX => {
-            if defending_side.get_active_immutable().status != PokemonStatus::NONE {
+        Choices::HEX | Choices::INFERNALPARADE => {
+            if super::mechanics::hex_boosted(defending_side.get_active_immutable()) {
                 attacker_choice.base_power *= 2.0;
             }
         }
@@ -508,22 +507,18 @@ pub fn modify_choice(
             }
         }
         Choices::STOREDPOWER | Choices::POWERTRIP => {
-            let total_boosts = attacking_side.attack_boost.max(0)
-                + attacking_side.defense_boost.max(0)
-                + attacking_side.special_attack_boost.max(0)
-                + attacking_side.special_defense_boost.max(0)
-                + attacking_side.speed_boost.max(0)
-                + attacking_side.accuracy_boost.max(0)
-                + attacking_side.evasion_boost.max(0);
-            if total_boosts > 0 {
-                attacker_choice.base_power += 20.0 * total_boosts as f32;
-            }
+            attacker_choice.base_power = super::mechanics::stored_power([
+                attacking_side.attack_boost,
+                attacking_side.defense_boost,
+                attacking_side.special_attack_boost,
+                attacking_side.special_defense_boost,
+                attacking_side.speed_boost,
+                attacking_side.accuracy_boost,
+                attacking_side.evasion_boost,
+            ]);
         }
-        Choices::BARBBARRAGE => {
-            let defending_pkmn_status = defending_side.get_active_immutable().status;
-            if defending_pkmn_status == PokemonStatus::POISON
-                || defending_pkmn_status == PokemonStatus::TOXIC
-            {
+        Choices::BARBBARRAGE | Choices::VENOSHOCK => {
+            if super::mechanics::venoshock_boosted(defending_side.get_active_immutable()) {
                 attacker_choice.base_power *= 2.0;
             }
         }
@@ -537,8 +532,7 @@ pub fn modify_choice(
         }
         Choices::ERUPTION | Choices::WATERSPOUT | Choices::DRAGONENERGY => {
             let attacker = attacking_side.get_active_immutable();
-            let hp_ratio = attacker.hp as f32 / attacker.maxhp as f32;
-            attacker_choice.base_power *= hp_ratio;
+            attacker_choice.base_power = super::mechanics::eruption_power(attacker.hp, attacker.maxhp);
         }
         Choices::SUCKERPUNCH | Choices::THUNDERCLAP => {
             if !attacker_choice.first_move || defender_choice.category == MoveCategory::Status {

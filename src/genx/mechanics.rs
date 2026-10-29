@@ -198,6 +198,36 @@ pub fn target_hp_power(max_power: i64, hp: i16, maxhp: i16) -> f32 {
     bp.max(1) as f32
 }
 
+/// Eruption / Water Spout / Dragon Energy base power.
+/// PS: `floor(150 * hp / maxhp)`, at least 1.
+pub fn eruption_power(hp: i16, maxhp: i16) -> f32 {
+    ((150 * hp.max(0) as i32 / maxhp.max(1) as i32).max(1)) as f32
+}
+
+/// Stored Power / Power Trip base power from the user's stat stages
+/// (atk, def, spa, spd, spe, acc, eva). PS: `20 + 20 * positiveBoosts()`.
+pub fn stored_power(boosts: [i8; 7]) -> f32 {
+    let pos: i32 = boosts.iter().map(|&v| (v as i32).max(0)).sum();
+    (20 + 20 * pos) as f32
+}
+
+/// Last Respects base power. PS: `50 + 50 * side.totalFainted`.
+pub fn last_respects_power(total_fainted: u32) -> f32 {
+    50.0 + 50.0 * total_fainted as f32
+}
+
+/// Hex / Infernal Parade double their base power on a target with a
+/// status (or Comatose). PS: hex / infernalparade `basePowerCallback`.
+pub fn hex_boosted(target: &Pokemon) -> bool {
+    target.status != PokemonStatus::NONE || target.ability == Abilities::COMATOSE
+}
+
+/// Venoshock / Barb Barrage double their base power on a poisoned target.
+/// PS: venoshock / barbbarrage `basePowerCallback`.
+pub fn venoshock_boosted(target: &Pokemon) -> bool {
+    matches!(target.status, PokemonStatus::POISON | PokemonStatus::TOXIC)
+}
+
 /// Apply a stat stage to a base stat, matching pokemon-showdown's
 /// `calculateStat` stage multipliers (integer, truncating).
 pub fn boost_stat(boost: i8, base: i16) -> i16 {

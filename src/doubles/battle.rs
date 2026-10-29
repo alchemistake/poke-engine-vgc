@@ -1750,7 +1750,7 @@ fn execute_action_inner(
     let mut modified = action.choice.clone();
     match modified.move_id {
         Choices::TERRAINPULSE => {
-            let grounded = state.side(side).team_member(idx).is_grounded();
+            let grounded = (state.side(side).team_member(idx).is_grounded() || state.gravity.active);
             if let Some(t) = crate::engine::mechanics::terrain_pulse_type(state.terrain.terrain_type, grounded) {
                 modified.move_type = t;
                 modified.base_power *= 2.0;
@@ -2437,7 +2437,7 @@ fn execute_action_inner(
         && action.priority > 0
         && target_side != side
         && state.terrain.terrain_type == crate::engine::state::Terrain::PSYCHICTERRAIN
-        && state.side(target_side).slot_pokemon(target_slot).is_some_and(|d| d.is_grounded())
+        && state.side(target_side).slot_pokemon(target_slot).is_some_and(|d| (d.is_grounded() || state.gravity.active))
     {
         state.side_mut(side).active[slot].move_result_this_turn = Some(false);
         push_order();
@@ -3364,8 +3364,9 @@ fn execute_action_inner(
                 }
             }
             // Emergency Exit / Wimp Out `onEmergencyExit` (champions): crossing
-            // 50% HP flags the holder to switch out after the action.
-            if damage > 0 && target_side != side {
+            // 50% HP flags the holder to switch out after the action (allies
+            // included: PS runs it for every damaged target).
+            if damage > 0 && (target_side, target_slot) != (side, slot) {
                 if let Some(d) = state.side(target_side).slot_pokemon(target_slot) {
                     let after = d.hp as i32;
                     let before = after + damage as i32;
@@ -5389,7 +5390,7 @@ fn base_power_with_modifiers(
 fn grassy_glide_boost(state: &DoublesState, p: &crate::state::Pokemon, choice: &Choice) -> i8 {
     (choice.move_id == Choices::GRASSYGLIDE
         && state.terrain.terrain_type == crate::engine::state::Terrain::GRASSYTERRAIN
-        && p.is_grounded()) as i8
+        && (p.is_grounded() || state.gravity.active)) as i8
 }
 
 /// Residual / weather / status damage: PS `Magic Guard` `onDamage` returns
@@ -5473,6 +5474,22 @@ fn dynamic_base_power(
         // PS tripleaxel / triplekick basePowerCallback: 20 (10) * move.hit.
         Choices::TRIPLEAXEL => 20.0 * hit_number as f32,
         Choices::TRIPLEKICK => 10.0 * hit_number as f32,
+        // PS venoshock / barbbarrage basePowerCallback: doubled on a poisoned
+        // target; infernalparade: on any status (or Comatose).
+        Choices::VENOSHOCK | Choices::BARBBARRAGE => {
+            if defender.is_some_and(|d| matches!(d.status, PokemonStatus::POISON | PokemonStatus::TOXIC)) {
+                choice.base_power * 2.0
+            } else {
+                choice.base_power
+            }
+        }
+        Choices::INFERNALPARADE => {
+            if defender.is_some_and(|d| d.status != PokemonStatus::NONE || d.ability == Abilities::COMATOSE) {
+                choice.base_power * 2.0
+            } else {
+                choice.base_power
+            }
+        }
         // PS hex.basePowerCallback: doubled on a statused target (or Comatose).
         Choices::HEX => {
             let hit = defender.map(|d| d.status != PokemonStatus::NONE || d.ability == Abilities::COMATOSE);
@@ -5584,7 +5601,7 @@ fn try_confuse(state: &mut DoublesState, rng: &mut Gen5Rng, ts: Side, tslot: usi
     }
     // Misty Terrain `onTryAddVolatile`: grounded pokemon can't be confused.
     // TODO(PS parity): semi-invulnerable exemption.
-    if state.terrain.terrain_type == crate::engine::state::Terrain::MISTYTERRAIN && p.is_grounded() {
+    if state.terrain.terrain_type == crate::engine::state::Terrain::MISTYTERRAIN && (p.is_grounded() || state.gravity.active) {
         return;
     }
     let t = rng.label("volatile duration").random_range(2, 6) as u8;
@@ -6859,6 +6876,7 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
         let p = &s.team[pos];
         (p.hp > 0 && p.id != crate::pokemon::PokemonName::NONE, p.types)
     };
+    let gravity_on = state.gravity.active;
     let s = state.side_mut(side);
     s.active[slot] = ActiveSlot::empty();
     s.fainted_in_slot[slot] = None;
@@ -6881,7 +6899,7 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
             None
         };
         let boots = s.team_member(idx).item == crate::engine::items::Items::HEAVYDUTYBOOTS;
-        let grounded = s.team_member(idx).is_grounded();
+        let grounded = s.team_member(idx).is_grounded() || gravity_on;
         // Stealth Rock `onSwitchIn`: maxhp * 2^typeMod / 8 (`damage` truncates,
         // min 1). Applied before Spikes (side-condition insertion order).
         let rock_dmg = if s.side_conditions.stealth_rock > 0 && !boots {
@@ -6949,7 +6967,7 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
 fn apply_sticky_web(state: &mut DoublesState, side: Side, slot: usize) {
     let s = state.side(side);
     let Some(p) = s.slot_pokemon(slot) else { return };
-    if p.hp <= 0 || s.side_conditions.sticky_web == 0 || !p.is_grounded() {
+    if p.hp <= 0 || s.side_conditions.sticky_web == 0 || !(p.is_grounded() || state.gravity.active) {
         return;
     }
     if p.item == crate::engine::items::Items::HEAVYDUTYBOOTS {
@@ -8003,7 +8021,7 @@ fn end_of_turn(
                             _
                         ))
                     );
-                    if p.is_grounded() && !semi_invulnerable && p.hp < p.maxhp && s.active[slot].heal_block == 0 {
+                    if (p.is_grounded() || state.gravity.active) && !semi_invulnerable && p.hp < p.maxhp && s.active[slot].heal_block == 0 {
                         Some((idx, p.hp, p.maxhp))
                     } else {
                         None

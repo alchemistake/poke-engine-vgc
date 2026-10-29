@@ -85,6 +85,9 @@ pub struct DamageCtx {
     pub reflect: bool,
     /// Defender side has Light Screen active (halves special damage).
     pub light_screen: bool,
+    /// The defender ability's ModifyDamage modifier (4096 = none), from
+    /// `mechanics::defender_damage_modifier`.
+    pub defender_mod: i64,
     /// Attacker has the Guts ability (burn does not halve its damage).
     pub guts: bool,
     /// Effective base power after multiplier effects (Helping Hand);
@@ -224,11 +227,19 @@ pub fn calculate_damage(
     if base == 0 {
         base = 1;
     }
-    if ctx.reflect && is_physical {
-        base = modify(base, 0.5, 1.0);
+    // PS `runEvent('ModifyDamage')`: every handler's modifier is chained
+    // (`chainModify`) and applied once. Screens are x2732/4096 in doubles
+    // and do nothing on a critical hit.
+    let mut chain: i64 = 4096;
+    let mut chain_in = |m: i64| chain = (chain * m + 2048) >> 12;
+    if ctx.defender_mod != 4096 {
+        chain_in(ctx.defender_mod);
     }
-    if ctx.light_screen && !is_physical {
-        base = modify(base, 0.5, 1.0);
+    if !crit && ((ctx.reflect && is_physical) || (ctx.light_screen && !is_physical)) {
+        chain_in(2732);
+    }
+    if chain != 4096 {
+        base = (base * chain + 2047) / 4096;
     }
 
     // 16-bit trunc

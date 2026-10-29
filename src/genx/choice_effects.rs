@@ -396,10 +396,7 @@ pub fn modify_choice(
             }
         }
         Choices::TOXIC => {
-            if attacking_side
-                .get_active_immutable()
-                .has_type(&PokemonType::POISON)
-            {
+            if super::mechanics::toxic_always_hits(attacker_choice.move_id, attacking_side.get_active_immutable()) {
                 attacker_choice.accuracy = 100.0;
             }
         }

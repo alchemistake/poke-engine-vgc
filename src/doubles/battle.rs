@@ -571,7 +571,16 @@ pub fn run_battle_fuzz(
         // `commitChoices` -> `updateSpeed()`.
         update_speed(state);
         for a in actions.iter_mut() {
-            // `resolveAction`: FractionalPriority event, then `getActionSpeed`.
+            // `resolveAction` (sim/battle-queue.ts), in PS order:
+            // 1. a move with `priorityChargeCallback` (Focus Punch) queues a
+            //    `priorityChargeMove` action, resolved with no target location:
+            //    `getRandomTarget` (a draw).
+            if a.choice.move_id == Choices::FOCUSPUNCH {
+                let mut charge = a.clone();
+                charge.target_loc = 0;
+                let _ = ps_get_target(state, rng, &charge);
+            }
+            // 2. FractionalPriority event.
             let ability = state.side(a.side).team_member(a.pokemon_index).ability;
             a.fractional = match crate::engine::mechanics::fractional_priority(ability, a.choice.category) {
                 Some(crate::engine::mechanics::FractionalPriority::Fixed(f)) => f,
@@ -584,6 +593,16 @@ pub fn run_battle_fuzz(
                 }
                 None => 0,
             };
+            // 3. No target location: `getRandomTarget`, and PS keeps the
+            //    result as the action's `targetLoc` for later re-sorts.
+            //    4. `getActionSpeed` -> `getTarget`.
+            //    (A locked `recharge` action already has the last move's
+            //    `targetLoc`.)
+            if a.target_loc == 0 && !state.side(a.side).active[a.slot].recharging {
+                if let Some((ts, tsl)) = ps_get_target(state, rng, a) {
+                    a.target_loc = if ts == a.side { -(tsl as i8 + 1) } else { tsl as i8 + 1 };
+                }
+            }
             let _ = ps_get_target(state, rng, a);
         }
         speed_sort(&mut actions, rng);
@@ -591,6 +610,24 @@ pub fn run_battle_fuzz(
         // closing `eachEvent('Update')`; each is a speed sort of the actives.
         each_event_update(state, rng);
         each_event_update(state, rng);
+        // `priorityChargeMove` actions (order 107: after `beforeTurn`, before
+        // every move): Focus Punch adds its volatile. When one is queued,
+        // `beforeTurn` is not followed by a move, so its re-sort is skipped;
+        // each charge action ends with `eachEvent('Update')`, the last with
+        // the re-sort.
+        let chargers: Vec<(Side, usize, PokemonIndex)> = actions
+            .iter()
+            .filter(|a| a.choice.move_id == Choices::FOCUSPUNCH)
+            .map(|a| (a.side, a.slot, a.pokemon_index))
+            .collect();
+        for &(cs, csl, cidx) in &chargers {
+            if state.side(cs).active[csl].pokemon_index == Some(cidx) {
+                let a = &mut state.side_mut(cs).active[csl];
+                a.focus_punch = true;
+                a.lost_focus = false;
+            }
+            each_event_update(state, rng);
+        }
         resort_queue(state, rng, &mut actions[..]);
 
         // Execute in order. A pivot move (Volt Switch / U-turn) switches its
@@ -1015,6 +1052,12 @@ fn execute_action(
         return;
     }
 
+    // Focus Punch `beforeMoveCallback` (after the BeforeMove checks): it
+    // fails with `|cant|` if the user was hit by a damaging move this turn.
+    if action.choice.move_id == Choices::FOCUSPUNCH && state.side(side).active[slot].lost_focus {
+        return;
+    }
+
     // PS `onModifyType` / `onModifyMove` for moves whose type and power
     // depend on the field (shared with the singles engine).
     let mut modified = action.choice.clone();
@@ -1220,7 +1263,8 @@ fn execute_action(
             choice.move_id, target_slot, state.side(target_side).active[target_slot].charging
         );
     }
-    if !is_self && !is_ally && !is_field {
+    let toxic_hits = crate::engine::mechanics::toxic_always_hits(choice.move_id, state.side(side).team_member(idx));
+    if !is_self && !is_ally && !is_field && !toxic_hits {
         if let Some((charging, _)) = state.side(target_side).active[target_slot].charging {
             let hits_anyway = match charging {
                 Choices::DIG => matches!(choice.move_id, Choices::EARTHQUAKE | Choices::MAGNITUDE),
@@ -1317,7 +1361,7 @@ fn execute_action(
     if std::env::var("PE_DEBUG_DMG").is_ok() {
         eprintln!("REACHED_ACC {} {} target_slot={} has_target={}", name, choice.move_id, target_slot, has_target);
     }
-    if !choice.always_hit && choice.accuracy > 0.0 {
+    if !choice.always_hit && !toxic_hits && choice.accuracy > 0.0 {
         if !roll_accuracy(choice.accuracy, rng) {
             push_order();
             return;
@@ -1406,6 +1450,7 @@ fn execute_action(
                     weather: state.weather.weather_type,
                     reflect: state.side(target_side).side_conditions.reflect > 0,
                     light_screen: state.side(target_side).side_conditions.light_screen > 0,
+                    defender_mod: crate::engine::mechanics::defender_damage_modifier(defender, choice),
                     guts: attacker.ability == Abilities::GUTS,
                     // Dynamic base power (Reversal / Flail) and Helping Hand
                     // (x1.5) are combined into the override.
@@ -1676,7 +1721,10 @@ fn execute_action(
                 };
                 match &sec.effect {
                     Effect::Flinch => {
-                        state.side_mut(ts).active[tslot].flinched = true;
+                        // Focus Punch's volatile blocks flinch (`onTryAddVolatile`).
+                        if !state.side(ts).active[tslot].focus_punch {
+                            state.side_mut(ts).active[tslot].flinched = true;
+                        }
                     }
                     Effect::Boost(b) => {
                         if let Some(tidx) = state.side(ts).active[tslot].pokemon_index {
@@ -1702,7 +1750,10 @@ fn execute_action(
                         }
                     }
                     Effect::VolatileStatus(PokemonVolatileStatus::FLINCH) => {
-                        state.side_mut(ts).active[tslot].flinched = true;
+                        // Focus Punch's volatile blocks flinch (`onTryAddVolatile`).
+                        if !state.side(ts).active[tslot].focus_punch {
+                            state.side_mut(ts).active[tslot].flinched = true;
+                        }
                     }
                     Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION) => {
                         try_confuse(state, rng, ts, tslot);
@@ -1752,6 +1803,11 @@ fn execute_action(
                     state.side_mut(target_side).active[target_slot].drag_out = true;
                 }
             }
+        }
+
+        // Focus Punch `condition.onHit`: a damaging move breaks the focus.
+        if hit_damage.is_some() && state.side(target_side).active[target_slot].focus_punch {
+            state.side_mut(target_side).active[target_slot].lost_focus = true;
         }
 
         // DamagingHit (after secondaries, PS `spreadMoveHit`).
@@ -2693,6 +2749,9 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             if a.helping_hand_mult > 1.0 {
                 push(NO_ORDER, speed, 2, ResidualKind::Marker);
             }
+            if a.focus_punch {
+                push(NO_ORDER, speed, 2, ResidualKind::Marker); // focuspunch (duration 1)
+            }
             if a.recharging {
                 push(NO_ORDER, speed, 2, ResidualKind::Marker); // mustrecharge
             }
@@ -2983,6 +3042,8 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
             a.flinched = false;
             a.protected = false;
             a.helping_hand_mult = 1.0;
+            a.focus_punch = false;
+            a.lost_focus = false;
             a.stats_raised_this_turn = false;
         }
     }
@@ -3135,6 +3196,7 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
                     weather: state.weather.weather_type,
                     reflect: false,
                     light_screen: false,
+                    defender_mod: 4096,
                     guts: attacker.ability == Abilities::GUTS,
                     base_power_override: 0.0,
                 };

@@ -457,3 +457,34 @@ pub fn ate_type_change(ability: Abilities, choice: &Choice) -> Option<PokemonTyp
         _ => None,
     }
 }
+
+/// Gen 8+: a Poison-type user's Toxic always hits, even a semi-invulnerable
+/// target, with no accuracy roll (PS `hitStepInvulnerabilityEvent` /
+/// `hitStepAccuracy`).
+pub fn toxic_always_hits(move_id: Choices, user: &Pokemon) -> bool {
+    move_id == Choices::TOXIC && user.has_type(&PokemonType::POISON)
+}
+
+/// The defender's ability in PS's `ModifyDamage` step
+/// (`onSourceModifyDamage`), as a 4096-based modifier (4096 = none): Punk
+/// Rock / Ice Scales / Multiscale / Shadow Shield / Fluffy.
+// TODO(PS parity): Filter / Solid Rock / Prism Armor (need type effectiveness).
+pub fn defender_damage_modifier(defender: &Pokemon, choice: &Choice) -> i64 {
+    match defender.ability {
+        Abilities::PUNKROCK if choice.flags.sound => 2048,
+        Abilities::ICESCALES if choice.category == MoveCategory::Special => 2048,
+        Abilities::MULTISCALE | Abilities::SHADOWSHIELD if defender.hp >= defender.maxhp => 2048,
+        Abilities::FLUFFY => {
+            // `mod = 1; Fire x2; contact /2`, applied as one chainModify.
+            let mut m = 4096;
+            if choice.move_type == PokemonType::FIRE {
+                m *= 2;
+            }
+            if choice.flags.contact {
+                m /= 2;
+            }
+            m
+        }
+        _ => 4096,
+    }
+}

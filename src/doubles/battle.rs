@@ -6407,6 +6407,7 @@ fn apply_boosts(
         }
     }
     let mut lowered = false;
+    let mut gained = [0i8; 7];
     for (n, &req) in requested.iter().enumerate() {
         if req == 0 {
             continue;
@@ -6425,6 +6426,9 @@ fn apply_boosts(
         let old = *cur;
         *cur = (old + req).clamp(-6, 6);
         let changed = *cur != old;
+        if changed && req > 0 {
+            gained[n] = *cur - old;
+        }
         lowered |= changed && req < 0;
         if changed && req < 0 {
             if let Some((stat, amount)) = reaction {
@@ -6442,6 +6446,33 @@ fn apply_boosts(
         for a in &mut s.active {
             if a.pokemon_index == Some(idx) {
                 a.stats_lowered_this_turn = true;
+            }
+        }
+    }
+    // Opportunist `onFoeAfterBoost`: foes with the ability copy the stat raises
+    // (not for boosts it caused itself). PS data/abilities.ts opportunist.
+    thread_local! {
+        static OPPORTUNIST_BUSY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+    if gained.iter().any(|&g| g > 0) && !OPPORTUNIST_BUSY.with(|b| b.get()) {
+        let foe = side.other();
+        let copy = StatBoosts {
+            attack: gained[0],
+            defense: gained[1],
+            special_attack: gained[2],
+            special_defense: gained[3],
+            speed: gained[4],
+            accuracy: gained[5],
+            evasion: gained[6],
+        };
+        for fsl in 0..2 {
+            let holder = state.side(foe).slot_pokemon(fsl).filter(|p| p.hp > 0 && p.ability == Abilities::OPPORTUNIST);
+            if holder.is_some() {
+                if let Some(fidx) = state.side(foe).active[fsl].pokemon_index {
+                    OPPORTUNIST_BUSY.with(|b| b.set(true));
+                    apply_boosts(state, foe, fidx, &copy, false);
+                    OPPORTUNIST_BUSY.with(|b| b.set(false));
+                }
             }
         }
     }

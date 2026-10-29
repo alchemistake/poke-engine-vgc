@@ -4167,6 +4167,7 @@ fn execute_action_inner(
                     turns_remaining: 0,
                 };
                 // `clearTerrain` -> `eachEvent('TerrainChange')`.
+                refresh_mimicry(state);
                 let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
             }
             if !success {
@@ -4924,6 +4925,7 @@ fn execute_action_inner(
                     turns_remaining: 5,
                 };
                 // `setTerrain` -> `eachEvent('TerrainChange')`.
+                refresh_mimicry(state);
                 let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
             }
         }
@@ -5318,6 +5320,7 @@ fn execute_action_inner(
                 terrain_type: crate::engine::state::Terrain::GRASSYTERRAIN,
                 turns_remaining: 5,
             };
+            refresh_mimicry(state);
             let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
         }
                 if matches!(ability, Abilities::GOOEY | Abilities::TANGLINGHAIR)
@@ -7004,6 +7007,37 @@ fn has_notrace(a: Abilities) -> bool {
 /// Curious Medicine, Intimidate, Supersweet Syrup. Returns true when it set a
 /// terrain (the caller runs PS's TerrainChange speed sort).
 // TODO(PS parity): other Start abilities (Download, Frisk, ...).
+/// Mimicry (PS data/abilities.ts `onTerrainChange`): the holder's types follow
+/// the terrain (Electric / Grass / Fairy / Psychic) and go back to the species
+/// types when no terrain is up. Runs on switch-in (`onStart`) and after every
+/// terrain change (`eachEvent('TerrainChange')`). Types are restored on
+/// switch-out through `type_change`, like Libero / Protean.
+fn refresh_mimicry(state: &mut DoublesState) {
+    let terrain = state.terrain.terrain_type;
+    for side in [Side::One, Side::Two] {
+        for slot in 0..2 {
+            let s = state.side_mut(side);
+            let Some(idx) = s.active[slot].pokemon_index else { continue };
+            let p = s.team_member(idx);
+            if p.ability != Abilities::MIMICRY {
+                continue;
+            }
+            let want = match crate::engine::mechanics::terrain_pulse_type(terrain, true) {
+                Some(t) => (t, PokemonType::TYPELESS),
+                None => p.base_types,
+            };
+            let cur = p.types;
+            if cur == want {
+                continue;
+            }
+            if s.active[slot].type_change.is_none() {
+                s.active[slot].type_change = Some(cur);
+            }
+            s.team_member_mut(idx).types = want;
+        }
+    }
+}
+
 fn apply_on_switch_abilities(
     state: &mut DoublesState,
     side: Side,
@@ -7116,6 +7150,7 @@ fn apply_on_switch_abilities(
                 };
                 // PS `setTerrain` -> `eachEvent("TerrainChange")`: a speed sort
                 // of all actives. The caller performs it (label depends on context).
+                refresh_mimicry(state);
                 return true;
             }
             return false;
@@ -7289,6 +7324,7 @@ fn apply_side_condition(state: &mut DoublesState, side: Side, c: PokemonSideCond
 /// abilities are applied by the caller.
 fn switch_in(state: &mut DoublesState, side: Side, slot: usize, position: usize) {
     switch_in_inner(state, side, slot, position);
+    refresh_mimicry(state);
     // Healing Wish / Lunar Dance `condition.onSwap` (on switch-in): a hurt
     // or statused replacement is fully healed and cured; otherwise the
     // condition keeps waiting. PS data/moves.ts healingwish / lunardance.
@@ -8411,6 +8447,7 @@ fn end_of_turn(
                     if state.terrain.turns_remaining == 0 {
                         state.terrain.terrain_type = crate::engine::state::Terrain::NONE;
                         // `clearTerrain` -> `eachEvent('TerrainChange')`.
+                        refresh_mimicry(state);
                         let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
                     }
                 }

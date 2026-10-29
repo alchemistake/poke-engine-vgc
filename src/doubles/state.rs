@@ -163,9 +163,9 @@ pub struct ActiveSlot {
     /// `octolock` volatile: the binder (side, team index). No duration; it
     /// ends once the binder is no longer active.
     pub octolock: Option<(Side, PokemonIndex)>,
-    /// `trapped` volatile (Jaw Lock, both binders): no switching; ends with the
-    /// volatiles. PS data/conditions.ts trapped.
-    pub jaw_trapped: bool,
+    /// `trapped` volatile (Block, Mean Look, Spider Web, Jaw Lock): no switching;
+    /// ends with the volatiles. PS data/conditions.ts trapped.
+    pub trapped: bool,
     /// PS `pokemon.hurtThisTurn`: lost HP earlier this turn (Assurance).
     pub hurt_this_turn: bool,
     /// PS `pokemon.newlySwitched`: switched in since the turn started (Payback).
@@ -304,7 +304,7 @@ impl ActiveSlot {
             heal_block: 0,
             syrup_bomb: None,
             octolock: None,
-            jaw_trapped: false,
+            trapped: false,
             hurt_this_turn: false,
             newly_switched: false,
             twoturn_fired: false,
@@ -1104,13 +1104,17 @@ impl DoublesState {
 
     /// Send out the lead Pokémon into the two active slots.
     pub fn send_out_leads(&mut self, leads_a: &[usize], leads_b: &[usize]) {
+        // PS starts the battle with an end-of-turn advance: the leads already
+        // have `activeTurns` 1 at the first residual (Speed Boost fires).
         for (slot, &lead_pos) in leads_a.iter().take(2).enumerate() {
             let idx = PokemonIndex::deserialize(&lead_pos.to_string());
             self.side_one.active[slot].pokemon_index = Some(idx);
+            self.side_one.active[slot].active_turns = 1;
         }
         for (slot, &lead_pos) in leads_b.iter().take(2).enumerate() {
             let idx = PokemonIndex::deserialize(&lead_pos.to_string());
             self.side_two.active[slot].pokemon_index = Some(idx);
+            self.side_two.active[slot].active_turns = 1;
         }
     }
 }

@@ -2047,7 +2047,7 @@ fn execute_action_inner(
             ChargeSetup::None => false,
             ChargeSetup::Always { .. } => true,
             ChargeSetup::NotSun { .. } => effective_weather != Weather::SUN,
-            ChargeSetup::OnlyRain { .. } => effective_weather == Weather::RAIN,
+            ChargeSetup::OnlyRain { .. } => !matches!(effective_weather, Weather::RAIN | Weather::HEAVYRAIN),
             ChargeSetup::OnlySnow { .. } => matches!(effective_weather, Weather::HAIL | Weather::SNOW),
         };
         let charged = state.side_mut(side).active[slot].charging.take();
@@ -3357,6 +3357,8 @@ fn execute_action_inner(
       } else {
           Vec::new()
       };
+      let mut hit_damage_by = vec![None; hit_targets.len()];
+      let mut hit_pi_by = vec![None; hit_targets.len()];
       for (ti, &(hts, htsl)) in hit_targets.iter().enumerate() {
         target_side = hts;
         target_slot = htsl;
@@ -4135,6 +4137,16 @@ fn execute_action_inner(
                 PokemonVolatileStatus::PARTIALLYTRAPPED => {
                     try_partial_trap(state, rng, ts, tslot, side, idx)
                 }
+                PokemonVolatileStatus::TRAPPED => {
+                    // PS `addVolatile('trapped')` returns false while present: the
+                    // move fails (Block / Mean Look `onTryHit`).
+                    let a = &state.side(ts).active[tslot];
+                    if a.trapped || !state.side(ts).slot_pokemon(tslot).map(|p| p.hp > 0).unwrap_or(false) {
+                        move_failed = true;
+                    } else {
+                        state.side_mut(ts).active[tslot].trapped = true;
+                    }
+                }
                 PokemonVolatileStatus::OCTOLOCK => {
                     // PS `addVolatile`: no-op while present; no draw.
                     if state.side(ts).active[tslot].octolock.is_none()
@@ -4175,6 +4187,9 @@ fn execute_action_inner(
             let (ts, tsl) = if is_ally { (side, ally_slot) } else { (target_side, target_slot) };
             if !skill_swap(state, side, slot, ts, tsl, rng) {
                 move_failed = true;
+            } else {
+                ability_update_cures(state, side, slot);
+                ability_update_cures(state, ts, tsl);
             }
         }
 
@@ -4197,6 +4212,7 @@ fn execute_action_inner(
                         && !crate::engine::mechanics::cant_suppress(src_ability) =>
                 {
                     state.side_mut(ts).team_member_mut(ti).ability = src_ability;
+                    ability_update_cures(state, ts, tsl);
                     // The new ability's Start event (Intimidate, Drought, ...).
                     let _ = apply_on_switch_abilities(state, ts, tsl, rng);
                 }
@@ -5394,6 +5410,17 @@ fn execute_action_inner(
             state.side_mut(target_side).active[target_slot].lost_focus = true;
         }
 
+        // Recorded for the DamagingHit pass below (PS `spreadMoveHit` runs the
+        // secondaries of every target before DamagingHit for any of them).
+        hit_damage_by[ti] = hit_damage;
+        hit_pi_by[ti] = hit_target_pi;
+      }
+      // DamagingHit pass (PS `spreadMoveHit`, after the secondaries of every target).
+      for (ti, &(hts, htsl)) in hit_targets.iter().enumerate() {
+        target_side = hts;
+        target_slot = htsl;
+        let hit_damage = hit_damage_by[ti];
+        let hit_target_pi = hit_pi_by[ti];
         // DamagingHit (after secondaries, PS `spreadMoveHit`).
         if hit_damage.is_some() {
             // Glaive Rush `self.volatileStatus`.
@@ -5520,7 +5547,6 @@ fn execute_action_inner(
             }
             maybe_wandering_spirit(state, side, slot, target_side, target_slot, choice, rng);
         }
-
       }
         // PS `hitStepMoveHitLoop`: `eachEvent('Update')` after every hit that
         // did something. Field moves (`tryMoveHit`) have no hit loop; neither
@@ -5597,10 +5623,10 @@ fn execute_action_inner(
     // gain the `trapped` volatile (no-op while present; the target must be alive).
     if choice.move_id == Choices::JAWLOCK && hits_done > 0 {
         if state.side(side).slot_pokemon(slot).map(|p| p.hp > 0).unwrap_or(false) {
-            state.side_mut(side).active[slot].jaw_trapped = true;
+            state.side_mut(side).active[slot].trapped = true;
         }
         if state.side(target_side).slot_pokemon(target_slot).map(|p| p.hp > 0).unwrap_or(false) {
-            state.side_mut(target_side).active[target_slot].jaw_trapped = true;
+            state.side_mut(target_side).active[target_slot].trapped = true;
         }
     }
 
@@ -6197,13 +6223,16 @@ fn set_status(state: &mut DoublesState, rng: &mut Gen5Rng, ts: Side, tidx: Pokem
 }
 
 /// PS `getConfusionDamage` (sim/battle-actions.ts): 40 BP, the user's own
-/// boosted Atk and Def, no crit, one damage roll, at least 1.
+/// boosted Atk and Def, no crit, one damage roll, at least 1. Wonder Room
+/// swaps the Def value for SpD (`calculateStat` swaps the name; the Def stage
+/// still applies).
 fn confusion_damage(state: &DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize, idx: PokemonIndex) -> i16 {
     let s = state.side(side);
     let p = s.team_member(idx);
     let b = s.slot_boosts(slot).cloned().unwrap_or_default();
     let atk = multiply_boost(b.atk, p.attack).max(1) as i64;
-    let def = multiply_boost(b.def, p.defense).max(1) as i64;
+    let base_def = if state.wonder_room.active { p.special_defense } else { p.defense };
+    let def = multiply_boost(b.def, base_def).max(1) as i64;
     let level = p.level as i64;
     let base = ((((2 * level / 5 + 2) * 40 * atk) / def) / 50) + 2;
     let base = base % 65536;
@@ -7069,6 +7098,15 @@ fn maybe_wandering_spirit(
         return;
     }
     skill_swap(state, att_side, att_slot, def_side, def_slot, rng);
+}
+
+/// PS ability `onUpdate` cures after the holder's ability changed (Skill Swap,
+/// Entrainment): Own Tempo ends confusion. No draws.
+fn ability_update_cures(state: &mut DoublesState, side: Side, slot: usize) {
+    let Some(idx) = state.side(side).active[slot].pokemon_index else { return };
+    if state.side(side).team_member(idx).ability == Abilities::OWNTEMPO {
+        state.side_mut(side).active[slot].confusion = 0;
+    }
 }
 
 /// PS `battle.skillSwap(source, target)` (sim/battle.ts): fails if either is
@@ -8410,7 +8448,7 @@ fn end_turn_disable_moves(state: &DoublesState, rng: &mut Gen5Rng) {
         }
         // `TrapPokemon` runs for the same pokemon right after its DisableMove.
         let mut ts: Vec<(i64, i32, i64)> = Vec::new();
-        if a.jaw_trapped {
+        if a.trapped {
             ts.push((4294967296, speed, 2));
         }
         if a.partial_trap.is_some() {
@@ -9045,7 +9083,10 @@ fn end_of_turn(
             }
             ResidualKind::SpeedBoost(side, slot) => {
                 // PS `speedboost.onResidual`, data/abilities.ts:4454. No draw.
-                // TODO(PS parity): only when `activeTurns` > 0.
+                // Only when `activeTurns` > 0 (not on the switch-in turn).
+                if state.side(side).active[slot].active_turns == 0 {
+                    continue;
+                }
                 if let Some(idx) = state.side(side).active[slot].pokemon_index {
                     apply_boosts(
                         state,

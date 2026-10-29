@@ -20945,7 +20945,7 @@ pub enum ChargeSetup {
     Always { turns: u8 },
     /// Charges unless the weather is harsh sun (Solar Beam, Solar Blade).
     NotSun { turns: u8 },
-    /// Charges only in heavy rain (Electro Shot).
+    /// Skips the charge in rain (Electro Shot: Rain Dance / Primordial Sea).
     OnlyRain { turns: u8 },
     /// Charges only in snow (Freeze Shock, Ice Burn).
     OnlySnow { turns: u8 },

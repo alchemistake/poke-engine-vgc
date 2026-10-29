@@ -1437,6 +1437,11 @@ fn execute_action(
     let order_len = move_order.len();
     state.side_mut(action.side).active[action.slot].move_result_this_turn = None;
     execute_action_inner(state, rng, action, move_order, will_act, queue);
+    // Destiny Bond `onBeforeMove` (any other move) / `onMoveAborted` (a `cant`)
+    // remove the volatile. PS data/conditions.ts destinybond.
+    if action.choice.move_id != Choices::DESTINYBOND || move_order.len() == order_len {
+        state.side_mut(action.side).active[action.slot].destinybond = false;
+    }
     if move_order.len() > order_len {
         state.last_move = Some(action.choice.move_id);
         // PS `pokemon.moveUsed`: `lastMove` (Encore).
@@ -2361,6 +2366,30 @@ fn execute_action_inner(
         let t = &mut state.side_mut(target_side).active[target_slot];
         t.protected = false;
         t.stall = None;
+    }
+
+    // Armor Tail / Queenly Majesty / Dazzling `onFoeTryMove`: priority moves
+    // aimed at the holder's side fail (no draw). PS data/abilities.ts armortail.
+    // TODO(PS parity): `target: all` moves.
+    if !is_self
+        && !is_field
+        && action.priority > 0
+        && target_side != side
+        && (0..2).any(|sl| {
+            state.side(target_side).slot_pokemon(sl).is_some_and(|p| {
+                p.hp > 0
+                    && matches!(p.ability, Abilities::ARMORTAIL | Abilities::QUEENLYMAJESTY | Abilities::DAZZLING)
+                    && !crate::engine::abilities::ignores_target_ability(
+                        state.side(side).team_member(idx),
+                        choice,
+                        &p.ability,
+                    )
+            })
+        })
+    {
+        state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+        push_order();
+        return;
     }
 
     // Quick Guard `onTryHit` (priority 4, before Protect's): blocks moves with
@@ -6538,6 +6567,8 @@ enum ResidualKind {
     CureStatus(Side, usize),
     /// Moody `onResidual` (order 28, subOrder 2).
     Moody(Side, usize),
+    /// Harvest `onResidual` (order 28, subOrder 2): the roll only.
+    Harvest(Side, usize),
     /// Ghost `curse` damage (order 12).
     Curse(Side, usize),
     LeechSeed(Side, usize),
@@ -6684,6 +6715,9 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
                 if p.ability == Abilities::MOODY {
                     push(28, speed, 2, ResidualKind::Moody(side, slot));
                 }
+                if p.ability == Abilities::HARVEST {
+                    push(28, speed, 2, ResidualKind::Harvest(side, slot));
+                }
                 if p.ability == Abilities::SPEEDBOOST {
                     push(28, speed, 2, ResidualKind::SpeedBoost(side, slot));
                 }
@@ -6805,6 +6839,9 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             }
             if p.ability == Abilities::MOODY {
                 push(28, speed, 2, ResidualKind::Moody(side, slot));
+            }
+            if p.ability == Abilities::HARVEST {
+                push(28, speed, 2, ResidualKind::Harvest(side, slot));
             }
             if p.ability == Abilities::SPEEDBOOST {
                 push(28, speed, 2, ResidualKind::SpeedBoost(side, slot));
@@ -7154,6 +7191,17 @@ fn end_of_turn(
                             state.side_mut(side).team_member_mut(aidx).status = PokemonStatus::NONE;
                         }
                     }
+                }
+            }
+            ResidualKind::Harvest(side, slot) => {
+                // PS harvest.onResidual: `isWeather(sun) || randomChance(1, 2)`.
+                // The restored berry is not modeled (items are unused).
+                // TODO(PS parity): Harvest berry restore (lastItem).
+                if state.side(side).slot_pokemon(slot).map(|p| p.hp <= 0).unwrap_or(true) {
+                    continue;
+                }
+                if !matches!(state.weather.weather_type, Weather::SUN | Weather::HARSHSUN) {
+                    let _ = rng.label("residual roll").random_chance(1, 2);
                 }
             }
             ResidualKind::Moody(side, slot) => {

@@ -133,10 +133,15 @@ value. Use it when the PRNG draws line up but a number differs.
 
 ## Speed
 
-- Each battle is first checked with a fast path: the whole PS battle, ONE
-  engine run over all its turns, then every turn and the winner are
-  compared. Only a failing battle is re-run stepwise (one engine run per
-  turn) to build the report, so reports are unchanged.
+- Fast path: battles are checked in chunks of 8 — each whole PS battle is
+  played (without PRNG call-stack tracing), then ONE engine call
+  (`doubles-fuzz-battle --batch`) runs all of them, and every turn and the
+  winner are compared. Only a failing battle is re-run stepwise (one engine
+  run per turn, with tracing) to build the report, so reports are unchanged.
 - `--jobs N` (default: all CPU cores) splits the seeds across worker
-  processes; the lowest failing seed is re-run in the main process for the
-  report. `--jobs 1` runs sequentially. `--verbose` disables both.
+  processes. The parent starts them before loading pokemon-showdown, stops
+  workers that can no longer find an earlier failure, and re-runs the lowest
+  failing seed for the report. `--jobs 1` runs sequentially; `--verbose`
+  disables both.
+- Typical (18 cores): 100 battles ~0.6 s; a 1000-battle sweep that fails at
+  seed 100 ~0.9 s.

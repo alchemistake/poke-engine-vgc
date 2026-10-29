@@ -18,6 +18,14 @@ const path = require('path');
 const fs = require('fs');
 const { spawnSync } = require('child_process');
 
+// Parallel sweep parent: start the workers BEFORE loading pokemon-showdown
+// (the parent only needs it to print a report). See runParallel / main.
+const PARALLEL_PARENT = (() => {
+  const o = parseArgs();
+  return o.jobs > 1 && o.count > 1 && !o.checkOnly && !o.verbose ? o : null;
+})();
+if (PARALLEL_PARENT) runParallel(PARALLEL_PARENT);
+
 const PS_DIR = path.resolve(__dirname, '..', '..', 'pokemon-showdown');
 const Sim = require(path.join(PS_DIR, 'dist', 'sim'));
 const { Dex, Battle } = Sim;
@@ -272,6 +280,8 @@ function makeSnapshot(battle, logIdx, orderA, orderB) {
 // stack, the engine via `Gen5Rng::label` (`prng_draw_ctx` in pe.json).
 
 let PS_TRACE = null; // { battle, draws: [{ turn, cat, ctx, stack }] }
+// Draw tracing captures a call stack per draw (slow); only reports need it.
+let TRACE_DRAWS = true;
 
 const { psDrawPurpose } = require('./fuzz_purpose.js');
 
@@ -450,7 +460,7 @@ function stepPSBattle(battleSeed, teamA, teamB, controller, onInit, onTurn) {
   // Surface choice-rejection messages as exceptions.
   battle.strictChoices = true;
 
-  PS_TRACE = tracePSDraws(battle);
+  PS_TRACE = TRACE_DRAWS ? tracePSDraws(battle) : null;
 
   const actsToStr = (acts) =>
     acts
@@ -1132,6 +1142,20 @@ function compactReport(opts, testIdx, info) {
 }
 
 // Run poke-engine on the first `n` turns (stepwise mode: stop_after = n).
+// The engine input for the first `n` turns of a battle.
+function engineInput(battleSeed, meta, turns, n) {
+  return {
+    seed: battleSeed,
+    teams: {
+      a: meta.battleTeamA.map((m, i) => toEngineMember(m, i)),
+      b: meta.battleTeamB.map((m, i) => toEngineMember(m, i)),
+    },
+    leads: meta.leads,
+    choices: turns.slice(0, n),
+    stop_after: n,
+  };
+}
+
 function runEngineTurn(opts, dir, battleSeed, meta, turns, n) {
   const inputPath = path.join(dir, 'input.json');
   const outPath = path.join(dir, 'pe.json');
@@ -1165,6 +1189,9 @@ function failTest(opts, t, info) {
   process.exit(1);
 }
 
+// Tests checked per engine call on the fast path.
+const FAST_CHUNK = 8;
+
 // The controller PRNG, battle seed and teams of one test (all derived from
 // the test seed, so a test can be rebuilt identically).
 function makeTest(testSeed) {
@@ -1182,39 +1209,46 @@ function makeTest(testSeed) {
   return { controller, battleSeed, teamA, teamB };
 }
 
-// Fast pass/fail check of one test: play the whole PS battle, run the
-// engine ONCE on all its turns, and compare every turn's state and the
-// winner. The engine is deterministic, so turn n of this run equals the
-// stepwise run with `stop_after: n`. Any doubt (PS error, engine error,
-// mismatch) returns false and the caller re-runs the test stepwise.
-function fastCheck(opts, dir, testSeed) {
-  const { controller, battleSeed, teamA, teamB } = makeTest(testSeed);
-  let initSnap = null;
-  const snaps = [];
-  let meta;
-  try {
-    meta = stepPSBattle(
-      battleSeed,
-      teamA,
-      teamB,
-      controller,
-      (snap) => {
-        initSnap = snap;
-      },
-      (snap) => {
-        snaps.push(snap);
-      }
-    );
-  } catch (e) {
-    return false;
+// Fast pass/fail check of several tests: play each whole PS battle (no draw
+// tracing), run the engine ONCE for all of them (`--batch`), and compare
+// every turn's state and the winner. The engine is deterministic, so turn n
+// of a full run equals the stepwise run with `stop_after: n`. Returns the
+// index of the first test that is not a clean pass (PS error, engine error
+// or mismatch), or -1; the caller re-runs that test stepwise for the report.
+function fastCheckBatch(opts, dir, seeds) {
+  const games = [];
+  let firstBad = -1;
+  TRACE_DRAWS = false;
+  for (let k = 0; k < seeds.length; k++) {
+    const { controller, battleSeed, teamA, teamB } = makeTest(seeds[k]);
+    let initSnap = null;
+    const snaps = [];
+    try {
+      const meta = stepPSBattle(battleSeed, teamA, teamB, controller,
+        (snap) => {
+          initSnap = snap;
+        },
+        (snap) => {
+          snaps.push(snap);
+        });
+      games.push({ battleSeed, meta, initSnap, snaps });
+    } catch (e) {
+      firstBad = k; // later tests cannot be first
+      break;
+    }
   }
-  let pe;
-  try {
-    pe = runEngineTurn(opts, dir, battleSeed, meta, meta.turns, meta.turns.length);
-  } catch (e) {
-    return false;
-  }
-  if (!pe || pe.error || !initSnap || pe.turns.length < snaps.length + 1) return false;
+  TRACE_DRAWS = true;
+  if (!games.length) return firstBad;
+
+  const inPath = path.join(dir, 'batch-input.json');
+  const outPath = path.join(dir, 'batch-output.json');
+  fs.writeFileSync(inPath, JSON.stringify(games.map((g) =>
+    engineInput(g.battleSeed, g.meta, g.meta.turns, g.meta.turns.length))));
+  const r = spawnSync(opts.engine, ['doubles-fuzz-battle', '--batch', '--input', inPath, '--output', outPath],
+    { encoding: 'utf8' });
+  if (r.status !== 0) return 0; // let the stepwise path explain it
+  const results = JSON.parse(fs.readFileSync(outPath, 'utf8'));
+
   const same = (psSnap, peTurn) => {
     const { moveOrderRaw: _a, turn: _t1, ...psC } = normalizePSState(psSnap);
     const { moveOrderRaw: _b, turn: _t2, ...peC } = normalizePETurn(peTurn);
@@ -1222,11 +1256,15 @@ function fastCheck(opts, dir, testSeed) {
     deepDiff(psC, peC, '', diffs);
     return diffs.length === 0;
   };
-  if (!same(initSnap, pe.turns[0])) return false;
-  for (let n = 1; n <= snaps.length; n++) {
-    if (!same(snaps[n - 1], pe.turns[n])) return false;
+  for (let k = 0; k < games.length; k++) {
+    const g = games[k];
+    const pe = results[k];
+    let ok = pe && !pe.error && g.initSnap && pe.turns.length >= g.snaps.length + 1 &&
+      same(g.initSnap, pe.turns[0]);
+    for (let n = 1; ok && n <= g.snaps.length; n++) ok = same(g.snaps[n - 1], pe.turns[n]);
+    if (!ok || pe.winner !== g.meta.winner) return k;
   }
-  return pe.winner === meta.winner;
+  return firstBad;
 }
 
 // Parallel sweep: worker j checks seeds seed+j, seed+j+jobs, ... (each stops
@@ -1237,7 +1275,16 @@ function runParallel(opts) {
   const { spawn } = require('child_process');
   const jobs = Math.min(opts.jobs, opts.count);
   let pending = jobs;
-  const failing = [];
+  let first = Infinity; // lowest failing seed so far
+  // checked[j]: worker j has checked every one of its seeds below this one.
+  const checked = Array.from({ length: jobs }, (_, j) => opts.seed + j);
+  const children = [];
+  // A worker can stop once its next seed is above the lowest failure.
+  const prune = () => {
+    children.forEach((c, j) => {
+      if (!c.done && checked[j] > first) c.kill();
+    });
+  };
   for (let j = 0; j < jobs; j++) {
     const count = Math.ceil((opts.count - j) / jobs);
     const child = spawn(
@@ -1247,14 +1294,26 @@ function runParallel(opts) {
         '--workdir', path.join(opts.workdir, `worker-${j}`)],
       { stdio: ['ignore', 'pipe', 'inherit'] }
     );
-    let out = '';
-    child.stdout.on('data', (d) => (out += d));
+    children.push(child);
+    let buf = '';
+    child.stdout.on('data', (d) => {
+      buf += d;
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        const m = line.match(/^(PASS|FAIL) (\d+)$/);
+        if (!m) continue;
+        const seed = parseInt(m[2], 10);
+        if (m[1] === 'FAIL') first = Math.min(first, seed);
+        else checked[j] = seed + jobs;
+      }
+      prune();
+    });
     child.on('close', () => {
-      const m = out.match(/FAIL (\d+)/);
-      if (m) failing.push(parseInt(m[1], 10));
+      child.done = true;
       if (--pending === 0) {
-        if (!failing.length) process.exit(0);
-        const first = Math.min(...failing);
+        if (first === Infinity) process.exit(0);
         // Re-run the first failing seed alone, in this process: full report.
         process.argv = [process.argv[0], __filename, '--seed', String(first), '--count', '1', '--jobs', '1',
           '--engine', opts.engine, '--workdir', opts.workdir];
@@ -1267,10 +1326,6 @@ function runParallel(opts) {
 function main() {
   const opts = parseArgs();
   fs.mkdirSync(opts.workdir, { recursive: true });
-  if (opts.jobs > 1 && opts.count > 1 && !opts.checkOnly && !opts.verbose) {
-    runParallel(opts);
-    return;
-  }
 
   // Passing tests print nothing unless --verbose; a mismatch prints the full
   // report (and exits 1).
@@ -1280,19 +1335,29 @@ function main() {
   log(`fuzz: engine=${opts.engine}`);
   log('');
 
+  let passedUpTo = 0;
   for (let t = 0; t < opts.count; t++) {
     // Controller PRNG: one per test, seeded from (tester seed + test index),
     // so test #k of `--seed S` reproduces alone as `--seed S+k-1 --count 1`.
     // Separate from the battle seed.
     const testSeed = opts.seed + t * opts.step;
+
+    // Fast path, in chunks: tests before `passedUpTo` are known to pass.
+    // Only the first failing test is re-run stepwise below (the report).
+    if (!opts.verbose && t >= passedUpTo) {
+      const n = Math.min(FAST_CHUNK, opts.count - t);
+      const seeds = Array.from({ length: n }, (_, k) => opts.seed + (t + k) * opts.step);
+      const bad = fastCheckBatch(opts, opts.workdir, seeds);
+      passedUpTo = bad < 0 ? t + n : t + bad;
+      // Parallel worker: tell the parent how far this worker got.
+      if (opts.checkOnly && passedUpTo > t) {
+        process.stdout.write(`PASS ${opts.seed + (passedUpTo - 1) * opts.step}\n`);
+      }
+    }
+    if (!opts.verbose && t < passedUpTo) continue;
+
     const dir = path.join(opts.workdir, `test-${t + 1}`);
     fs.mkdirSync(dir, { recursive: true });
-
-    // Fast path: whole PS battle, ONE engine run, compare every turn. Only a
-    // failing battle is re-run stepwise below, which builds the report.
-    if (!opts.verbose && fastCheck(opts, dir, testSeed)) {
-      continue;
-    }
     if (opts.checkOnly) {
       // Parallel worker: report the failing seed to the parent and stop.
       process.stdout.write(`FAIL ${testSeed}\n`);
@@ -1458,4 +1523,4 @@ function main() {
   process.exit(0);
 }
 
-main();
+if (!PARALLEL_PARENT) main();

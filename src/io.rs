@@ -136,6 +136,12 @@ struct DoublesFuzzBattleArgs {
     /// Optional path to write the result JSON. Prints to stdout if omitted.
     #[clap(short, long)]
     output: Option<String>,
+
+    /// The input is a JSON array of battles; the output is an array of
+    /// results in the same order (fuzzer fast path). PRNG draw tracing is
+    /// off, and a battle that panics yields `{"error": "panic: ..."}`.
+    #[clap(long, default_value_t = false)]
+    batch: bool,
 }
 
 impl Default for IOData {
@@ -444,31 +450,32 @@ pub fn main() {
             SubCommand::DoublesFuzzBattle(args) => {
                 let json = std::fs::read_to_string(&args.input)
                     .unwrap_or_else(|e| panic!("failed to read {}: {}", args.input, e));
-                let input: crate::doubles::state::BattleInput =
-                    serde_json::from_str(&json).unwrap_or_else(|e| panic!("bad JSON: {}", e));
-                let choices = input
-                    .choices
-                    .clone()
-                    .unwrap_or_else(|| panic!("doubles-fuzz-battle requires `choices` in the input"));
-                let mut dstate = crate::doubles::state::DoublesState::from_input(&input);
-                let leads = input
-                    .leads
-                    .clone()
-                    .unwrap_or(crate::doubles::state::Leads {
-                        a: vec![0, 1],
-                        b: vec![0, 1],
-                    });
-                dstate.send_out_leads(&leads.a, &leads.b);
-                let mut rng = crate::doubles::rng::Gen5Rng::new(input.seed);
-                rng.trace = true;
-                let result = crate::doubles::battle::run_battle_fuzz(
-                    &mut dstate,
-                    &mut rng,
-                    &choices,
-                    input.stop_after,
-                );
-                let out_json = serde_json::to_string_pretty(&result)
-                    .unwrap_or_else(|e| panic!("serialize: {}", e));
+                let out_json = if args.batch {
+                    let inputs: Vec<crate::doubles::state::BattleInput> =
+                        serde_json::from_str(&json).unwrap_or_else(|e| panic!("bad JSON: {}", e));
+                    let results: Vec<serde_json::Value> = inputs
+                        .iter()
+                        .map(|input| {
+                            match std::panic::catch_unwind(|| run_doubles_fuzz_input(input, false)) {
+                                Ok(r) => serde_json::to_value(&r).unwrap_or(serde_json::Value::Null),
+                                Err(e) => {
+                                    let msg = e
+                                        .downcast_ref::<String>()
+                                        .cloned()
+                                        .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
+                                        .unwrap_or_default();
+                                    serde_json::json!({ "error": format!("panic: {}", msg) })
+                                }
+                            }
+                        })
+                        .collect();
+                    serde_json::to_string(&results).unwrap_or_else(|e| panic!("serialize: {}", e))
+                } else {
+                    let input: crate::doubles::state::BattleInput =
+                        serde_json::from_str(&json).unwrap_or_else(|e| panic!("bad JSON: {}", e));
+                    let result = run_doubles_fuzz_input(&input, true);
+                    serde_json::to_string_pretty(&result).unwrap_or_else(|e| panic!("serialize: {}", e))
+                };
                 if let Some(path) = &args.output {
                     std::fs::write(path, &out_json)
                         .unwrap_or_else(|e| panic!("write {}: {}", path, e));
@@ -837,4 +844,29 @@ fn command_loop(mut io_data: IOData) {
             }
         }
     }
+}
+
+/// Run one doubles fuzz battle input (`doubles-fuzz-battle`). `trace` turns
+/// on the PRNG draw-purpose log used by fuzzer reports.
+#[cfg(not(any(feature = "gen1", feature = "gen2", feature = "gen3")))]
+fn run_doubles_fuzz_input(
+    input: &crate::doubles::state::BattleInput,
+    trace: bool,
+) -> crate::doubles::state::FuzzBattleResult {
+    let choices = input
+        .choices
+        .clone()
+        .unwrap_or_else(|| panic!("doubles-fuzz-battle requires `choices` in the input"));
+    let mut dstate = crate::doubles::state::DoublesState::from_input(input);
+    let leads = input
+        .leads
+        .clone()
+        .unwrap_or(crate::doubles::state::Leads {
+            a: vec![0, 1],
+            b: vec![0, 1],
+        });
+    dstate.send_out_leads(&leads.a, &leads.b);
+    let mut rng = crate::doubles::rng::Gen5Rng::new(input.seed);
+    rng.trace = trace;
+    crate::doubles::battle::run_battle_fuzz(&mut dstate, &mut rng, &choices, input.stop_after)
 }

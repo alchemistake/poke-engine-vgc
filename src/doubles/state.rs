@@ -164,6 +164,11 @@ pub struct ActiveSlot {
     pub twoturn_fired: bool,
     /// `encore` volatile: the forced move and remaining duration.
     pub encore: Option<(crate::choices::Choices, u8)>,
+    /// `torment` volatile (no duration): the last move is disabled while it lasts.
+    pub torment: bool,
+    /// Forest's Curse added Grass to a single-typed pokemon (PS `addedType`):
+    /// the second type slot is restored on switch-out / faint.
+    pub added_grass: bool,
     /// `roost` volatile (duration 1): the pokemon's types before Flying was
     /// filtered out (`onType`); restored at residual / switch-out / faint.
     pub roost_orig: Option<(PokemonType, PokemonType)>,
@@ -286,6 +291,8 @@ impl ActiveSlot {
             hurt_this_turn: false,
             twoturn_fired: false,
             encore: None,
+            torment: false,
+            added_grass: false,
             roost_orig: None,
             aqua_ring: false,
             counter_vol: None,

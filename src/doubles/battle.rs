@@ -197,6 +197,9 @@ fn faint_pokemon(state: &mut DoublesState, side: Side, slot: usize) {
         if let Some(t) = s.active[slot].type_change {
             s.team_member_mut(idx).types = t;
         }
+        if s.active[slot].added_grass {
+            s.team_member_mut(idx).types.1 = PokemonType::TYPELESS;
+        }
         // The status stays until PS `checkFainted` (end of turn, only for a
         // side that can still switch) sets it to 'fnt'; see `check_fainted`.
         // PS keeps the fainted pokemon in the slot until its replacement
@@ -749,7 +752,10 @@ pub fn run_battle_fuzz(
                             let p = s.team_member(idx);
                             let (mv, prio) = if *struggle {
                                 // Struggle (forced when no usable moves left).
-                                let m = MOVES.get(&crate::choices::Choices::STRUGGLE).cloned().unwrap();
+                                // PS data/moves.ts struggle.onModifyMove: `move.type = '???'`
+                                // (typeless: no STAB, no type immunity).
+                                let mut m = MOVES.get(&crate::choices::Choices::STRUGGLE).cloned().unwrap();
+                                m.move_type = PokemonType::TYPELESS;
                                 (m, 0i8)
                             } else {
                                 let m = move_by_index(p, (*mi).min(3));
@@ -4260,6 +4266,36 @@ fn execute_action_inner(
             }
         }
 
+        // Torment (PS data/moves.ts torment, `addVolatile('torment')`): fails
+        // if the target already has it. The disable itself is in
+        // `end_turn_disable_moves` and the choices come from PS's requests.
+        if choice.move_id == Choices::TORMENT && ti == 0 && !move_failed {
+            if state.side(target_side).active[target_slot].torment {
+                move_failed = true;
+            } else {
+                state.side_mut(target_side).active[target_slot].torment = true;
+            }
+        }
+
+        // Forest's Curse (PS data/moves.ts forestscurse.onHit): fails on a Grass
+        // type, else `addType('Grass')`.
+        // TODO(PS parity): a dual-typed target gets a third type (`addedType`).
+        if choice.move_id == Choices::FORESTSCURSE && ti == 0 && !move_failed {
+            let tidx = state.side(target_side).active[target_slot].pokemon_index;
+            match tidx {
+                Some(tidx) => {
+                    let t = state.side(target_side).team_member(tidx).types;
+                    if t.0 == PokemonType::GRASS || t.1 == PokemonType::GRASS {
+                        move_failed = true;
+                    } else if t.1 == PokemonType::TYPELESS {
+                        state.side_mut(target_side).team_member_mut(tidx).types.1 = PokemonType::GRASS;
+                        state.side_mut(target_side).active[target_slot].added_grass = true;
+                    }
+                }
+                None => move_failed = true,
+            }
+        }
+
         // Quash (PS data/moves.ts quash.onHit): the target's queued action gets
         // `order = 201` and moves after every other move; fails without one.
         if choice.move_id == Choices::QUASH && ti == 0 {
@@ -6571,6 +6607,25 @@ fn cursed_body(
     }
 }
 
+/// The pokemon in a slot, or the one that fainted there in the current hit
+/// loop and is not resolved yet (`unresolved_faints`).
+fn slot_index_or_unresolved(state: &DoublesState, side: Side, slot: usize) -> Option<PokemonIndex> {
+    state.side(side).active[slot].pokemon_index.or_else(|| {
+        state
+            .unresolved_faints
+            .iter()
+            .find(|(s, sl, _)| *s == side && *sl == slot)
+            .map(|&(_, _, i)| i)
+    })
+}
+
+/// PS `pokemon.fainted`: hp is 0 and the faint has been resolved. A pokemon
+/// KO'd by the current hit still counts as alive here.
+fn fainted_now(state: &DoublesState, side: Side, idx: PokemonIndex) -> bool {
+    state.side(side).team_member(idx).hp <= 0
+        && !state.unresolved_faints.iter().any(|&(s, _, i)| s == side && i == idx)
+}
+
 /// Wandering Spirit (PS `wanderingspirit.onDamagingHit` -> `skillSwap`,
 /// sim/battle.ts): a contact move that damages the holder swaps the
 /// attacker's and holder's abilities, unless either is fainted or either
@@ -6587,13 +6642,10 @@ fn maybe_wandering_spirit(
     if !choice.flags.contact {
         return;
     }
-    let (Some(ai), Some(di)) = (
-        state.side(att_side).active[att_slot].pokemon_index,
-        state.side(def_side).active[def_slot].pokemon_index,
-    ) else {
+    // The holder may have been KO'd by this hit (its slot is already empty).
+    let Some(di) = slot_index_or_unresolved(state, def_side, def_slot) else {
         return;
     };
-    let _ = (ai, di);
     if state.side(def_side).team_member(di).ability != Abilities::WANDERINGSPIRIT {
         return;
     }
@@ -6612,15 +6664,17 @@ fn skill_swap(
     rng: &mut Gen5Rng,
 ) -> bool {
     let (Some(si), Some(ti)) = (
-        state.side(src_side).active[src_slot].pokemon_index,
-        state.side(tgt_side).active[tgt_slot].pokemon_index,
+        slot_index_or_unresolved(state, src_side, src_slot),
+        slot_index_or_unresolved(state, tgt_side, tgt_slot),
     ) else {
         return false;
     };
     let src_ability = state.side(src_side).team_member(si).ability;
     let tgt_ability = state.side(tgt_side).team_member(ti).ability;
-    if state.side(src_side).team_member(si).hp <= 0
-        || state.side(tgt_side).team_member(ti).hp <= 0
+    // PS `fainted` is only set once faints resolve, so a holder KO'd by the
+    // current hit still swaps.
+    if fainted_now(state, src_side, si)
+        || fainted_now(state, tgt_side, ti)
         || crate::engine::mechanics::fails_skill_swap(src_ability)
         || crate::engine::mechanics::fails_skill_swap(tgt_ability)
     {
@@ -7205,6 +7259,9 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
         }
         if let Some(t) = s.active[slot].type_change {
             s.team_member_mut(old).types = t;
+        }
+        if s.active[slot].added_grass {
+            s.team_member_mut(old).types.1 = PokemonType::TYPELESS;
         }
     }
     let pos = position.min(5);
@@ -7793,7 +7850,11 @@ fn end_turn_disable_moves(state: &DoublesState, rng: &mut Gen5Rng) {
         if a.encore.is_some() {
             hs.push((4294967296, speed, 2));
         }
-        // TODO(PS parity): torment / choicelock / belch /
+        // Torment `onDisableMove` (PS data/moves.ts torment condition).
+        if a.torment {
+            hs.push((4294967296, speed, 2));
+        }
+        // TODO(PS parity): choicelock / belch /
         // stuffcheeks volatiles, Imprison `onFoeDisableMove`.
         if ss.team_member(xidx).ability == Abilities::GORILLATACTICS {
             hs.push((4294967296, speed, 7));

@@ -452,6 +452,8 @@ function stepPSBattle(battleSeed, teamA, teamB, controller, onInit, onTurn) {
       )
       .join(', ');
 
+  // A move whose target the player does not choose (self, spread, field).
+  const NO_TARGET = 0;
   const moveSlotOf = (p, m) => (m ? p.moveSlots.findIndex((ms) => ms.id === m.id) : -1);
 
   const moveActionsFor = (sideIdx) => {
@@ -482,7 +484,11 @@ function stepPSBattle(battleSeed, teamA, teamB, controller, onInit, onTurn) {
           return t;
         }
         default:
-          return [];
+          // self, spread (allAdjacent / allAdjacentFoes), side / field (all,
+          // allySide, foeSide, allies, allyTeam), randomNormal, scripted:
+          // the player picks no target; PS resolves it. NO_TARGET means the
+          // choice is sent without a target argument.
+          return [NO_TARGET];
         }
       };
       const valid = data.moves
@@ -495,17 +501,19 @@ function stepPSBattle(battleSeed, teamA, teamB, controller, onInit, onTurn) {
         const idx = Math.max(data.moves.findIndex((m) => m.id === 'struggle'), 0);
         const m = data.moves[idx];
         const t = targetsFor(m && m.target);
+        const target = t.length ? t[controller.random(t.length)] : NO_TARGET;
         return {
           kind: 'move',
           slot: Math.max(moveSlotOf(p, m), 0),
           choiceIdx: idx,
           struggle: !!m && m.id === 'struggle',
-          target: t.length ? t[controller.random(t.length)] : 0,
-          hasTarget: t.length > 0,
+          target,
+          hasTarget: target !== NO_TARGET,
         };
       }
       const pick = valid[controller.random(valid.length)];
       const t = targetsFor(pick.m.target);
+      const target = t[controller.random(t.length)];
       return {
         kind: 'move',
         // `slot` is the pokemon's real move slot (what the engine uses);
@@ -513,8 +521,8 @@ function stepPSBattle(battleSeed, teamA, teamB, controller, onInit, onTurn) {
         // locked move during Dig / Outrage / recharge turns.
         slot: Math.max(moveSlotOf(p, pick.m), 0),
         choiceIdx: pick.i,
-        target: t[controller.random(t.length)],
-        hasTarget: true,
+        target,
+        hasTarget: target !== NO_TARGET,
       };
     });
   };

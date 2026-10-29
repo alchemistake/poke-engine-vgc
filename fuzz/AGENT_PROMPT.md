@@ -332,7 +332,8 @@ When the fuzzer needs a mechanic:
   and the generated tables `src/doubles/species_types.rs`,
   `src/doubles/species_weights.rs`, `src/doubles/move_targets.rs` (guard check 2);
 - regenerate or bulk-rewrite `src/choices.rs` (guard check 3);
-- lower or hand-edit `fuzz/SCORE` (only `fuzz/guard.sh --update` raises it);
+- lower or hand-edit `fuzz/SCORE` (only `fuzz/guard.sh --update` raises it;
+  only the user may reset it, e.g. after a fuzzer change that widens coverage);
 - commit with `--no-verify`, commit to `main`, force-push, or rewrite history;
 - change the comparison in `fuzz/fuzz.js` to hide a difference.
 

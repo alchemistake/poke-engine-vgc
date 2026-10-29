@@ -127,6 +127,13 @@ pub struct ActiveSlot {
     /// `dragoncheer` volatile: `Some(hasDragonType)` fixed at start
     /// (crit ratio +2 if Dragon, else +1). PS data/moves.ts dragoncheer.
     pub dragon_cheer: Option<bool>,
+    /// PS `pokemon.lastMove`: the last move this pokemon used (Encore).
+    pub last_move: Option<crate::choices::Choices>,
+    /// `glaiverush` volatile: moves against it always hit and deal x2 damage
+    /// until its holder next tries to move (PS data/moves.ts glaiverush).
+    pub glaive_rush: bool,
+    /// `encore` volatile: the forced move and remaining duration.
+    pub encore: Option<(crate::choices::Choices, u8)>,
     /// `roost` volatile (duration 1): the pokemon's types before Flying was
     /// filtered out (`onType`); restored at residual / switch-out / faint.
     pub roost_orig: Option<(PokemonType, PokemonType)>,
@@ -233,6 +240,9 @@ impl ActiveSlot {
             attract: None,
             leech_seed: None,
             dragon_cheer: None,
+            last_move: None,
+            glaive_rush: false,
+            encore: None,
             roost_orig: None,
             aqua_ring: false,
             counter_vol: None,
@@ -416,6 +426,10 @@ pub struct DoublesState {
     /// resolves faints after the loop, so its per-hit `eachEvent` still sorts
     /// them: (side, slot, team index).
     pub unresolved_faints: Vec<(crate::doubles::state::Side, usize, PokemonIndex)>,
+    /// Encore `onStart` (champions): the target's queued move must become
+    /// this move (`queue.changeAction`), applied by the battle loop:
+    /// (side, slot, move).
+    pub queue_change: Option<(Side, usize, crate::choices::Choices)>,
 }
 
 impl DoublesState {
@@ -933,6 +947,7 @@ impl DoublesState {
         }
         let state = Self {
             last_move: None,
+            queue_change: None,
             side_one,
             side_two,
             weather: StateWeather {

@@ -478,6 +478,87 @@ fn ignores_evasion(ability: Abilities, mv: Choices) -> bool {
         )
 }
 
+/// PS `queue.changeAction` (Encore): replace the pending move of the pokemon
+/// in `(side, slot)` with `mv` unless it already queues `mv`.
+/// PS sim/battle-queue.ts changeAction / insertChoice / resolveAction.
+fn apply_queue_change(
+    state: &mut DoublesState,
+    rng: &mut Gen5Rng,
+    actions: &mut Vec<Action>,
+    from: usize,
+    side: Side,
+    slot: usize,
+    mv: Choices,
+) {
+    let Some(idx) = state.side(side).active[slot].pokemon_index else { return };
+    let Some(j) = (from..actions.len()).find(|&j| actions[j].side == side && actions[j].pokemon_index == idx) else {
+        return;
+    };
+    if actions[j].choice.move_id == mv {
+        return;
+    }
+    actions.remove(j);
+    let p = state.side(side).team_member(idx);
+    let mi = [&p.moves.m0, &p.moves.m1, &p.moves.m2, &p.moves.m3]
+        .iter()
+        .position(|m| m.id == mv)
+        .unwrap_or(0);
+    let mut choice = move_by_index(p, mi).choice.clone();
+    choice.move_index = match mi {
+        0 => crate::state::PokemonMoveIndex::M0,
+        1 => crate::state::PokemonMoveIndex::M1,
+        2 => crate::state::PokemonMoveIndex::M2,
+        _ => crate::state::PokemonMoveIndex::M3,
+    };
+    if let Some(cat) = champions_move_category(choice.move_id) {
+        choice.category = cat;
+        choice.base_power = 0.0;
+    }
+    let boost = (p.ability == Abilities::PRANKSTER && choice.category == MoveCategory::Status) as i8;
+    update_speed(state);
+    let mut a = Action {
+        side,
+        slot,
+        pokemon_index: idx,
+        priority: choice.priority + boost,
+        choice,
+        speed: effective_speed(state, side, slot).unwrap_or(0),
+        target: 0,
+        target_loc: 0,
+        fractional: 0,
+    };
+    // `resolveAction`: no target location -> `getRandomTarget` (a draw), then
+    // `getActionSpeed` -> `getTarget`.
+    if let Some((ts, tsl)) = ps_get_target(state, rng, &a) {
+        a.target_loc = if ts == a.side { -(tsl as i8 + 1) } else { tsl as i8 + 1 };
+        a.target = tsl;
+    }
+    let _ = ps_get_target(state, rng, &a);
+    // `insertChoice`: first / last index among the queue by comparePriority.
+    let rest = &actions[from..];
+    let mut first: Option<usize> = None;
+    let mut last: Option<usize> = None;
+    for (k, cur) in rest.iter().enumerate() {
+        let cmp = (cur.priority, cur.speed).cmp(&(a.priority, a.speed)); // new first when cur is "less"
+        // compared(new, cur) <= 0 <=> new sorts before or ties with cur
+        if cmp != std::cmp::Ordering::Greater && first.is_none() {
+            first = Some(k);
+        }
+        if cmp == std::cmp::Ordering::Less {
+            last = Some(k);
+            break;
+        }
+    }
+    match first {
+        None => actions.push(a),
+        Some(f) => {
+            let l = last.unwrap_or(rest.len());
+            let k = if f == l { f } else { f + rng.label("speed tie (queue insert)").random((l - f) as u32 + 1) as usize };
+            actions.insert(from + k, a);
+        }
+    }
+}
+
 /// Run a doubles battle driven by explicit per-turn controller choices
 /// (fuzz testing). The same choices are fed to pokemon-showdown; the two
 /// simulators must produce identical state.
@@ -782,6 +863,12 @@ pub fn run_battle_fuzz(
                 }
             }
             execute_action(state, rng, &action, &mut move_order, &actions[i..]);
+            // Encore `onStart` -> `queue.changeAction(target, {choice: 'move', moveid})`:
+            // cancel the target's queued move and insert the encored one
+            // (`resolveAction` draws a random target; `insertChoice` shuffles ties).
+            if let Some((es, esl, em)) = state.queue_change.take() {
+                apply_queue_change(state, rng, &mut actions, i, es, esl, em);
+            }
             // Phazing (PS `runAction`: `forceSwitchFlag` -> `dragIn`) happens
             // before faints are resolved.
             drag_in_all(state, rng);
@@ -1179,6 +1266,10 @@ fn execute_action(
     execute_action_inner(state, rng, action, move_order, will_act, queue);
     if move_order.len() > order_len {
         state.last_move = Some(action.choice.move_id);
+        // PS `pokemon.moveUsed`: `lastMove` (Encore).
+        if state.side(action.side).active[action.slot].pokemon_index.is_some() {
+            state.side_mut(action.side).active[action.slot].last_move = Some(action.choice.move_id);
+        }
     }
     // charge `onAfterMove` / `onMoveAborted`: an Electric move uses it up.
     if action.choice.move_type == PokemonType::ELECTRIC && action.choice.move_id != Choices::CHARGE {
@@ -1244,6 +1335,9 @@ fn execute_action_inner(
     let side = action.side;
     let slot = action.slot;
     let idx = action.pokemon_index;
+    // Glaive Rush `onBeforeMove` (priority 100): the drawback ends when the
+    // holder tries to move.
+    state.side_mut(side).active[slot].glaive_rush = false;
     // Illusion (`onBeforeSwitchIn`): shown as the last unfainted pokemon after
     // it in `side.pokemon` until a damaging hit ends it.
     let name = {
@@ -1926,7 +2020,8 @@ fn execute_action_inner(
         spread_count = cands.len();
         let damaging = matches!(choice.category, MoveCategory::Physical | MoveCategory::Special);
         for (ts, tsl) in cands {
-            if state.side(ts).active[tsl].protected && choice.priority <= 0 {
+            // PS checkMoveBypassesProtect: only moves with the `protect` flag are blocked.
+            if state.side(ts).active[tsl].protected && choice.flags.protect {
                 continue;
             }
             let d = state.side(ts).slot_pokemon(tsl).unwrap().clone();
@@ -2022,7 +2117,7 @@ fn execute_action_inner(
     if !is_self
         && !is_field
         && state.side(target_side).active[target_slot].protected
-        && choice.priority <= 0
+        && choice.flags.protect
     {
         // Contact penalties of the protect variants (`onTryHit`).
         if choice.flags.contact {
@@ -2298,6 +2393,10 @@ fn execute_action_inner(
             let ignore_eva = ignores_evasion(state.side(side).team_member(idx).ability, choice.move_id);
             let st = &*state;
             spread_list.retain(|&(ts, tsl)| {
+                // Glaive Rush `onAccuracy`: moves against the holder always hit.
+                if st.side(ts).active[tsl].glaive_rush {
+                    return true;
+                }
                 // No Guard `onAnyAccuracy`: no roll when either side has it.
                 if user_no_guard
                     || st.side(ts).slot_pokemon(tsl).map(|p| p.ability == Abilities::NOGUARD).unwrap_or(false)
@@ -2321,6 +2420,7 @@ fn execute_action_inner(
     } else if !choice.always_hit
         && move_ty != "all"
         && !toxic_hits
+        && !state.side(target_side).active[target_slot].glaive_rush
         && !weather_guaranteed
         && choice.accuracy > 0.0
         && !(state.side(side).team_member(idx).ability == Abilities::NOGUARD
@@ -3162,6 +3262,46 @@ fn execute_action_inner(
             }
         }
 
+        // Encore (champions override, data/mods/champions/moves.ts): `onStart`
+        // fails without a usable `lastMove` (or for `failencore` moves / 0 PP);
+        // otherwise the target's queued move is replaced (`changeAction`), or
+        // the duration grows by one if it has no move left this turn.
+        if choice.move_id == Choices::ENCORE && ti == 0 && !move_failed {
+            let t = &state.side(target_side).active[target_slot];
+            let tidx = t.pokemon_index;
+            let last = t.last_move;
+            let fail_ids = [
+                Choices::BLAZINGTORQUE, Choices::COMBATTORQUE, Choices::DYNAMAXCANNON, Choices::ENCORE,
+                Choices::MAGICALTORQUE, Choices::METRONOME, Choices::MIMIC, Choices::NOXIOUSTORQUE,
+                Choices::SKETCH, Choices::WICKEDTORQUE, Choices::ASSIST, Choices::COPYCAT, Choices::MEFIRST,
+                Choices::MIRRORMOVE, Choices::NATUREPOWER, Choices::SLEEPTALK, Choices::STRUGGLE,
+                Choices::TRANSFORM,
+            ];
+            let usable = match (tidx, last) {
+                (Some(ti_), Some(m)) if !fail_ids.contains(&m) => {
+                    let p = state.side(target_side).team_member(ti_);
+                    [&p.moves.m0, &p.moves.m1, &p.moves.m2, &p.moves.m3]
+                        .iter()
+                        .any(|mv| mv.id == m && mv.pp > 0)
+                }
+                _ => false,
+            };
+            if t.encore.is_some() || !usable {
+                move_failed = true;
+            } else {
+                let m = last.unwrap();
+                let tidx = tidx.unwrap();
+                let will_move = queue
+                    .iter()
+                    .any(|q| q.side == target_side && q.pokemon_index == tidx);
+                state.side_mut(target_side).active[target_slot].encore =
+                    Some((m, if will_move { 3 } else { 4 }));
+                if will_move {
+                    state.queue_change = Some((target_side, target_slot, m));
+                }
+            }
+        }
+
         // Dragon Cheer: `addVolatile('dragoncheer')` on the ally; `onStart`
         // fails if the target has Focus Energy (or already has the volatile).
         if choice.move_id == Choices::DRAGONCHEER && ti == 0 {
@@ -3610,6 +3750,10 @@ fn execute_action_inner(
 
         // DamagingHit (after secondaries, PS `spreadMoveHit`).
         if hit_damage.is_some() {
+            // Glaive Rush `self.volatileStatus`.
+            if choice.move_id == Choices::GLAIVERUSH && ti == 0 && state.side(side).team_member(idx).hp > 0 {
+                state.side_mut(side).active[slot].glaive_rush = true;
+            }
             // Double Shock / Burn Up `self.onHit`: the user loses the type
             // (`setType(types.map(t => t === X ? '???' : t))`).
             if matches!(choice.move_id, Choices::DOUBLESHOCK | Choices::BURNUP) && ti == 0 {
@@ -4340,7 +4484,15 @@ fn compute_hit_damage(
             light_screen: attacker.ability != Abilities::INFILTRATOR
                 && (state.side(target_side).side_conditions.light_screen > 0
                     || state.side(target_side).side_conditions.aurora_veil > 0),
-            defender_mod: crate::engine::mechanics::defender_damage_modifier(defender, choice),
+            defender_mod: {
+                let m = crate::engine::mechanics::defender_damage_modifier(defender, choice);
+                // Glaive Rush `onSourceModifyDamage`: x2 (chained).
+                if state.side(target_side).active[target_slot].glaive_rush {
+                    (m * 8192 + 2048) >> 12
+                } else {
+                    m
+                }
+            },
             guts: attacker.ability == Abilities::GUTS,
             attack_mod: {
             let m = crate::engine::mechanics::attacker_stat_modifier(attacker, choice);
@@ -4511,6 +4663,28 @@ fn contact_abilities(
     });
     let Some(def_idx) = def_idx else { return };
     let ability = state.side(target_side).team_member(def_idx).ability;
+    // Aftermath `onDamagingHit`: if the holder fainted, the contact attacker
+    // loses baseMaxhp / 4. Damp (any active) blocks it (`onAnyDamage`) unless
+    // the attacker ignores breakable abilities. PS data/abilities.ts aftermath / damp.
+    if ability == Abilities::AFTERMATH {
+        if state.side(target_side).team_member(def_idx).hp <= 0 {
+            let attacker = state.side(side).team_member(idx).clone();
+            let damped = [Side::One, Side::Two].iter().any(|&sd| {
+                (0..2).any(|sl| {
+                    state.side(sd).slot_pokemon(sl).map(|p| {
+                        p.hp > 0
+                            && p.ability == Abilities::DAMP
+                            && !crate::engine::abilities::ignores_target_ability(&attacker, choice, &p.ability)
+                    }).unwrap_or(false)
+                })
+            });
+            if !damped {
+                let maxhp = attacker.maxhp;
+                apply_damage(state, side, slot, (maxhp / 4).max(1));
+            }
+        }
+        return;
+    }
     // Cute Charm `onDamagingHit`: `randomChance(3, 10)`, then the attacker gets
     // the `attract` volatile (needs opposite genders; fails if already
     // infatuated). PS data/abilities.ts cutecharm, data/conditions.ts attract.
@@ -5054,6 +5228,19 @@ fn apply_on_switch_abilities(
         .collect();
     for fidx in targets {
         let before = state.side(foe).team_boosts[fidx as usize].atk;
+        // Intimidate immunity (`onTryBoost`, effect.name === 'Intimidate'):
+        // Own Tempo / Oblivious / Inner Focus / Scrappy (data/abilities.ts);
+        // Guard Dog turns it into +1 Atk.
+        if ability == Abilities::INTIMIDATE {
+            match state.side(foe).team_member(fidx).ability {
+                Abilities::OWNTEMPO | Abilities::OBLIVIOUS | Abilities::INNERFOCUS | Abilities::SCRAPPY => continue,
+                Abilities::GUARDDOG => {
+                    apply_boosts(state, foe, fidx, &StatBoosts { attack: 1, ..Default::default() }, false);
+                    continue;
+                }
+                _ => {}
+            }
+        }
         apply_boosts(state, foe, fidx, &drop, true);
         // Rattled `onAfterBoost`: +1 Speed after an Intimidate Atk drop.
         if ability == Abilities::INTIMIDATE
@@ -5266,6 +5453,7 @@ enum ResidualKind {
     Curse(Side, usize),
     LeechSeed(Side, usize),
     Roost(Side, usize),
+    Encore(Side, usize),
     /// `perishsong` countdown (order 24).
     Perish(Side, usize),
     /// futuremove slot condition (order 3): the delayed hit.
@@ -5462,6 +5650,9 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             }
             if a.cursed {
                 push(12, speed, 2, ResidualKind::Curse(side, slot));
+            }
+            if a.encore.is_some() {
+                push(16, speed, 2, ResidualKind::Encore(side, slot));
             }
             if a.roost_orig.is_some() {
                 push(25, speed, 2, ResidualKind::Roost(side, slot));
@@ -5830,6 +6021,28 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
                     }
                 }
                 apply_boosts(state, side, idx, &b, false);
+            }
+            ResidualKind::Encore(side, slot) => {
+                // `fieldEvent`: duration--; at 0 the volatile ends. `onResidual`:
+                // ends early when the encored move is out of PP.
+                let Some((m, d)) = state.side(side).active[slot].encore else { continue };
+                if state.side(side).slot_pokemon(slot).map(|p| p.hp <= 0).unwrap_or(true) {
+                    continue;
+                }
+                if d <= 1 {
+                    state.side_mut(side).active[slot].encore = None;
+                    continue;
+                }
+                state.side_mut(side).active[slot].encore = Some((m, d - 1));
+                let out_of_pp = {
+                    let p = state.side(side).slot_pokemon(slot).unwrap();
+                    ![&p.moves.m0, &p.moves.m1, &p.moves.m2, &p.moves.m3]
+                        .iter()
+                        .any(|mv| mv.id == m && mv.pp > 0)
+                };
+                if out_of_pp {
+                    state.side_mut(side).active[slot].encore = None;
+                }
             }
             ResidualKind::Roost(side, slot) => {
                 // duration 1: the volatile ends here and the types come back.

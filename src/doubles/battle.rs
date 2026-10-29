@@ -41,6 +41,9 @@ struct Action {
     fractional: i8,
     /// PS `queue.prioritizeAction` (`order = 3`): sorts before every move.
     prioritized: bool,
+    /// A locked move that is not one of the user's own (Copycat -> Dive):
+    /// no PP is deducted (PS `deductPP` finds no matching move slot).
+    no_pp: bool,
 }
 
 impl Action {
@@ -534,6 +537,7 @@ fn apply_queue_change(
         target_loc: 0,
         fractional: 0,
         prioritized: false,
+        no_pp: false,
     };
     // `resolveAction`: no target location -> `getRandomTarget` (a draw), then
     // `getActionSpeed` -> `getTarget`.
@@ -740,6 +744,19 @@ pub fn run_battle_fuzz(
                                 };
                                 (choice, base)
                             };
+                            // A locked charge move that is not the chosen one (Dive
+                            // called by Copycat): PS runs the locked move instead.
+                            let (mv, no_pp) = match s.active[slot].charging {
+                                Some((m, _)) if m != mv.move_id && !*struggle
+                                    && ![&p.moves.m0, &p.moves.m1, &p.moves.m2, &p.moves.m3].iter().any(|x| x.id == m) =>
+                                {
+                                    match MOVES.get(&m).cloned() {
+                                        Some(l) => (l, true),
+                                        None => (mv, false),
+                                    }
+                                }
+                                _ => (mv, false),
+                            };
                             let charge_id = mv.move_id;
                             actions.push(Action {
                                 side,
@@ -767,6 +784,7 @@ pub fn run_battle_fuzz(
                                 },
                                 fractional: 0,
                                 prioritized: false,
+                                no_pp,
                             });
                         }
                     }
@@ -1456,7 +1474,7 @@ fn execute_action_inner(
         ))
     };
 
-    let external = state.side(side).active[slot].external_call;
+    let external = state.side(side).active[slot].external_call || action.no_pp;
     // Deduct PP (pokemon-showdown deducts before the move runs).
     if !external {
         let s = state.side_mut(side);
@@ -1529,9 +1547,8 @@ fn execute_action_inner(
                 p.sleep_turns -= 1;
                 if p.sleep_turns <= 0 {
                     p.status = PokemonStatus::NONE;
-                } else if move_id != Choices::SNORE {
-                    // Snore is `sleepUsable`.
-                    // TODO(PS parity): Sleep Talk (calls a random move).
+                } else if move_id != Choices::SNORE && move_id != Choices::SLEEPTALK {
+                    // Snore / Sleep Talk are `sleepUsable`.
                     // PS logs `|cant|`, not `|move|`: not in the move order.
                     return;
                 }
@@ -1562,6 +1579,11 @@ fn execute_action_inner(
 
     // Flinched by a previous move's secondary: cannot act. No draw.
     if state.side(side).active[slot].flinched {
+        return;
+    }
+
+    // Disable `onBeforeMove` (priority 7): the disabled move cannot be used.
+    if !external && state.side(side).active[slot].disabled.map(|(m, _)| m) == Some(action.choice.move_id) {
         return;
     }
 
@@ -1818,7 +1840,12 @@ fn execute_action_inner(
                 };
                 state.side_mut(side).active[slot].charging =
                     Some((choice.move_id, turns.saturating_sub(1)));
-                state.side_mut(side).active[slot].charge_target = action.target;
+                // A Copycat-called charge move has no chosen target: keep the
+                // randomly resolved one (PS `lockedMoveTargetLoc`).
+                state.side_mut(side).active[slot].charge_target = match resolved {
+                    Some((ts, tsl)) if ts != side && action.target_loc == 0 => tsl,
+                    _ => action.target,
+                };
                 push_order();
                 return;
             }
@@ -1856,8 +1883,8 @@ fn execute_action_inner(
             push_order();
             return;
         }
-        // Snore `onTry`: fails unless the user is asleep (or has Comatose).
-        Choices::SNORE
+        // Snore / Sleep Talk `onTry`: fails unless the user is asleep (or has Comatose).
+        Choices::SNORE | Choices::SLEEPTALK
             if state.side(side).team_member(idx).status != PokemonStatus::SLEEP
                 && state.side(side).team_member(idx).ability != Abilities::COMATOSE =>
         {
@@ -2239,6 +2266,20 @@ fn execute_action_inner(
         }
     }
 
+    // `hitStepBreakProtect` (PS sim/battle-actions.ts): `breaksProtect` moves
+    // remove the target's protection volatiles (and its `stall` counter).
+    if matches!(
+        choice.move_id,
+        Choices::FEINT | Choices::PHANTOMFORCE | Choices::SHADOWFORCE | Choices::HYPERSPACEFURY | Choices::HYPERSPACEHOLE
+    ) && !is_self
+        && !is_field
+        && state.side(target_side).active[target_slot].protected
+    {
+        let t = &mut state.side_mut(target_side).active[target_slot];
+        t.protected = false;
+        t.stall = None;
+    }
+
     // Protect: incoming non-priority moves fail before the accuracy roll.
     // (Charge turns happen before this check: Protect does not block a
     // charging Dig, only its hitting turn.)
@@ -2294,6 +2335,13 @@ fn execute_action_inner(
         false,
         false,
     ) > 0.0
+        // `damageCallback` moves (Endeavor, ...) are attacks: type immunity applies.
+        || (!is_self
+            && !is_field
+            && state.side(target_side).slot_pokemon(target_slot).is_some_and(|d| {
+                choice.category != MoveCategory::Status
+                    && choice.move_id.fixed_damage(state.side(side).team_member(idx), d).is_some()
+            }))
     {
         1.0
     } else {
@@ -2444,6 +2492,17 @@ fn execute_action_inner(
         let user_hp = state.side(side).team_member(idx).hp;
         let target_hp = state.side(target_side).slot_pokemon(target_slot).map(|p| p.hp).unwrap_or(0);
         if user_hp >= target_hp {
+            state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+            push_order();
+            return;
+        }
+    }
+
+    // Disable `onTryHit`: fails (before the accuracy roll) unless the target has
+    // used a (non-Struggle) move. PS data/moves.ts disable.
+    if choice.move_id == Choices::DISABLE && !is_self && !is_field {
+        let last = state.side(target_side).active[target_slot].last_move;
+        if matches!(last, None | Some(Choices::STRUGGLE)) {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
             push_order();
             return;
@@ -2715,6 +2774,8 @@ fn execute_action_inner(
       for (ti, &(hts, htsl)) in hit_targets.iter().enumerate() {
         target_side = hts;
         target_slot = htsl;
+        // The target as it was when the hit started (a KO clears the slot).
+        let hit_target_pi = state.side(hts).active[htsl].pokemon_index;
         // Damage this hit dealt (PS `damagedTargets`), for DamagingHit.
         let mut hit_damage: Option<i16> = None;
         if std::env::var("PE_DEBUG_DMG").is_ok() {
@@ -3542,6 +3603,33 @@ fn execute_action_inner(
             }
         }
 
+        // Disable `condition.onStart`: fails if already disabled or the last
+        // move is out of PP; the duration drops by one when the target still
+        // has a queued action. PS data/moves.ts disable.
+        if choice.move_id == Choices::DISABLE && ti == 0 {
+            let t = &state.side(target_side).active[target_slot];
+            let tidx = t.pokemon_index;
+            let last = t.last_move;
+            let no_pp = match (tidx, last) {
+                (Some(ti_), Some(m)) => {
+                    let p = state.side(target_side).team_member(ti_);
+                    [&p.moves.m0, &p.moves.m1, &p.moves.m2, &p.moves.m3]
+                        .iter()
+                        .any(|mv| mv.id == m && mv.pp <= 0)
+                }
+                _ => false,
+            };
+            if t.disabled.is_some() || last.is_none() || no_pp {
+                move_failed = true;
+            } else {
+                let will_move = queue
+                    .iter()
+                    .any(|q| q.side == target_side && Some(q.pokemon_index) == tidx);
+                state.side_mut(target_side).active[target_slot].disabled =
+                    Some((last.unwrap(), if will_move { 4 } else { 5 }));
+            }
+        }
+
         // Dragon Cheer: `addVolatile('dragoncheer')` on the ally; `onStart`
         // fails if the target has Focus Energy (or already has the volatile).
         if choice.move_id == Choices::DRAGONCHEER && ti == 0 {
@@ -3634,6 +3722,23 @@ fn execute_action_inner(
                 let pm = state.side_mut(side).team_member_mut(idx);
                 pm.sleep_turns = 3;
                 pm.hp = pm.maxhp;
+            }
+        }
+
+        // Sleep Talk `onHit` (PS data/moves.ts sleeptalk): `sample` one of the
+        // user's moves without `nosleeptalk` / `charge`, then `useMove` it.
+        if choice.move_id == Choices::SLEEPTALK && ti == 0 {
+            const SKIP: &[&str] = &["beakblast", "belch", "blazingtorque", "celebrate", "combattorque", "dynamaxcannon", "freezeshock", "holdhands", "iceburn", "magicaltorque", "metronome", "mimic", "noxioustorque", "shadowforce", "shelltrap", "sketch", "wickedtorque", "assist", "bide", "bounce", "chatter", "copycat", "dig", "dive", "fly", "focuspunch", "geomancy", "mefirst", "mirrormove", "naturepower", "phantomforce", "razorwind", "skullbash", "skyattack", "skydrop", "sleeptalk", "solarbeam", "solarblade", "struggle", "uproar"];
+            let p = state.side(side).team_member(idx);
+            let cands: Vec<Choices> = [&p.moves.m0, &p.moves.m1, &p.moves.m2, &p.moves.m3]
+                .iter()
+                .map(|m| m.id)
+                .filter(|id| *id != Choices::NONE && !SKIP.contains(&id.to_string().to_lowercase().as_str()))
+                .collect();
+            if cands.is_empty() {
+                move_failed = true;
+            } else {
+                copy_move = Some(cands[rng.label("sample").random(cands.len() as u32) as usize]);
             }
         }
 
@@ -3896,7 +4001,22 @@ fn execute_action_inner(
         // upstream table approximates differently): same draws as PS.
         // Sheer Force `onModifyMove`: the secondaries are deleted (no rolls).
         let sheer_force = state.side(side).team_member(idx).ability == Abilities::SHEERFORCE && has_secondaries(choice);
-        let custom_secondary = if sheer_force { true } else { match choice.move_id {
+        // Shield Dust `onModifySecondaries` (PS data/abilities.ts shielddust,
+        // breakable): the target's non-`self` secondaries are filtered out, so
+        // they make no rolls.
+        let shield_dust = (side, slot) != (target_side, target_slot)
+            && hit_target_pi
+                .map(|ti| state.side(target_side).team_member(ti))
+                .map(|p| {
+                    p.ability == Abilities::SHIELDDUST
+                        && !crate::engine::abilities::ignores_target_ability(
+                            state.side(side).team_member(idx),
+                            choice,
+                            &p.ability,
+                        )
+                })
+                .unwrap_or(false);
+        let custom_secondary = if sheer_force || shield_dust { true } else { match choice.move_id {
             Choices::TRIATTACK | Choices::DIRECLAW => {
                 // PS `secondary.onHit`: `this.sample([...])` -> random(3).
                 let chance = if choice.move_id == Choices::TRIATTACK { 20 } else { 30 };
@@ -3947,8 +4067,11 @@ fn execute_action_inner(
         } };
 
         // Secondary effects (flinch/burn/poison/boosts after a hit).
-        if let Some(secs) = choice.secondaries.as_ref().filter(|_| !custom_secondary) {
+        if let Some(secs) = choice.secondaries.as_ref().filter(|_| !custom_secondary || shield_dust) {
             for sec in secs {
+                if shield_dust && sec.target != MoveTarget::User {
+                    continue;
+                }
                 if !rng.label("secondary").random_chance(sec.chance as u32, 100) {
                     continue;
                 }
@@ -6846,8 +6969,19 @@ fn end_of_turn(state: &mut DoublesState, rng: &mut Gen5Rng, pending_switches: &[
     if !pending_switches.is_empty() {
         update_speed(state);
     }
+    // PS `switchIn` -> `queue.insertChoice(runSwitch)`: a tie with an already
+    // queued `runSwitch` (equal speed) draws `random(firstIndex, lastIndex + 1)`.
+    let mut run_switch_speeds: Vec<i16> = Vec::new();
     for (side, slot, position) in pending_switches {
         switch_in(state, *side, *slot, *position);
+        update_speed(state);
+        if let Some(sp) = effective_speed(state, *side, *slot) {
+            let ties = run_switch_speeds.iter().filter(|&&x| x == sp).count();
+            if ties > 0 {
+                let _ = rng.label("speed tie (queue insert)").random(ties as u32 + 1);
+            }
+            run_switch_speeds.push(sp);
+        }
     }
     if !pending_switches.is_empty() {
         each_event_update(state, rng);
@@ -6950,6 +7084,7 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
                             target_loc: 0,
                             fractional: 0,
                             prioritized: false,
+                            no_pp: false,
                         });
                     }
                 }

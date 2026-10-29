@@ -29,13 +29,14 @@ cargo build --release --features champions --no-default-features
 
 **The cycle:**
 1. **Find the first failure.**
-   `node fuzz/fuzz.js --seed 0 --count 100` (runs on all CPU cores; each
-   passing battle is checked with one engine run; under a second for 100)
-   No output and exit 0 means all 100 pass: stop and report.
+   `node fuzz/fuzz.js --seed 0 --count 1000` (about a second; see "Sweep
+   speed" below). No output and exit 0 means all 1000 pass: stop and report.
    Otherwise copy the `reproduce:` line (e.g. `--seed 2 --count 1`). That
    seed is the score.
-2. **Fix only that battle.** Run only its `reproduce:` command while you work;
-   do not re-run the sweep. Read the failure (section 2) and fix it (sections
+2. **Fix only that battle.** Work on its `reproduce:` command. Re-running the
+   sweep is cheap, so run it after each engine change too: a failure at a
+   LOWER seed than before means your change broke a passing battle — fix
+   that first. Read the failure (section 2) and fix it (sections
    3–5). After each engine change:
    `cargo build --release --features champions --no-default-features` and run
    `reproduce:` again. Each change must move the failure later (a later turn or
@@ -68,7 +69,15 @@ is a stale build: rebuild. All feature builds share
 generation's data. gen1–3 builds are out of scope (ignore them).
 
 **Progress lives in git and the score, not in notes.** To see where the
-work stands, run the sweep (step 1). Known unimplemented mechanics are
+work stands, run the sweep (step 1). **Sweep speed (automatic, nothing to configure):** the sweep runs on all
+CPU cores, checks passing battles with one engine call per batch, and
+caches each battle's pokemon-showdown side in `fuzz/work/ps-cache/` (it never
+depends on the engine, so engine changes and rebuilds keep the cache). Only
+a failing battle is replayed live, turn by turn, for the report. If a result
+ever looks impossible, re-run with `--no-cache` (and `--jobs 1`) to rule the
+cache out; `--verbose` turns all of this off.
+
+Known unimplemented mechanics are
 `// TODO(PS parity):` comments in the code: `grep -rn "TODO(PS parity)" src/doubles src/genx/mechanics.rs`.
 Check them first: your failure may already be described there.
 

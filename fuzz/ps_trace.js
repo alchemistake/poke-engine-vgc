@@ -94,11 +94,45 @@ B.getRandomTarget = function (pokemon, move) {
   return r;
 };
 
+// Speed sorts that drew (a tie): print the sorted list with its sort keys so
+// the tied entries can be compared with the engine's (PE_DEBUG_RES=1 /
+// PE_DEBUG_SPEED=1). `*` marks the entries that were in a shuffled tie group.
+let drawCount = 0;
+const sortItem = (h) => {
+  if (h && h.effect !== undefined) {
+    const holder = h.effectHolder && h.effectHolder.name ? ` (${h.effectHolder.name})` : '';
+    const eff = h.effect ? `${h.effect.effectType || ''} ${h.effect.name}` : '?';
+    return `${eff}${holder}  order=${h.order ?? '-'} prio=${h.priority ?? 0} speed=${h.speed ?? 0} sub=${h.subOrder ?? 0}`;
+  }
+  if (h && h.choice) {
+    const mv = h.move ? ` ${h.move.name}` : '';
+    return `action ${h.choice}${h.pokemon ? ` ${h.pokemon.name}` : ''}${mv}  order=${h.order ?? '-'} prio=${h.priority ?? 0} speed=${h.speed ?? 0}`;
+  }
+  if (h && h.side && h.species) return `${h.name}  speed=${h.speed}`;
+  return name(h);
+};
+const origSpeedSort = B.speedSort;
+B.speedSort = function (list, comparator) {
+  const before = drawCount;
+  const r = origSpeedSort.call(this, list, comparator);
+  if (show(this) && drawCount > before) {
+    const cmp = comparator || this.comparePriority;
+    const caller = ((new Error().stack || '').split('\n')[2].match(/at (?:[\w$]+\.)?([\w$<>]+) \(/) || [])[1];
+    out.push(`    speedSort tie in ${caller} (${drawCount - before} draws), sorted list (* = tied):`);
+    list.forEach((h, i) => {
+      const tied = (i > 0 && cmp(list[i - 1], h) === 0) || (i + 1 < list.length && cmp(h, list[i + 1]) === 0);
+      out.push(`      ${tied ? '*' : ' '} ${sortItem(h)}`);
+    });
+  }
+  return r;
+};
+
 // Tag PRNG draws by purpose (reuses the fuzzer's vocabulary).
 const prng = require(path.join(PS_DIR, 'dist', 'sim', 'prng.js'));
 let current = null;
 const origNext = prng.Gen5RNG.prototype.next;
 prng.Gen5RNG.prototype.next = function () {
+  drawCount++;
   const v = origNext.call(this);
   if (current && show(current) && current.prng && current.prng.rng === this) {
     const fns = (new Error().stack || '')

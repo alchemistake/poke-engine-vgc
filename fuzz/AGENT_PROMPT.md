@@ -184,6 +184,23 @@ Find the acting Pokémon/move at draw #N in the table and decide why PS made
 thaw 1/4, both per move), `sleep duration` (`sample([2,3,3])` when sleep is
 set), contact abilities (`onDamagingHit`: Static, Flame Body, …).
 
+**Find the cause fast (do these first):**
+- The misaligned draw is often on an EARLIER turn than the `STATE MISMATCH`
+  turn, and the report's `PS battle log` shows the mismatch turn. Read the turn
+  from the draw table row (`turn 5: end of turn`) and trace THAT turn:
+  `node fuzz/ps_trace.js --seed S --turn 5`.
+- **Any `speed tie (...)` draw:** `ps_trace` prints every tied sort as
+  `speedSort tie in fieldEvent|eachEvent|runEvent|runSwitch` plus the sorted
+  list with its keys; `*` marks the tied entries, e.g.
+  `* Condition Electrify (Chandelure) order=false prio=0 speed=95 sub=2`.
+  Compare with the engine's list: `PE_DEBUG_RES=1` (residual handlers) or
+  `PE_DEBUG_SPEED=1` (move order). The entry the engine lacks (or has extra)
+  is the bug. A pokemon's `speed=` that differs from the engine's cached speed
+  is a bug too (e.g. a forme change resets PS's cached speed to the raw stat).
+- **An extra / misplaced engine draw:** every PE draw in the table ends with
+  the engine line that made it (`@battle.rs:3505`). For the full call stack:
+  `PE_DEBUG_RNG=bt ./target/release/poke-engine doubles-fuzz-battle --input fuzz/work/test-1/input.json --output /tmp/pe.json 2>&1 | grep -A1 "DRAW #63"`.
+
 **How to fix:**
 - Make the engine draw in the same place and order as PS, using the same
   method (`random(n)`, `random_chance(a, b)`, `random_range`).
@@ -249,6 +266,31 @@ set), contact abilities (`onDamagingHit`: Static, Flame Body, …).
   Ice can't be frozen, Poison/Steel can't be poisoned (`status_type_immune`).
 
 ---
+
+## 4b. Fix the class, not the seed (mandatory)
+
+Most failures are one member of a class: a volatile missing from the residual
+list, a volatile Baton Pass should copy, a check that forgets Gravity. A fix
+for the one seed leaves the rest of the class to fail later. So after you find
+the cause, before you write the fix:
+
+1. **Audit the class in PS.** `node fuzz/audit.js residual` lists every
+   Residual handler in the pool (volatiles with a `duration`, `onResidual` with
+   order / subOrder); `node fuzz/audit.js batonpass` lists what Baton Pass
+   copies (`noCopy`). For other classes, grep PS for the handler name
+   (`grep -n "onAfterSubDamage" ../pokemon-showdown/data/moves.ts`) and list
+   every entry. Fix every entry the engine is missing, not only the seed's.
+2. **Find the engine's copies.** The engine repeats some rules in many places
+   (forme change, grounded checks, handler lists). `grep` for the field or
+   helper (`grep -n "speed_cache\[" src/doubles/battle.rs`) and fix every
+   copy, or move them into one helper. Use the helper that exists:
+   `slot_grounded(p, a, state.gravity.active)` is THE grounded check (Gravity,
+   Ingrain, Smack Down, Magnet Rise); never add `|| state.gravity.active`.
+3. **Measure with the census.** `node fuzz/census.js <score> <score+10000>`
+   lists every failing seed in the range (≈20 s). Save it before the fix and
+   after; `comm -3 before.txt after.txt` shows every battle the fix repaired
+   or broke. A class fix repairs several. A seed that newly fails is a
+   regression: fix it before moving on.
 
 ## 5. Where engine code goes
 
@@ -395,10 +437,14 @@ Facts the harness already handles:
 
 | tool | use |
 |---|---|
-| `node fuzz/ps_trace.js --seed S --turn T` | PS's protocol lines, draws, modifiers and value changes for one turn |
+| `node fuzz/ps_trace.js --seed S --turn T` | PS's protocol lines, draws, modifiers, value changes, and every tied speed sort with its sort keys, for one turn |
 | `fuzz/ps_lookup.sh <id or function>` | PS source of a move / ability / condition / item (champions override first) or a sim function |
 | `PE_DEBUG_DMG=1 PE_DEBUG_RNG=1 ./target/release/poke-engine doubles-fuzz-battle --input fuzz/work/test-1/input.json --output /tmp/pe.json` | engine trace on stderr: each action, damage calc inputs, every draw |
 | `fuzz/guard.sh [--update]` | all guard rails + score; run before every commit |
+| `PE_DEBUG_RES=1 ./target/release/poke-engine doubles-fuzz-battle …` | the engine's residual handler list per turn (order / sub / speed / kind) |
+| `PE_DEBUG_RNG=bt …` | each engine draw with its engine call stack |
+| `node fuzz/census.js FROM TO` | every failing seed in a range (not only the first) |
+| `node fuzz/audit.js residual\|batonpass` | PS's full list for a mechanic class |
 | `fuzz/work/test-1/pe.json` → `prng_draw_ctx` | engine purpose of every draw (`"crit\|turn 2: B1 Weavile ICESHARD"`) |
 | `node fuzz/fuzz.js … --verbose` | full report and per-turn state, including passing turns |
 

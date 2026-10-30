@@ -53,6 +53,11 @@ impl Gen5Rng {
 
     /// Advance the LCG and return the top 32 bits of the new state.
     /// Equivalent to `Gen5RNG.next()`.
+    ///
+    /// `#[track_caller]` (here and on the wrappers below): the fuzz trace records
+    /// the engine line that drew (`@battle.rs:1234`), shown in the fuzz report's
+    /// draw table. `PE_DEBUG_RNG=bt` also prints each draw's engine call stack.
+    #[track_caller]
     pub fn next(&mut self) -> u32 {
         self.draws += 1;
         self.state = self.state.wrapping_mul(LCG_A).wrapping_add(LCG_C);
@@ -60,16 +65,22 @@ impl Gen5Rng {
         self.draw_log.push(v);
         if self.trace {
             let label = if self.label.is_empty() { "?" } else { self.label };
-            self.draw_ctx.push(format!("{}|{}", label, self.context));
+            let at = std::panic::Location::caller();
+            let file = at.file().rsplit('/').next().unwrap_or(at.file());
+            self.draw_ctx.push(format!("{}|{} @{}:{}", label, self.context, file, at.line()));
         }
         self.label = "";
-        if std::env::var("PE_DEBUG_RNG").is_ok() {
+        if let Ok(mode) = std::env::var("PE_DEBUG_RNG") {
             eprintln!("DRAW #{} {}", self.draws - 1, v);
+            if mode == "bt" {
+                eprintln!("  stack: {}", engine_stack());
+            }
         }
         v
     }
 
     /// `PRNG.random(n)` = `floor(next() * n / 2^32)`, an integer in `[0, n)`.
+    #[track_caller]
     pub fn random(&mut self, n: u32) -> u32 {
         let x = self.next() as u64;
         ((x * n as u64) >> 32) as u32
@@ -77,6 +88,7 @@ impl Gen5Rng {
 
     /// `PRNG.random(from, to)` = `floor(next() * (to - from) / 2^32) + from`,
     /// an integer in `[from, to)`.
+    #[track_caller]
     pub fn random_range(&mut self, from: usize, to: usize) -> usize {
         let x = self.next() as u64;
         let span = (to - from) as u64;
@@ -84,9 +96,37 @@ impl Gen5Rng {
     }
 
     /// `PRNG.randomChance(num, den)` = `random(den) < num`.
+    #[track_caller]
     pub fn random_chance(&mut self, num: u32, den: u32) -> bool {
         self.random(den) < num
     }
+}
+
+/// The doubles-engine functions on the current call stack, innermost first
+/// (`execute_action_body < run_battle_fuzz`), with their lines. Debug only.
+fn engine_stack() -> String {
+    let bt = std::backtrace::Backtrace::force_capture().to_string();
+    let mut out: Vec<String> = Vec::new();
+    let mut pending: Option<String> = None;
+    for line in bt.lines() {
+        let t = line.trim();
+        if let Some(rest) = t.split_once(": ").map(|x| x.1).filter(|_| t.chars().next().is_some_and(|c| c.is_ascii_digit())) {
+            pending = rest.rsplit("::").nth(0).map(|f| f.trim_end_matches(|c: char| c == '}' || c == '{').to_string());
+            if rest.contains("{{closure}}") {
+                pending = rest.rsplit("::").nth(1).map(|f| format!("{}{{closure}}", f));
+            }
+        } else if let Some(loc) = t.strip_prefix("at ") {
+            if loc.contains("src/doubles/") && !loc.contains("rng.rs") {
+                if let Some(f) = pending.take() {
+                    let file_line = loc.rsplit('/').next().unwrap_or(loc);
+                    let file_line = file_line.rsplitn(2, ':').nth(1).unwrap_or(file_line);
+                    out.push(format!("{} ({})", f, file_line));
+                }
+            }
+            pending = None;
+        }
+    }
+    out.join(" < ")
 }
 
 #[cfg(test)]

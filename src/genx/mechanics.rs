@@ -54,6 +54,9 @@ pub struct StatusContext {
     pub sleep_clause: bool,
     /// The ability of the pokemon inflicting the status (Corrosion).
     pub source_ability: Abilities,
+    /// PS `target.isGrounded()` (Misty / Electric Terrain): the engine's own
+    /// check, which knows Gravity and the slot's volatiles.
+    pub target_grounded: bool,
 }
 
 /// Whether `target` cannot get `status` (PS `setStatus` -> `runStatusImmunity`
@@ -72,7 +75,7 @@ pub fn immune_to_status(target: &Pokemon, status: &PokemonStatus, ctx: &StatusCo
 
     if target.status != PokemonStatus::NONE || target.hp <= 0 {
         true
-    } else if ctx.misty_terrain && target.is_grounded() {
+    } else if ctx.misty_terrain && ctx.target_grounded {
         true
     } else if (ctx.substitute || ctx.safeguard) && ctx.from_opponent {
         // substitute/safeguard don't block if the target is yourself (eg. rest)
@@ -93,7 +96,7 @@ pub fn immune_to_status(target: &Pokemon, status: &PokemonStatus, ctx: &StatusCo
                 target.has_type(&PokemonType::ICE) || target.ability == Abilities::MAGMAARMOR || ctx.sun
             }
             PokemonStatus::SLEEP => {
-                (ctx.electric_terrain && target.is_grounded())
+                (ctx.electric_terrain && ctx.target_grounded)
                     || [
                         Abilities::INSOMNIA,
                         Abilities::SWEETVEIL,

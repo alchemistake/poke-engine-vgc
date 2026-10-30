@@ -792,6 +792,7 @@ pub fn immune_to_status(
         from_opponent,
         sleep_clause: target_side.has_alive_non_rested_sleeping_pkmn(),
         source_ability: attacking_side.get_active_immutable().ability,
+        target_grounded: target_side.get_active_immutable().is_grounded(),
     };
     super::mechanics::immune_to_status(target_side.get_active_immutable(), status, &ctx)
 }

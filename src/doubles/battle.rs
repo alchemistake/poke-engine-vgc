@@ -2898,6 +2898,9 @@ fn execute_action_inner(
                 state.side_mut(side).active[slot].charging = None;
                 state.side_mut(side).active[slot].twoturn_fired = true;
             }
+            // PS useMoveInner `!targets.length`: `-fail` and `return false`, so
+            // `moveThisTurnResult` is false (Stomping Tantrum's doubled BP reads it).
+            state.side_mut(side).active[slot].move_result_this_turn = Some(false);
             modify_move_field_tie(state, rng);
             push_order(move_order);
             return;
@@ -3348,42 +3351,6 @@ fn execute_action_inner(
         return;
     }
 
-    // Libero / Protean (`onPrepareHit`, after the move's `onTry` and before the hit
-    // steps): once per switch-in, become the move's type. PS sim/battle-actions.ts
-    // `Try` then `PrepareHit`, so a failed `onTry` (Counter, Rest, ...) changes nothing.
-    // PS data/abilities.ts libero / protean.
-    // TODO(PS parity): Protean's champions override, Tera, Terastallized.
-    if matches!(
-        state.side(side).team_member(idx).ability,
-        Abilities::LIBERO | Abilities::PROTEAN
-    ) && !state.side(side).active[slot].protean_done
-        && choice.move_type != PokemonType::TYPELESS
-        && choice.move_id != Choices::STRUGGLE
-        // `move.callsMove` moves (Copycat, Metronome, ...) don't trigger it: the
-        // move they call does (PS data/abilities.ts protean `move.callsMove`).
-        && !matches!(
-            choice.move_id,
-            Choices::ASSIST
-                | Choices::COPYCAT
-                | Choices::MEFIRST
-                | Choices::METRONOME
-                | Choices::MIRRORMOVE
-                | Choices::NATUREPOWER
-                | Choices::SLEEPTALK
-        )
-    {
-        let pm = state.side_mut(side).team_member_mut(idx);
-        if pm.types != (choice.move_type, PokemonType::TYPELESS) {
-            let orig = pm.types;
-            pm.types = (choice.move_type, PokemonType::TYPELESS);
-            let a = &mut state.side_mut(side).active[slot];
-            if a.type_change.is_none() {
-                a.type_change = Some(orig);
-            }
-            a.protean_done = true;
-        }
-    }
-
     // Payback `basePowerCallback`: doubled unless the target is newly switched
     // in or still has a queued move (`queue.willMove(target)`).
     state.side_mut(side).active[slot].bp_double = false;
@@ -3450,6 +3417,42 @@ fn execute_action_inner(
         state.side_mut(side).active[slot].move_result_this_turn = Some(false);
         push_order(move_order);
         return;
+    }
+
+    // Libero / Protean (`onPrepareHit`, after every `onTry` failure above, before the
+    // hit steps; a failed Upper Hand / No Retreat / Stuff Cheeks / Belch changes nothing): once per switch-in, become the move's type. PS sim/battle-actions.ts
+    // `Try` then `PrepareHit`, so a failed `onTry` (Counter, Rest, ...) changes nothing.
+    // PS data/abilities.ts libero / protean.
+    // TODO(PS parity): Protean's champions override, Tera, Terastallized.
+    if matches!(
+        state.side(side).team_member(idx).ability,
+        Abilities::LIBERO | Abilities::PROTEAN
+    ) && !state.side(side).active[slot].protean_done
+        && choice.move_type != PokemonType::TYPELESS
+        && choice.move_id != Choices::STRUGGLE
+        // `move.callsMove` moves (Copycat, Metronome, ...) don't trigger it: the
+        // move they call does (PS data/abilities.ts protean `move.callsMove`).
+        && !matches!(
+            choice.move_id,
+            Choices::ASSIST
+                | Choices::COPYCAT
+                | Choices::MEFIRST
+                | Choices::METRONOME
+                | Choices::MIRRORMOVE
+                | Choices::NATUREPOWER
+                | Choices::SLEEPTALK
+        )
+    {
+        let pm = state.side_mut(side).team_member_mut(idx);
+        if pm.types != (choice.move_type, PokemonType::TYPELESS) {
+            let orig = pm.types;
+            pm.types = (choice.move_type, PokemonType::TYPELESS);
+            let a = &mut state.side_mut(side).active[slot];
+            if a.type_change.is_none() {
+                a.type_change = Some(orig);
+            }
+            a.protean_done = true;
+        }
     }
 
     // Spread moves (allAdjacentFoes / allAdjacent): PS `getMoveTargets` lists
@@ -4555,6 +4558,9 @@ fn execute_action_inner(
     // A hit that did nothing ends PS's hit loop with no `eachEvent`.
     // TODO(PS parity): other failing status effects (boosts at +6, ...).
     let mut move_failed = false;
+    // PS `onHit` returning NOT_FAIL (Heal Pulse at full HP): the move's result is
+    // `null`, not `false`, so Stomping Tantrum's `moveLastTurnResult === false` stays off.
+    let mut not_fail_result = false;
     let mut heal_fail_event = false;
     let mut hits_done = 0u32;
     // Some hit of a spread attack landed on a target (PS `damage` array).
@@ -5934,6 +5940,7 @@ fn execute_action_inner(
                     // hit still runs its two `eachEvent('Update')`s (spreadMoveHit,
                     // then hitStepMoveHitLoop). sim/battle-actions.ts.
                     move_failed = true;
+                    not_fail_result = true;
                     each_event_update(state, rng);
                     each_event_update(state, rng);
                 }
@@ -6982,8 +6989,14 @@ fn execute_action_inner(
                 _ => Weather::NONE,
             };
             // PS weather `onFieldStart` / `setWeather`: fails if already up.
+            // Chilly Reception (`selfSwitch`) still counts as having done
+            // something: PS `moveHit` sets `didSomething = true` for a
+            // `selfSwitch` user that can switch, so the failed snow does not
+            // stop the switch (no `-fail`).
             if state.weather.weather_type == w {
-                move_failed = true;
+                if choice.move_id != Choices::CHILLYRECEPTION {
+                    move_failed = true;
+                }
             } else {
                 state.weather = crate::state::StateWeather {
                     weather_type: w,
@@ -7507,7 +7520,7 @@ fn execute_action_inner(
         }
     }
 
-    if move_failed {
+    if move_failed && !not_fail_result {
         state.side_mut(side).active[slot].move_result_this_turn = Some(false);
     }
 
@@ -9690,9 +9703,13 @@ fn skill_swap(
     if apply_on_switch_abilities(state, tgt_side, tgt_slot, rng) {
         let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
     }
+    // Mimicry `onStart` -> `singleEvent('TerrainChange')` (PS data/abilities.ts
+    // mimicry): a holder that just gained Mimicry takes the terrain's type.
+    refresh_mimicry_slot(state, tgt_side, tgt_slot);
     if apply_on_switch_abilities(state, src_side, src_slot, rng) {
         let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
     }
+    refresh_mimicry_slot(state, src_side, src_slot);
     true
 }
 

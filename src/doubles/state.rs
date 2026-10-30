@@ -205,6 +205,9 @@ pub struct ActiveSlot {
     pub trapper: Option<(Side, PokemonIndex)>,
     /// PS `pokemon.hurtThisTurn`: lost HP earlier this turn (Assurance).
     pub hurt_this_turn: bool,
+    /// PS `hurtThisTurn`'s value: the HP left after that damage (0 if none).
+    /// Champions `spreadMoveHit` uses it as Emergency Exit's original HP.
+    pub hurt_hp: i16,
     /// PS `pokemon.newlySwitched`: switched in since the turn started (Payback).
     pub newly_switched: bool,
     /// The `twoturnmove` volatile (duration 2) is still around for this
@@ -367,6 +370,7 @@ impl ActiveSlot {
             trapped: false,
             trapper: None,
             hurt_this_turn: false,
+            hurt_hp: 0,
             newly_switched: false,
             twoturn_fired: false,
             encore: None,

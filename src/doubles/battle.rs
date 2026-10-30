@@ -1716,6 +1716,11 @@ pub fn run_battle_fuzz(
                                     let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
                                 }
                                 each_event_update(state, rng);
+                                // The `runSwitch` action is followed by a move: the
+                                // gen 8+ `runAction` re-sort. PS sim/battle.ts runAction.
+                                if queue_start < actions.len() {
+                                    resort_queue(state, rng, &mut actions[queue_start..]);
+                                }
                             }
                         }
                         continue;
@@ -9066,24 +9071,7 @@ fn run_copied_move(
     let n = copy_order.len();
     let outer_no_target = NO_TARGET_FAIL.with(|c| c.replace(false));
     execute_action_inner(state, rng, &sub, copy_order, will_act, queue);
-    // The called move's `useMoveInner` runs its own `MoveFail` (Jump Kick /
-    // High Jump Kick crash: `damage(baseMaxhp / 2)`) when it failed with a
-    // target. PS sim/battle-actions.ts useMoveInner, data/moves.ts jumpkick.
     let copied_no_target = NO_TARGET_FAIL.with(|c| c.replace(outer_no_target));
-    if sub.choice.crash.is_some() && copy_order.len() > n && !copied_no_target {
-        let holder = (0..2)
-            .find(|&sl| state.side(action.side).active[sl].pokemon_index == Some(action.pokemon_index));
-        if let Some(h) = holder {
-            if state.side(action.side).active[h].move_result_this_turn == Some(false) {
-                if let Some(p) = state.side(action.side).slot_pokemon(h) {
-                    if p.hp > 0 {
-                        let dmg = (p.maxhp / 2).max(1);
-                        apply_damage(state, action.side, h, dmg);
-                    }
-                }
-            }
-        }
-    }
     // The copy may swap positions (Ally Switch): the flag travels with the
     // `ActiveSlot`, so clear it on every slot of the side, not only `action.slot`.
     for sl in 0..2 {
@@ -9097,7 +9085,8 @@ fn run_copied_move(
     }
     // The called move's own `onMoveFail` (crash damage, ...) runs inside its
     // `useMoveInner`, not in the caller's.
-    if copy_order.len() > n && !NO_TARGET_FAIL.with(|c| c.get()) {
+    // PS sim/battle-actions.ts useMoveInner, data/moves.ts jumpkick.
+    if copy_order.len() > n && !copied_no_target {
         if let Some(sl) = (0..2).find(|&sl| state.side(action.side).active[sl].pokemon_index == Some(action.pokemon_index)) {
             move_fail_self_damage(state, action.side, sl, &MOVES[&m]);
         }

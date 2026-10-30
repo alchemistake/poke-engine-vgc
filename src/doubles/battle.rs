@@ -2709,14 +2709,12 @@ fn execute_action_inner(
 
     // `useMove` (external) skips the BeforeMove step entirely.
     if !external {
-    // PS `runEvent('BeforeMove')` speed-sorts every holder's BeforeMove handlers
-    // before any callback runs. Heal Block and Throat Chop are both priority 6 on
-    // the same holder (same speed), so when both are up they tie and one shuffle
-    // draw happens, whether or not the move is blocked. TODO(PS parity): the
-    // `|cant|` message names the handler that ran first (order not modelled).
-    if state.side(side).active[slot].heal_block > 0 && state.side(side).active[slot].throat_chop > 0 {
-        let _ = rng.label("speed tie (move order)").random(2);
-    }
+    // PS `runEvent('BeforeMove', pokemon, target, move)` speed-sorts every
+    // holder's BeforeMove handlers before any callback runs (e.g. Heal Block +
+    // Throat Chop on the user, or two foes' Imprison), whether or not the move
+    // is blocked. TODO(PS parity): the `|cant|` message names the handler
+    // that ran first (order not modelled).
+    crate::doubles::events::run_event_ties(state, rng, "BeforeMove", (side, slot), resolved);
     // A pokemon that must recharge (Hyper Beam / Solar Beam) cannot act.
     // No PRNG draw (PS `mustrecharge.onBeforeMove` returns false).
     if state.side(side).active[slot].recharging {
@@ -2836,13 +2834,12 @@ fn execute_action_inner(
             let disguised = state.side(side).team_member(idx).id == crate::pokemon::PokemonName::MIMIKYU
                 && state.side(side).team_member(idx).ability == Abilities::DISGUISE;
             if disguised {
-                let pm = state.side_mut(side).team_member_mut(idx);
-                pm.id = crate::pokemon::PokemonName::MIMIKYUBUSTED;
-                let bust = (pm.maxhp / 8).max(1);
-                apply_damage(state, side, slot, bust);
-                // `formeChange` -> `setSpecies`: the cached speed is the raw stat.
-                let raw = state.side(side).team_member(idx).speed;
-                state.side_mut(side).speed_cache[idx as usize] = raw as _;
+                // `onDamage` only sets `busted`; the forme change (and its 1/8
+                // damage and raw cached speed) is Disguise's `onUpdate`, after
+                // the next `eachEvent('Update')` sort (runAction's).
+                if !state.pending_disguise.contains(&(side, slot)) {
+                    state.pending_disguise.push((side, slot));
+                }
             } else {
                 apply_damage(state, side, slot, dmg);
             }
@@ -4623,21 +4620,18 @@ fn execute_action_inner(
         && !is_field
     {
         let sc = &mut state.side_mut(target_side).side_conditions;
+        // `broke`: a guard side condition was removed (it also clears `stall`).
+        let broke_side = sc.crafty_shield > 0 || sc.mat_block > 0 || sc.quick_guard > 0 || sc.wide_guard > 0;
         sc.crafty_shield = 0;
         sc.mat_block = 0;
         sc.quick_guard = 0;
         sc.wide_guard = 0;
-    }
-    if matches!(
-        choice.move_id,
-        Choices::FEINT | Choices::PHANTOMFORCE | Choices::SHADOWFORCE | Choices::HYPERSPACEFURY | Choices::HYPERSPACEHOLE
-    ) && !is_self
-        && !is_field
-        && state.side(target_side).active[target_slot].protected
-    {
+        // PS: `if (broke) { ...; if (gen >= 6) delete target.volatiles['stall']; }`.
         let t = &mut state.side_mut(target_side).active[target_slot];
-        t.protected = false;
-        t.stall = None;
+        if t.protected || broke_side {
+            t.protected = false;
+            t.stall = None;
+        }
     }
 
     // Uproar `onTryHit` (move-level, so after the immunity and accuracy steps):
@@ -4857,6 +4851,8 @@ fn execute_action_inner(
     // every target gave `false`. Consumed after the hit loop's targets.
     let mut spread_volatile_fail = false;
     let mut spread_volatile_ok = false;
+    // A spread Status move's target behind a Substitute (PS `null` result).
+    let mut spread_sub_null = false;
     let mut extra_order: Vec<String> = Vec::new();
     // Moves a Copycat / Sleep Talk `onHit` ran (`useMove`) inside the hit loop.
     let mut copy_order: Vec<String> = Vec::new();
@@ -4979,6 +4975,9 @@ fn execute_action_inner(
             && !bypasses_substitute(choice)
             && state.side(side).team_member(idx).ability != Abilities::INFILTRATOR
         {
+            // `onTryPrimaryHit` returns null (not false): the hit loop still
+            // counts it (`damage[i] = 0`), so the move does not fail.
+            spread_sub_null = true;
             continue;
         }
         // The target as it was when the hit started (a KO clears the slot).
@@ -5911,6 +5910,7 @@ fn execute_action_inner(
                     if state.side(ts).active[tslot].ingrain || state.gravity.active || state.side(ts).active[tslot].magnet_rise > 0 {
                         move_failed = true;
                     } else {
+                        try_add_volatile_ties(state, rng, ts, tslot);
                         state.side_mut(ts).active[tslot].magnet_rise = 5;
                     }
                 }
@@ -5964,6 +5964,8 @@ fn execute_action_inner(
                     {
                         move_failed = true;
                     } else if let Some(tidx) = state.side(ts).active[tslot].pokemon_index {
+                        // `addVolatile('substitute')` (before `onHit`'s HP cost).
+                        try_add_volatile_ties(state, rng, ts, tslot);
                         let cost = (maxhp / 4).max(1);
                         // PS substitute `onHit` directDamage: the cost is a damage
                         // number for the holder, so `spreadMoveHit`'s EmergencyExit
@@ -5982,6 +5984,10 @@ fn execute_action_inner(
                     // focusenergy.onStart: fails if the target has Dragon Cheer.
                     // A failed `addVolatile` adds nothing (PS data/moves.ts
                     // focusenergy.condition.onStart).
+                    // `TryAddVolatile` runs before `onStart` (a new volatile only).
+                    if !state.side(ts).active[tslot].focus_energy {
+                        try_add_volatile_ties(state, rng, ts, tslot);
+                    }
                     if state.side(ts).active[tslot].focus_energy
                         || state.side(ts).active[tslot].dragon_cheer.is_some()
                     {
@@ -5994,6 +6000,8 @@ fn execute_action_inner(
                     // `addVolatile` fails if already present.
                     if state.side(ts).active[tslot].ingrain {
                         move_failed = true;
+                    } else {
+                        try_add_volatile_ties(state, rng, ts, tslot);
                     }
                     state.side_mut(ts).active[tslot].ingrain = true;
                 }
@@ -6001,10 +6009,16 @@ fn execute_action_inner(
                     // `addVolatile` fails if already present.
                     if state.side(ts).active[tslot].aqua_ring {
                         move_failed = true;
+                    } else {
+                        try_add_volatile_ties(state, rng, ts, tslot);
                     }
                     state.side_mut(ts).active[tslot].aqua_ring = true;
                 }
                 PokemonVolatileStatus::FOLLOWME | PokemonVolatileStatus::RAGEPOWDER => {
+                    // `addVolatile('followme')` (no `onRestart`).
+                    if state.side(ts).active[tslot].follow_me == 0 {
+                        try_add_volatile_ties(state, rng, ts, tslot);
+                    }
                     state.side_mut(ts).active[tslot].follow_me =
                         if v.volatile_status == PokemonVolatileStatus::RAGEPOWDER { 2 } else { 1 };
                 }
@@ -6068,6 +6082,11 @@ fn execute_action_inner(
                         .slot_pokemon(tslot)
                         .map(|p| p.status != PokemonStatus::NONE)
                         .unwrap_or(true);
+                    // A new `yawn` volatile sorts its TryAddVolatile handlers
+                    // before they can block it.
+                    if !has_status && state.side(ts).active[tslot].yawn == 0 {
+                        try_add_volatile_ties(state, rng, ts, tslot);
+                    }
                     if has_status
                         || state.side(ts).active[tslot].yawn > 0
                         || yawn_volatile_blocked(state, ts, tslot, side, slot)
@@ -6093,22 +6112,30 @@ fn execute_action_inner(
                     } else {
                         // PS `addVolatile('trapped', source, move, 'trapper')`: the
                         // user holds the link (released when the user leaves).
+                        try_add_volatile_ties(state, rng, ts, tslot);
                         let a = &mut state.side_mut(ts).active[tslot];
                         a.trapped = true;
                         a.trapper = Some((side, idx));
                     }
                 }
                 PokemonVolatileStatus::OCTOLOCK => {
-                    // PS `addVolatile`: no-op while present; no draw.
-                    if state.side(ts).active[tslot].octolock.is_none()
-                        && state.side(ts).slot_pokemon(tslot).map(|p| p.hp > 0).unwrap_or(false)
-                    {
+                    // PS `addVolatile`: returns false while present (no
+                    // `onRestart`), so the status move fails (no hit-loop
+                    // `eachEvent`); a new one runs the TryAddVolatile ties.
+                    if state.side(ts).active[tslot].octolock.is_some() {
+                        move_failed = true;
+                    } else if state.side(ts).slot_pokemon(tslot).map(|p| p.hp > 0).unwrap_or(false) {
+                        try_add_volatile_ties(state, rng, ts, tslot);
                         state.side_mut(ts).active[tslot].octolock = Some((side, idx));
                     }
                 }
                 PokemonVolatileStatus::HEALBLOCK => {
                     // data/moves.ts healblock.condition: duration 5 (2 from
                     // Psychic Noise, 7 with Persistent); no refresh while active.
+                    // A new volatile sorts its TryAddVolatile handlers (Aroma Veil).
+                    if state.side(ts).active[tslot].heal_block == 0 {
+                        try_add_volatile_ties(state, rng, ts, tslot);
+                    }
                     if aroma_veil_blocks(state, ts, AromaVeiled::HealBlock, Some((side, idx, choice))) {
                         // Blocked (`null`): no effect, and Psychic Noise's hit still counts.
                         if choice.move_id != Choices::PSYCHICNOISE {
@@ -6133,6 +6160,9 @@ fn execute_action_inner(
                 }
                 PokemonVolatileStatus::MINIMIZE => {
                     // data/moves.ts minimize.volatileStatus; no restart fail.
+                    if !state.side(ts).active[tslot].minimize {
+                        try_add_volatile_ties(state, rng, ts, tslot);
+                    }
                     state.side_mut(ts).active[tslot].minimize = true;
                 }
                 other => {
@@ -7046,6 +7076,8 @@ fn execute_action_inner(
             // refused, handled in `onTry`).
             let prev = state.side(side).team_member(idx).status;
             state.side_mut(side).team_member_mut(idx).status = PokemonStatus::NONE;
+            // `setStatus` -> `runEvent('SetStatus')` handler ties (Sweet Veil, ...).
+            set_status_event_tie(state, rng, side, slot, PokemonStatus::SLEEP, false, false);
             let immune = status_immune(state, side, slot, PokemonStatus::SLEEP, false, side, slot);
             state.side_mut(side).team_member_mut(idx).status = prev;
             if immune {
@@ -7210,6 +7242,12 @@ fn execute_action_inner(
         }
 
         if choice.move_id == Choices::HELPINGHAND {
+            // PS `addVolatile('helpinghand')`: a new volatile runs the
+            // `TryAddVolatile` event (handler ties); an existing one restarts
+            // (`onRestart`, no event). PS sim/pokemon.ts addVolatile.
+            if state.side(side).active[1 - slot].helping_hand_mult <= 1.0 {
+                try_add_volatile_ties(state, rng, side, 1 - slot);
+            }
             state.side_mut(side).active[1 - slot].helping_hand_mult *= 1.5;
         }
 
@@ -7265,7 +7303,9 @@ fn execute_action_inner(
                     move_failed = true;
                 }
             } else {
-                if !apply_side_condition(state, cs, sc.condition) {
+                // Stone Axe / Ceaseless Edge add their hazard in `onAfterHit`:
+                // an existing hazard does not fail the attack.
+                if !apply_side_condition(state, cs, sc.condition) && choice.category == MoveCategory::Status {
                     move_failed = true;
                 }
                 // quickguard / wideguard `onHitSide`: `source.addVolatile('stall')`.
@@ -7840,11 +7880,11 @@ fn execute_action_inner(
         // (sim/battle-actions.ts useMoveInner).
         // Spread boost-only status move where no target changed (PS
         // `hitStepMoveHitLoop`: every `damage[i]` false -> `return`, no eachEvent).
-        if spread_boost_noop && !drop_landed {
+        if spread_boost_noop && !drop_landed && !spread_sub_null {
             move_failed = true;
         }
         // PS `spreadMoveHit`: a spread volatile that failed on every target fails the move.
-        if spread_volatile_fail && !spread_volatile_ok {
+        if spread_volatile_fail && !spread_volatile_ok && !spread_sub_null {
             move_failed = true;
         }
         // PS useMoveInner: `all` / `foeSide` / `allySide` / `allyTeam` moves run
@@ -8893,6 +8933,9 @@ fn try_add_volatile_ties(state: &DoublesState, rng: &mut Gen5Rng, ts: Side, tslo
     if !state.side(ts).slot_pokemon(tslot).is_some_and(|p| p.hp > 0) {
         return;
     }
+    // `runStatusImmunity(status.id)` -> `runEvent('Immunity')` first (Magnet
+    // Rise / Dig / ... `onImmunity` handlers). PS sim/pokemon.ts addVolatile.
+    crate::doubles::events::run_event_ties(state, rng, "Immunity", (ts, tslot), None);
     crate::doubles::events::run_event_ties(state, rng, "TryAddVolatile", (ts, tslot), None);
 }
 
@@ -8905,7 +8948,13 @@ fn try_confuse(state: &mut DoublesState, rng: &mut Gen5Rng, ts: Side, tslot: usi
 /// data/conditions.ts confusion.onStart), 2 otherwise.
 fn try_confuse_from(state: &mut DoublesState, rng: &mut Gen5Rng, ts: Side, tslot: usize, min: usize) {
     let Some(p) = state.side(ts).slot_pokemon(tslot) else { return };
-    if p.hp <= 0 || p.ability == Abilities::OWNTEMPO || state.side(ts).active[tslot].confusion > 0 {
+    if p.hp <= 0 || state.side(ts).active[tslot].confusion > 0 {
+        return;
+    }
+    // `addVolatile('confusion')`: Immunity / TryAddVolatile handler ties, then
+    // Own Tempo / Misty Terrain (`onTryAddVolatile`) block.
+    try_add_volatile_ties(state, rng, ts, tslot);
+    if state.side(ts).slot_pokemon(tslot).is_some_and(|p| p.ability == Abilities::OWNTEMPO) {
         return;
     }
     if misty_terrain_blocks_confusion(state, ts, tslot) {
@@ -9029,19 +9078,31 @@ fn set_status_event_tie(
     if substitute_blocks && from_opponent && state.side(ts).active[tslot].substitute_health > 0 {
         return;
     }
-    // Type and `Immunity`-event checks come before the SetStatus event.
-    let raw_ctx = crate::engine::mechanics::StatusContext {
-        sun: matches!(effective_weather(state), Weather::SUN | Weather::HARSHSUN),
-        misty_terrain: false,
-        electric_terrain: false,
-        safeguard: false,
-        substitute: false,
-        from_opponent: false,
-        sleep_clause: false,
-        source_ability: Abilities::NONE,
-        target_grounded: false,
+    // `runStatusImmunity`: the type immunity (`getImmunity`), then
+    // `runEvent('Immunity')` (its handler ties), whose Magma Armor / Sun
+    // handlers refuse freeze. Abilities such as Insomnia, Limber or Sweet
+    // Veil are SetStatus handlers: they block after that event's sort.
+    // PS sim/pokemon.ts setStatus / runStatusImmunity.
+    if target.hp <= 0 {
+        return;
+    }
+    let type_immune = match st {
+        PokemonStatus::BURN => target.has_type(&PokemonType::FIRE),
+        PokemonStatus::PARALYZE => target.has_type(&PokemonType::ELECTRIC),
+        PokemonStatus::FREEZE => target.has_type(&PokemonType::ICE),
+        PokemonStatus::POISON | PokemonStatus::TOXIC => {
+            target.has_type(&PokemonType::POISON) || target.has_type(&PokemonType::STEEL)
+        }
+        _ => false,
     };
-    if crate::engine::mechanics::immune_to_status(target, &st, &raw_ctx) {
+    if type_immune {
+        return;
+    }
+    crate::doubles::events::run_event_ties(state, rng, "Immunity", (ts, tslot), None);
+    if st == PokemonStatus::FREEZE
+        && (target.ability == Abilities::MAGMAARMOR
+            || matches!(effective_weather(state), Weather::SUN | Weather::HARSHSUN))
+    {
         return;
     }
     crate::doubles::events::run_event_ties(state, rng, "SetStatus", (ts, tslot), None);
@@ -9598,7 +9659,55 @@ fn compute_hit_damage(
             ),
         };
         let mut ctx = ctx;
-        if let Some(outcome) = calculate_damage(attacker, defender, choice, rng, spread, &ctx) {
+        // PS `getDamage` `runEvent` sorts: their handler ties draw between
+        // the crit roll and the damage roll. Only while the attacker is in
+        // its slot (`run_event_ties` reads the slot's effects).
+        // TODO(PS parity): a Future Sight source that left the field.
+        let att_active = state.side(side).active[slot].pokemon_index == Some(idx);
+        let mut on_event = |ev: crate::doubles::damage::DamageEvent, rng: &mut Gen5Rng| {
+            use crate::doubles::damage::DamageEvent;
+            if !att_active {
+                return false;
+            }
+            let (src, tgt) = ((side, slot), (target_side, target_slot));
+            match ev {
+                DamageEvent::ModifyCritRatio => {
+                    crate::doubles::events::run_event_ties(state, rng, "ModifyCritRatio", src, Some(tgt));
+                }
+                DamageEvent::BasePower => {
+                    // The move's own `onBasePower` (none has a priority) joins the sort.
+                    let own = matches!(
+                        choice.move_id,
+                        Choices::GRAVAPPLE | Choices::BARBBARRAGE | Choices::EXPANDINGFORCE | Choices::FACADE
+                            | Choices::FICKLEBEAM | Choices::KNOCKOFF | Choices::LASHOUT | Choices::MISTYEXPLOSION
+                            | Choices::SOLARBEAM | Choices::SOLARBLADE | Choices::VENOSHOCK
+                    );
+                    crate::doubles::events::run_event_ties_on_effect(
+                        state, rng, "BasePower", src, Some(tgt), own.then_some(0),
+                    );
+                }
+                DamageEvent::ModifyStats => {
+                    let atk = if choice.category == MoveCategory::Physical { "ModifyAtk" } else { "ModifySpA" };
+                    // `overrideDefensiveStat: 'def'` (Psyshock, Psystrike, Secret Sword).
+                    let def = if choice.category == MoveCategory::Physical
+                        || matches!(choice.move_id, Choices::PSYSHOCK | Choices::PSYSTRIKE | Choices::SECRETSWORD)
+                    {
+                        "ModifyDef"
+                    } else {
+                        "ModifySpD"
+                    };
+                    crate::doubles::events::run_event_ties(state, rng, atk, src, Some(tgt));
+                    crate::doubles::events::run_event_ties(state, rng, def, tgt, Some(src));
+                }
+                DamageEvent::ModifyDamage => {
+                    crate::doubles::events::run_event_ties(state, rng, "ModifyDamage", src, Some(tgt));
+                }
+            }
+            true
+        };
+        if let Some(outcome) =
+            crate::doubles::damage::calculate_damage_with(attacker, defender, choice, rng, spread, &ctx, &mut on_event)
+        {
             damage = outcome.damage;
             crit = outcome.crit;
         }
@@ -11107,6 +11216,11 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
         ) {
             p.id = crate::pokemon::PokemonName::CASTFORM;
         }
+        // Hunger Switch's `formeChange` is not permanent: Morpeko-Hangry
+        // reverts to Morpeko (same stats and types).
+        if p.id == crate::pokemon::PokemonName::MORPEKOHANGRY {
+            p.id = crate::pokemon::PokemonName::MORPEKO;
+        }
         if let Some(t) = s.active[slot].roost_orig.take() {
             s.team_member_mut(old).types = t;
         }
@@ -11549,10 +11663,10 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
                 continue;
             }
             // Volatiles with a duration (Conditions: subOrder 2, no order).
-            if let Some((m, _)) = a.charging {
-                if !a.charge_aborted {
-                    push(NO_ORDER, speed, 2, ResidualKind::Marker); // twoturnmove
-                }
+            // An aborted charge lost `twoturnmove` (`onMoveAborted`), whose
+            // `onEnd` also removed the move's own volatile (Dig, Fly, ...).
+            if let Some((m, _)) = a.charging.filter(|_| !a.charge_aborted) {
+                push(NO_ORDER, speed, 2, ResidualKind::Marker); // twoturnmove
                 if matches!(
                     m,
                     Choices::DIG
@@ -12221,6 +12335,19 @@ fn end_of_turn(
                         continue;
                     }
                     let Some(idx) = state.side(side).active[slot].pokemon_index else { continue };
+                    // PS `spreadDamage` (Weather effect) -> `runStatusImmunity('sandstorm')`:
+                    // the type immunity first (no event), then `runEvent('Immunity')`,
+                    // whose handlers (Dig / Dive charge, Magnet Rise, Overcoat, Sand
+                    // Veil / Force / Rush, ...) are speed-sorted before they refuse.
+                    let types = state.side(side).team_member(idx).types;
+                    if state.side(side).team_member(idx).hp <= 0
+                        || [PokemonType::ROCK, PokemonType::GROUND, PokemonType::STEEL]
+                            .iter()
+                            .any(|t| types.0 == *t || types.1 == *t)
+                    {
+                        continue;
+                    }
+                    crate::doubles::events::run_event_ties(state, rng, "Immunity", (side, slot), None);
                     // Dig / Dive charge turn: immune to sandstorm (PS
                     // data/moves.ts dig / dive `condition.onImmunity`). Fly,
                     // Bounce and Sky Drop have no such handler, so they take it.

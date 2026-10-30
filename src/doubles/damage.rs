@@ -197,6 +197,12 @@ pub fn calculate_damage(
         let water_types = [defender.types.0, defender.types.1].iter().filter(|t| **t == PokemonType::WATER).count() as i32;
         tm += 2 * water_types;
     }
+    // PS data/moves.ts flyingpress.onEffectiveness: `typeMod +
+    // getEffectiveness('Flying', type)` for each defender type.
+    if choice.move_id == crate::choices::Choices::FLYINGPRESS {
+        let m = crate::engine::damage_calc::type_effectiveness_modifier(&PokemonType::FLYING, defender);
+        tm += m.log2().round() as i32;
+    }
     if ctx.disguise {
         // disguise.onEffectiveness returns 0 (after the immunity check).
         tm = 0;

@@ -4213,7 +4213,12 @@ fn execute_action_inner(
                     && choice.heal.is_none()
                     && choice.status.is_none()
                     // Curse here is the non-Ghost self-boost (its volatile is Ghost-only).
-                    && (choice.volatile_status.is_none() || choice.move_id == Choices::CURSE)
+                    && (choice.volatile_status.is_none()
+                        || choice.move_id == Choices::CURSE
+                        // Minimize: `addVolatile('minimize')` returns null (its
+                        // `onRestart`) while the volatile is already present.
+                        || (choice.move_id == Choices::MINIMIZE
+                            && state.side(ts).active[tslot].minimize))
                     && choice.side_condition.is_none()
                     // Defog's table boost is empty: its `onHit` (-1 evasion) decides.
                     && choice.move_id != Choices::DEFOG

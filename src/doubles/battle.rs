@@ -4012,9 +4012,9 @@ fn execute_action_inner(
                 } else if choice.category == MoveCategory::Status
                     && choice.heal.is_none()
                     && choice.status.is_none()
-                    && choice.volatile_status.is_none()
+                    // Curse here is the non-Ghost self-boost (its volatile is Ghost-only).
+                    && (choice.volatile_status.is_none() || choice.move_id == Choices::CURSE)
                     && choice.side_condition.is_none()
-                    && choice.move_id != Choices::CURSE
                     // Defog's table boost is empty: its `onHit` (-1 evasion) decides.
                     && choice.move_id != Choices::DEFOG
                 {
@@ -8377,6 +8377,8 @@ enum ResidualKind {
     Status(Side, usize),
     /// `throatchop` duration countdown (order 22).
     ThroatChop(Side, usize),
+    /// `tailwind` duration countdown (order 26, subOrder 5); the end recalculates speeds.
+    Tailwind(Side),
     /// `taunt` duration countdown (order 15).
     Taunt(Side, usize),
     /// `magnetrise` duration countdown (order 18, PS data/moves.ts magnetrise).
@@ -8487,13 +8489,17 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             (sc.light_screen > 0, 2),
             (sc.safeguard > 0, 3),
             (sc.mist > 0, 4),
-            (sc.tailwind > 0, 5),
             (sc.lucky_chant > 0, 6),
             (sc.aurora_veil > 0, 10),
         ] {
             if active {
                 push(26, 0, sub, ResidualKind::Marker);
             }
+        }
+        // Tailwind (sub 5): its countdown ends in the residual, so the speeds
+        // recalculate before the rest of it (PS data/conditions.ts tailwind).
+        if state.side(side).side_conditions.tailwind > 0 {
+            push(26, 0, 5, ResidualKind::Tailwind(side));
         }
         // quickguard (duration 1, side condition: subOrder 4, no order).
         if state.side(side).side_conditions.quick_guard > 0 {
@@ -9074,6 +9080,15 @@ fn end_of_turn(
             ResidualKind::ThroatChop(side, slot) => {
                 let a = &mut state.side_mut(side).active[slot];
                 a.throat_chop = a.throat_chop.saturating_sub(1);
+            }
+            ResidualKind::Tailwind(sd) => {
+                let sc = &mut state.side_mut(sd).side_conditions;
+                if sc.tailwind > 0 {
+                    sc.tailwind -= 1;
+                    if sc.tailwind == 0 {
+                        update_speed(state);
+                    }
+                }
             }
             ResidualKind::Taunt(side, slot) => {
                 let a = &mut state.side_mut(side).active[slot];
@@ -9679,7 +9694,6 @@ fn end_of_turn(
             &mut sc.reflect,
             &mut sc.light_screen,
             &mut sc.aurora_veil,
-            &mut sc.tailwind,
             &mut sc.safeguard,
             &mut sc.lucky_chant,
             &mut sc.mist,

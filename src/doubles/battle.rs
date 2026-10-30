@@ -865,7 +865,7 @@ pub fn run_battle_fuzz(
     for (side, slot) in lead_order {
         if apply_on_switch_abilities(state, side, slot, rng) {
             // Terrain just set (e.g. Grassy Surge): `eachEvent("TerrainChange")`.
-            let _ = sorted_actives(state, rng, "speed tie (switch-in)");
+            let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
         }
     }
     each_event_update(state, rng);
@@ -1322,7 +1322,8 @@ pub fn run_battle_fuzz(
                         let baton_extra = if state.side(side).active[slot].baton_passing {
                             let a = &state.side(side).active[slot];
                             // `partiallytrapped` and `octolock` have no `noCopy`: they pass too.
-                            Some((a.cursed, a.focus_energy, a.leech_seed, a.ingrain, a.aqua_ring, a.heal_block, a.partial_trap.clone(), a.octolock))
+                            // `perishsong` has no `noCopy` (PS data/moves.ts perishsong): its countdown passes too.
+                            Some((a.cursed, a.focus_energy, a.leech_seed, a.ingrain, a.aqua_ring, a.heal_block, a.partial_trap.clone(), a.octolock, a.perish))
                         } else {
                             None
                         };
@@ -1356,7 +1357,7 @@ pub fn run_battle_fuzz(
                                 }
                             }
                         }
-                        if let Some((cursed, fe, ls, ing, aq, hb, pt, oc)) = baton_extra {
+                        if let Some((cursed, fe, ls, ing, aq, hb, pt, oc, pr)) = baton_extra {
                             let a = &mut state.side_mut(side).active[slot];
                             a.cursed = cursed;
                             a.focus_energy = fe;
@@ -1366,6 +1367,7 @@ pub fn run_battle_fuzz(
                             a.heal_block = hb;
                             a.partial_trap = pt;
                             a.octolock = oc;
+                            a.perish = pr;
                         }
                         if let Some((boosts, confusion, sub)) = passed {
                             if let Some(new_idx) = state.side(side).active[slot].pokemon_index {
@@ -1380,7 +1382,7 @@ pub fn run_battle_fuzz(
                         apply_sticky_web(state, side, slot);
                         // TODO(PS parity): `fieldEvent('SwitchIn')` handler ties.
                         if apply_on_switch_abilities(state, side, slot, rng) {
-                            let _ = sorted_actives(state, rng, "speed tie (switch-in)");
+                            let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
                         }
                         each_event_update(state, rng);
                         // Forecast `onWeatherChange` (PS data/abilities.ts forecast):
@@ -1717,7 +1719,7 @@ fn drag_in_all(state: &mut DoublesState, rng: &mut Gen5Rng) {
             let _ = sorted_actives(state, rng, "speed tie (switch-in)");
             apply_sticky_web(state, side, slot);
             if apply_on_switch_abilities(state, side, slot, rng) {
-                let _ = sorted_actives(state, rng, "speed tie (switch-in)");
+                let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
             }
         }
     }
@@ -2208,6 +2210,14 @@ fn execute_action_inner(
 
     // `useMove` (external) skips the BeforeMove step entirely.
     if !external {
+    // PS `runEvent('BeforeMove')` speed-sorts every holder's BeforeMove handlers
+    // before any callback runs. Heal Block and Throat Chop are both priority 6 on
+    // the same holder (same speed), so when both are up they tie and one shuffle
+    // draw happens, whether or not the move is blocked. TODO(PS parity): the
+    // `|cant|` message names the handler that ran first (order not modelled).
+    if state.side(side).active[slot].heal_block > 0 && state.side(side).active[slot].throat_chop > 0 {
+        let _ = rng.label("speed tie (move order)").random(2);
+    }
     // A pokemon that must recharge (Hyper Beam / Solar Beam) cannot act.
     // No PRNG draw (PS `mustrecharge.onBeforeMove` returns false).
     if state.side(side).active[slot].recharging {
@@ -8622,7 +8632,11 @@ fn resolve_future_move(
     if damage > 0 {
         apply_damage(state, ts, tslot, damage);
     }
+    // PS trySpreadMoveHit: the hit loop's `eachEvent('Update')`, then
+    // `resolveFaints` (the target's faint is printed here), then the closing
+    // `eachEvent('Update')`, which no longer counts the fainted target.
     each_event_update(state, rng);
+    resolve_faints(state, rng, |_, _| true);
     each_event_update(state, rng);
 }
 
@@ -9686,7 +9700,11 @@ fn entry_hazards(state: &mut DoublesState, side: Side, slot: usize) {
         let spikes_dmg = spikes_dmg + rock_dmg;
         // Safeguard `onSetStatus` blocks the hazard's status (source is a foe).
         // Misty Terrain `onSetStatus`: grounded pokemon can't gain a status.
-        let new_status = if grounded && !misty_on && toxic_spikes > 0 && s.side_conditions.safeguard == 0 {
+        // Purifying Salt `onSetStatus` (PS data/abilities.ts purifyingsalt) blocks
+        // the hazard's `trySetStatus`, while the spikes are still cleared by a
+        // Poison type (PS toxicspikes `onSwitchIn`).
+        let purifying_salt = s.team_member(idx).ability == Abilities::PURIFYINGSALT;
+        let new_status = if grounded && !misty_on && toxic_spikes > 0 && s.side_conditions.safeguard == 0 && !purifying_salt {
             let cur = s.team_member(idx).status;
             if cur == PokemonStatus::NONE {
                 if types.0 == PokemonType::POISON || types.1 == PokemonType::POISON {

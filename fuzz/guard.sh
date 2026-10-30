@@ -84,7 +84,7 @@ else
 fi
 
 # 6. Score.
-TARGET=50000
+TARGET=1000000
 OUT=$(node fuzz/fuzz.js --seed 0 --count $TARGET 2>&1)
 if [ -z "$OUT" ]; then
   SCORE=$TARGET

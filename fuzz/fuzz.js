@@ -1294,11 +1294,17 @@ const FAST_CHUNK_CACHED = 128;
 // The controller PRNG, battle seed and teams of one test (all derived from
 // the test seed, so a test can be rebuilt identically).
 function makeTest(testSeed) {
+  // Controller seed words. The low 16 bits give the original seeds 0..65535
+  // (unchanged, so old scores and reports stay valid); the high bits
+  // (`hi`, 0 below 65536) are mixed into words 2 and 3, so every seed up to
+  // 2^32 - 1 is a distinct battle. Word 0 gives `lo`, word 3 then gives `hi`.
+  const lo = testSeed & 0xffff;
+  const hi = Math.floor(testSeed / 65536) & 0xffff;
   const controller = new (ps().PRNG)([
-    testSeed & 0xffff,
-    (testSeed + 1) & 0xffff,
-    (testSeed + 2) & 0xffff,
-    (testSeed + 3) & 0xffff,
+    lo,
+    (lo + 1) & 0xffff,
+    ((lo + 2) & 0xffff) ^ ((hi * 40503) & 0xffff),
+    ((lo + 3) & 0xffff) ^ hi,
   ]);
   // 1. Battle seed (4 x 16-bit words), from the controller stream.
   const battleSeed = [0, 0, 0, 0].map(() => controller.random(65536));

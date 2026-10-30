@@ -29,8 +29,9 @@ cargo build --release --features champions --no-default-features
 
 **The cycle:**
 1. **Find the first failure.**
-   `node fuzz/fuzz.js --seed 0 --count 50000` (see "Sweep speed" below). No
-   output and exit 0 means all 50000 pass: stop and report.
+   `node fuzz/fuzz.js --seed 0 --count 1000000` (see "Sweep speed" below). No
+   output and exit 0 means all 1000000 pass: stop and report. The sweep stops
+   at the first failure, so it only runs (and caches) the battles up to it.
    Otherwise copy the `reproduce:` line (e.g. `--seed 2 --count 1`). That
    seed is the score.
 2. **Fix only that battle.** Work on its `reproduce:` command. Re-running the
@@ -305,7 +306,8 @@ the cause, before you write the fix:
    `slot_grounded(p, a, state.gravity.active)` is THE grounded check (Gravity,
    Ingrain, Smack Down, Magnet Rise); never add `|| state.gravity.active`.
 3. **Measure with the census.** `node fuzz/census.js <score> <score+10000>`
-   lists every failing seed in the range (≈20 s). Save it before the fix and
+   lists every failing seed in the range (≈20 s). Keep the range to about
+   10000 seeds: every battle it runs is cached on disk (≈33 KB each). Save it before the fix and
    after; `comm -3 before.txt after.txt` shows every battle the fix repaired
    or broke. A class fix repairs several. A seed that newly fails is a
    regression: fix it before moving on.

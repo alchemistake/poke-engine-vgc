@@ -1600,6 +1600,7 @@ pub fn run_battle_fuzz(
                                         state.side_mut(side).team_member_mut(ni).ability = Abilities::NONE;
                                     }
                                     state.side_mut(side).active[slot].gastro_acid = true;
+                                    state.side_mut(side).active[slot].gastro_ability = a;
                                 }
                             }
                         }
@@ -1615,7 +1616,7 @@ pub fn run_battle_fuzz(
                         let _ = sorted_actives(state, rng, "speed tie (switch-in)");
                         apply_sticky_web(state, side, slot);
                         // TODO(PS parity): `fieldEvent('SwitchIn')` handler ties.
-                        if apply_on_switch_abilities(state, side, slot, rng) {
+                        if switched_in_alive(state, side, slot) && apply_on_switch_abilities(state, side, slot, rng) {
                             let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
                         }
                         each_event_update(state, rng);
@@ -1851,11 +1852,10 @@ fn ps_get_target_inner(
                 let foes: Vec<usize> = (0..2).filter(|&s| alive(foe, s)).collect();
                 if foes.is_empty() {
                     // PS `getRandomTarget` (sim/battle.ts) with no living foe: no draw;
-                    // the foe slot directly across (fainted) for normal / adjacentFoe /
-                    // randomNormal targets, else `foe.active[0]`. A redirect (Lightning
-                    // Rod, Follow Me) can still apply to that slot.
-                    let across = if matches!(ty, "normal" | "adjacentFoe" | "randomNormal") { 1 - slot } else { 0 };
-                    Some((foe, across))
+                    // `randomFoe() || foe.active[0]` (the slot "directly across" is
+                    // the `activePerHalf > 2` triples branch only). A redirect
+                    // (Lightning Rod, Follow Me) can still apply to that slot.
+                    Some((foe, 0))
                 } else {
                     Some((foe, foes[rng.label(label).random(foes.len() as u32) as usize]))
                 }
@@ -2020,6 +2020,14 @@ fn switch_out_end_event(state: &DoublesState, rng: &mut Gen5Rng, side: Side, slo
     }
 }
 
+/// PS `fieldEvent('SwitchIn')` runs `resolveFaints()` after each handler and
+/// skips a fainted holder's handlers: entry hazards (side conditions, subOrder
+/// 4) run before the ability's Start (subOrder 7), so a pokemon KO'd by Stealth
+/// Rock / Spikes never runs Intimidate & co. PS sim/battle.ts fieldEvent.
+fn switched_in_alive(state: &DoublesState, side: Side, slot: usize) -> bool {
+    state.side(side).slot_pokemon(slot).is_some_and(|p| p.hp > 0)
+}
+
 fn drag_in_all(state: &mut DoublesState, rng: &mut Gen5Rng) {
     for side in [Side::One, Side::Two] {
         for slot in 0..2 {
@@ -2039,7 +2047,7 @@ fn drag_in_all(state: &mut DoublesState, rng: &mut Gen5Rng) {
             switch_in(state, side, slot, pick);
             let _ = sorted_actives(state, rng, "speed tie (switch-in)");
             apply_sticky_web(state, side, slot);
-            if apply_on_switch_abilities(state, side, slot, rng) {
+            if switched_in_alive(state, side, slot) && apply_on_switch_abilities(state, side, slot, rng) {
                 let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
             }
         }
@@ -2171,6 +2179,17 @@ pub(crate) fn real_ability(state: &DoublesState, side: Side, idx: PokemonIndex) 
     MOLD_SAVED
         .with(|m| m.borrow().iter().find(|&&(s, i, _)| s == side && i == idx).map(|&(_, _, a)| a))
         .unwrap_or(state.side(side).team_member(idx).ability)
+}
+
+/// PS `pokemon.getAbility()`: the held ability even while the `gastroacid`
+/// volatile suppresses it (the engine stores it in `gastro_ability`).
+fn held_ability(state: &DoublesState, side: Side, slot: usize, idx: PokemonIndex) -> Abilities {
+    let a = &state.side(side).active[slot];
+    if a.gastro_acid && a.pokemon_index == Some(idx) {
+        a.gastro_ability
+    } else {
+        real_ability(state, side, idx)
+    }
 }
 
 /// PS `cantsuppress` abilities: Gastro Acid fails on them (onTryHit), and
@@ -5446,7 +5465,11 @@ fn execute_action_inner(
                         }
                         // A semi-invulnerable ally misses (PS `hitStepInvulnerabilityEvent`
                         // for each target): no boost for it.
-                        if sl != slot && ally_semi_invulnerable(state, side, sl) {
+                        // No Guard on the user or the ally (`onAnyInvulnerability`
+                        // returns 0) lets it land. PS data/abilities.ts noguard.
+                        let no_guard = state.side(side).team_member(idx).ability == Abilities::NOGUARD
+                            || state.side(side).slot_pokemon(sl).is_some_and(|p| p.ability == Abilities::NOGUARD);
+                        if sl != slot && ally_semi_invulnerable(state, side, sl) && !no_guard {
                             continue;
                         }
                         if let Some(tidx) = state.side(side).active[sl].pokemon_index {
@@ -6406,7 +6429,7 @@ fn execute_action_inner(
             let user_idx = state.side(side).active[slot].pokemon_index;
             let target_ability = state.side(target_side).active[target_slot]
                 .pokemon_index
-                .map(|t| real_ability(state, target_side, t));
+                .map(|t| held_ability(state, target_side, target_slot, t));
             let blocked = match (user_idx, target_ability) {
                 (Some(u), Some(ta)) => {
                     crate::engine::mechanics::fail_role_play(ta)
@@ -6836,6 +6859,7 @@ fn execute_action_inner(
                         state.side_mut(target_side).team_member_mut(tidx).ability = Abilities::NONE;
                     }
                     state.side_mut(target_side).active[target_slot].gastro_acid = true;
+                    state.side_mut(target_side).active[target_slot].gastro_ability = a;
                 }
             }
         }
@@ -7759,14 +7783,8 @@ fn execute_action_inner(
             // Sand Spit `onDamagingHit` (PS data/abilities.ts sandspit): the
             // holder sets sand even when this hit KO'd it (the hit's holder).
             if let Some(pi) = hit_target_pi {
-                if state.side(target_side).team_member(pi).ability == Abilities::SANDSPIT
-                    && state.weather.weather_type != Weather::SAND
-                {
-                    state.weather = crate::state::StateWeather {
-                        weather_type: Weather::SAND,
-                        turns_remaining: 5,
-                    };
-                    let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+                if state.side(target_side).team_member(pi).ability == Abilities::SANDSPIT {
+                    field_setting_damaging_hit(state, rng, Abilities::SANDSPIT);
                 }
             }
             // Gooey / Tangling Hair (`onDamagingHit`, also when the hit KO'd the
@@ -7788,15 +7806,8 @@ fn execute_action_inner(
         // Seed Sower `onDamagingHit`: `field.setTerrain('grassyterrain')`
         // (fails if already up). PS data/abilities.ts seedsower.
         // TODO(PS parity): Terrain Extender duration.
-        if ability == Abilities::SEEDSOWER
-            && state.terrain.terrain_type != crate::engine::state::Terrain::GRASSYTERRAIN
-        {
-            state.terrain = crate::state::StateTerrain {
-                terrain_type: crate::engine::state::Terrain::GRASSYTERRAIN,
-                turns_remaining: 5,
-            };
-            refresh_mimicry(state);
-            let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+        if ability == Abilities::SEEDSOWER {
+            field_setting_damaging_hit(state, rng, ability);
         }
                 if matches!(ability, Abilities::GOOEY | Abilities::TANGLINGHAIR)
                     && choice.flags.contact
@@ -9847,6 +9858,32 @@ fn semi_invulnerable_blocks(
     !hits_anyway && !no_guard && mv != Choices::HELPINGHAND
 }
 
+/// The `onDamagingHit` abilities that set the field: Sand Spit
+/// (`field.setWeather('sandstorm')`, fails if already up, else
+/// `eachEvent('WeatherChange')`) and Seed Sower (`field.setTerrain('grassyterrain')`,
+/// then `eachEvent('TerrainChange')`). PS data/abilities.ts sandspit / seedsower.
+// TODO(PS parity): Smooth Rock / Terrain Extender duration, primal weather.
+fn field_setting_damaging_hit(state: &mut DoublesState, rng: &mut Gen5Rng, ability: Abilities) {
+    match ability {
+        Abilities::SANDSPIT if state.weather.weather_type != Weather::SAND => {
+            state.weather = crate::state::StateWeather {
+                weather_type: Weather::SAND,
+                turns_remaining: 5,
+            };
+            let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+        }
+        Abilities::SEEDSOWER if state.terrain.terrain_type != crate::engine::state::Terrain::GRASSYTERRAIN => {
+            state.terrain = crate::state::StateTerrain {
+                terrain_type: crate::engine::state::Terrain::GRASSYTERRAIN,
+                turns_remaining: 5,
+            };
+            refresh_mimicry(state);
+            let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+        }
+        _ => {}
+    }
+}
+
 fn resolve_future_move(
     state: &mut DoublesState,
     rng: &mut Gen5Rng,
@@ -9932,6 +9969,14 @@ fn resolve_future_move(
         Some(d) if d.ability == Abilities::STURDY && d.hp == d.maxhp && damage >= d.hp && d.hp > 0 => d.hp - 1,
         _ => damage,
     };
+    // Berserk `onAfterMoveSecondary` (after the hit's `eachEvent('Update')`):
+    // the HP before the delayed hit. PS data/abilities.ts berserk,
+    // sim/battle-actions.ts hitStepMoveHitLoop (afterMoveSecondaryEvent).
+    let berserk_before = state
+        .side(ts)
+        .slot_pokemon(tslot)
+        .filter(|d| damage > 0 && d.ability == Abilities::BERSERK)
+        .map(|d| d.hp);
     if damage > 0 {
         apply_damage(state, ts, tslot, damage);
         damaged_by_move(state, ts, tslot);
@@ -9946,12 +9991,21 @@ fn resolve_future_move(
             if ability == Abilities::STAMINA && state.side(ts).team_member(didx).hp > 0 {
                 apply_boosts(state, ts, didx, &StatBoosts { defense: 1, ..Default::default() }, false);
             }
+            field_setting_damaging_hit(state, rng, ability);
         }
     }
     // PS trySpreadMoveHit: the hit loop's `eachEvent('Update')`, then
     // `resolveFaints` (the target's faint is printed here), then the closing
     // `eachEvent('Update')`, which no longer counts the fainted target.
     each_event_update(state, rng);
+    if let Some(before) = berserk_before {
+        if let Some(d) = state.side(ts).slot_pokemon(tslot) {
+            if d.hp > 0 && (d.hp as i32) * 2 <= d.maxhp as i32 && (before as i32) * 2 > d.maxhp as i32 {
+                let bidx = state.side(ts).active[tslot].pokemon_index.unwrap();
+                apply_boosts(state, ts, bidx, &StatBoosts { special_attack: 1, ..Default::default() }, false);
+            }
+        }
+    }
     resolve_faints(state, rng, |_, _| true);
     each_event_update(state, rng);
 }
@@ -10245,8 +10299,14 @@ fn skill_swap(
     ) else {
         return false;
     };
-    let src_ability = state.side(src_side).team_member(si).ability;
-    let tgt_ability = real_ability(state, tgt_side, ti);
+    // PS skillSwap reads `getAbility()`: a Gastro Acid-suppressed ability
+    // is still swapped (and the volatile keeps the new one suppressed).
+    let src_ability = if state.side(src_side).active[src_slot].gastro_acid {
+        held_ability(state, src_side, src_slot, si)
+    } else {
+        state.side(src_side).team_member(si).ability
+    };
+    let tgt_ability = held_ability(state, tgt_side, tgt_slot, ti);
     // PS `fainted` is only set once faints resolve, so a holder KO'd by the
     // current hit still swaps.
     if fainted_now(state, src_side, si)
@@ -10267,6 +10327,13 @@ fn skill_swap(
     }
     state.side_mut(src_side).team_member_mut(si).ability = tgt_ability;
     state.side_mut(tgt_side).team_member_mut(ti).ability = src_ability;
+    for (sd, sl, i) in [(src_side, src_slot, si), (tgt_side, tgt_slot, ti)] {
+        if state.side(sd).active[sl].gastro_acid && state.side(sd).active[sl].pokemon_index == Some(i) {
+            let new = state.side(sd).team_member(i).ability;
+            state.side_mut(sd).active[sl].gastro_ability = new;
+            state.side_mut(sd).team_member_mut(i).ability = Abilities::NONE;
+        }
+    }
     reset_protean_effect(state, src_side, si);
     reset_protean_effect(state, tgt_side, ti);
     // The new abilities' Start events (Trace's draw included) run through
@@ -11216,6 +11283,7 @@ fn entry_hazards(state: &mut DoublesState, side: Side, slot: usize) {
     };
     let gravity_on = state.gravity.active;
     let misty_on = state.terrain.terrain_type == crate::engine::state::Terrain::MISTYTERRAIN;
+    let sun_on = matches!(effective_weather(state), Weather::SUN | Weather::HARSHSUN);
     let s = state.side_mut(side);
     if alive {
         healing_wish_on_switch_in(s, slot);
@@ -11251,6 +11319,9 @@ fn entry_hazards(state: &mut DoublesState, side: Side, slot: usize) {
         // Immunity `onSetStatus` (PS data/abilities.ts immunity) refuses psn / tox,
         // which are the only statuses the hazard sets: the spikes stay up.
         let immunity = s.team_member(idx).ability == Abilities::IMMUNITY;
+        // Leaf Guard `onSetStatus` refuses any status in sun (the spikes stay).
+        // PS data/abilities.ts leafguard.
+        let immunity = immunity || (sun_on && s.team_member(idx).ability == Abilities::LEAFGUARD);
         let new_status = if grounded && !misty_on && toxic_spikes > 0 && s.side_conditions.safeguard == 0 && !purifying_salt && !immunity {
             let cur = s.team_member(idx).status;
             if cur == PokemonStatus::NONE {
@@ -11388,8 +11459,9 @@ enum ResidualKind {
     FairyLock,
     /// Wonder Room duration countdown (order 27, subOrder 5).
     WonderRoom,
-    /// Terrain duration countdown (order 27, subOrder 7).
-    Terrain,
+    /// Terrain duration countdown (order 27, subOrder 7), for the terrain
+    /// that was up when the handlers were collected.
+    Terrain(crate::engine::state::Terrain),
     /// `allyswitch` duration countdown (duration 2).
     AllySwitch(Side, usize),
     /// `lockon` duration countdown (duration 2, subOrder 2).
@@ -11436,7 +11508,7 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
         push(1, 0, 5, ResidualKind::Weather);
     }
     if state.terrain.terrain_type != crate::engine::state::Terrain::NONE {
-        push(27, 0, 7, ResidualKind::Terrain);
+        push(27, 0, 7, ResidualKind::Terrain(state.terrain.terrain_type));
     }
     // PS data/moves.ts trickroom: onFieldResidualOrder 27, SubOrder 1. Its
     // duration drops (and it ends, `-fieldend`) in this residual handler.
@@ -12628,7 +12700,14 @@ fn end_of_turn(
                     }
                 }
             }
-            ResidualKind::Terrain => {
+            ResidualKind::Terrain(t) => {
+                // PS `fieldEvent` skips a handler whose effect state was replaced
+                // (`expectedStateLocation !== handler.state`): a terrain set
+                // earlier in this residual (Seed Sower on a Future Sight hit)
+                // does not count down this turn. PS sim/battle.ts fieldEvent.
+                if state.terrain.terrain_type != t {
+                    continue;
+                }
                 if state.terrain.turns_remaining > 0 {
                     state.terrain.turns_remaining -= 1;
                     if state.terrain.turns_remaining == 0 {
@@ -12945,7 +13024,7 @@ fn end_of_turn(
     // On-switch abilities (Intimidate) for each newly switched-in pokemon.
     // TODO(PS parity): `fieldEvent('SwitchIn')` handler ties.
     for (side, slot, _) in pending_switches {
-        if apply_on_switch_abilities(state, *side, *slot, rng) {
+        if switched_in_alive(state, *side, *slot) && apply_on_switch_abilities(state, *side, *slot, rng) {
             let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
         }
     }

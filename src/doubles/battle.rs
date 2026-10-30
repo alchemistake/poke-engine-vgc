@@ -1496,6 +1496,7 @@ pub fn run_battle_fuzz(
                         // PS `switchIn`: a live switch-out cancels the old pokemon's
                         // queued actions (`queue.cancelAction(oldActive)`).
                         let old_pi = state.side(side).active[slot].pokemon_index;
+                        switch_out_end_event(state, rng, side, slot);
                         switch_in(state, side, slot, position);
                         // PS `insertChoice` -> `pokemon.updateSpeed()` for the incoming
                         // pokemon: its `speed` is fresh for `runSwitch`'s speedSort.
@@ -1947,6 +1948,21 @@ fn possible_switches(state: &DoublesState, side: Side) -> Vec<usize> {
 /// PS `dragIn` for every active flagged by a phazing move: a random
 /// replacement (`getRandomSwitchable` -> `sample`), switched in with
 /// `isDrag`, which runs `runSwitch` at once.
+/// PS `switchIn` (sim/battle-actions.ts): a live pokemon leaving the field runs
+/// `singleEvent('End', ability)` before the swap. Cloud Nine / Air Lock `onEnd`
+/// runs `eachEvent('WeatherChange')`, a speed sort of all actives. A fainted
+/// pokemon (faint replacements) runs no End event here; its faint handles it.
+fn switch_out_end_event(state: &DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize) {
+    let live_cloud = state
+        .side(side)
+        .slot_pokemon(slot)
+        .map(|p| p.hp > 0 && matches!(p.ability, Abilities::CLOUDNINE | Abilities::AIRLOCK))
+        .unwrap_or(false);
+    if live_cloud {
+        let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+    }
+}
+
 fn drag_in_all(state: &mut DoublesState, rng: &mut Gen5Rng) {
     for side in [Side::One, Side::Two] {
         for slot in 0..2 {
@@ -1962,6 +1978,7 @@ fn drag_in_all(state: &mut DoublesState, rng: &mut Gen5Rng) {
                 continue;
             }
             let pick = options[rng.label("drag in").random(options.len() as u32) as usize];
+            switch_out_end_event(state, rng, side, slot);
             switch_in(state, side, slot, pick);
             let _ = sorted_actives(state, rng, "speed tie (switch-in)");
             apply_sticky_web(state, side, slot);
@@ -2335,6 +2352,18 @@ fn execute_action_body(
     let was_recharging = state.side(action.side).active[action.slot].recharging;
     let order_len = move_order.len();
     state.side_mut(action.side).active[action.slot].move_result_this_turn = None;
+    // PS destinybond `onBeforeMovePriority: -1` (and `onMoveAborted`): any move but
+    // Destiny Bond removes the volatile before the move's effects, so a self-faint
+    // such as Memento does not take the attacker down (PS data/conditions.ts destinybond).
+    if action.choice.move_id != Choices::DESTINYBOND {
+        let pre_slot = state
+            .side(action.side)
+            .active
+            .iter()
+            .position(|a| a.pokemon_index == Some(action.pokemon_index))
+            .unwrap_or(action.slot);
+        state.side_mut(action.side).active[pre_slot].destinybond = false;
+    }
     state.in_move = true;
     let mold_breaker = mold_breaker_suppress(state, action);
     AFTER_MOVE_TIE_DRAWN.with(|c| c.set(false));
@@ -5112,17 +5141,6 @@ fn execute_action_inner(
                     // PS `gotAttacked`: `attackedBy` entry with damage / slot
                     // (Metal Burst / Comeuppance `getLastDamagedBy`).
                     state.side_mut(target_side).damaged_by[tidx as usize].push((side, slot, damage, turn_now, idx as usize));
-                    // Fire-type damaging move `onDamagingHit` (data/conditions.ts
-                    // frz): a frozen target thaws. No draw.
-                    // PS `cureStatus` returns when `!this.hp`: this hook runs after the
-                    // damage, so a target KO'd by the hit stays frozen (`apply_damage` is below).
-                    if choice.move_type == PokemonType::FIRE && choice.category != MoveCategory::Status {
-                        let pm = state.side_mut(target_side).team_member_mut(tidx);
-                        if pm.status == PokemonStatus::FREEZE && pm.hp > damage {
-                            pm.status = PokemonStatus::NONE;
-                            pm.sleep_turns = 0;
-                        }
-                    }
                     // Toxic Debris `onDamagingHit`: a physical hit on the
                     // holder adds a Toxic Spikes layer to the attacker's side
                     // (no third layer).
@@ -7414,7 +7432,16 @@ fn execute_action_inner(
                         }
                     }
                     Effect::Status(st) => {
-                        if let Some(tidx) = state.side(ts).active[tslot].pokemon_index {
+                        // PS `secondary.status` uses `trySetStatus`, which passes the
+                        // current status: a statused target (a frozen one is only thawed
+                        // after the secondaries) makes setStatus a no-op, with no
+                        // immunity check and no SetStatus event (sim/pokemon.ts setStatus).
+                        let statused = state
+                            .side(ts)
+                            .slot_pokemon(tslot)
+                            .map(|p| p.status != PokemonStatus::NONE)
+                            .unwrap_or(false);
+                        if let (false, Some(tidx)) = (statused, state.side(ts).active[tslot].pokemon_index) {
                             set_status_event_tie(state, rng, ts, tslot, *st, ts != side, true);
                             if !status_immune(state, ts, tslot, *st, ts != side, side, slot) {
                                 set_status(state, rng, ts, tidx, *st);
@@ -7598,6 +7625,19 @@ fn execute_action_inner(
         }
         // DamagingHit (after secondaries, PS `spreadMoveHit`).
         if hit_damage.is_some() {
+            // Fire-type damaging move `onDamagingHit` (data/conditions.ts frz): a frozen
+            // target thaws. PS runs it after the secondaries, so a secondary status on
+            // the frozen target fails first. No draw. `cureStatus` returns when the
+            // target has no HP left, so a target KO'd by the hit stays frozen.
+            if choice.move_type == PokemonType::FIRE && choice.category != MoveCategory::Status {
+                if let Some(didx) = state.side(target_side).active[target_slot].pokemon_index {
+                    let pm = state.side_mut(target_side).team_member_mut(didx);
+                    if pm.status == PokemonStatus::FREEZE && pm.hp > 0 {
+                        pm.status = PokemonStatus::NONE;
+                        pm.sleep_turns = 0;
+                    }
+                }
+            }
             // Glaive Rush `self.volatileStatus`.
             if choice.move_id == Choices::GLAIVERUSH && ti == 0 && state.side(side).team_member(idx).hp > 0 {
                 state.side_mut(side).active[slot].glaive_rush = true;
@@ -7736,6 +7776,12 @@ fn execute_action_inner(
         if weather_suppress_fainted {
             weather_suppress_fainted = false;
             each_event_update(state, rng);
+        }
+        // PS `hitStepMoveHitLoop` (after the per-hit eachEvent): `if (!pokemon.hp &&
+        // targets.length === 1) break;`. A user KO'd by the hit (Rough Skin, Rocky Helmet,
+        // ...) takes no further hits. Spread and smart-target moves have several targets.
+        if !is_spread && !smart_hits && state.side(side).team_member(idx).hp <= 0 {
+            break 'hit_loop;
         }
     }
 
@@ -11067,10 +11113,11 @@ fn entry_hazards(state: &mut DoublesState, side: Side, slot: usize) {
         } else {
             None
         };
+        // PS toxicspikes `onSwitchIn`: a grounded Poison type removes the layers
+        // whatever its status (no status check; boots and Safeguard don't matter).
         let clears_toxicspikes = grounded
             && toxic_spikes > 0
-            && (types.0 == PokemonType::POISON || types.1 == PokemonType::POISON)
-            && s.team_member(idx).status == PokemonStatus::NONE;
+            && (types.0 == PokemonType::POISON || types.1 == PokemonType::POISON);
         // Apply hazard damage.
         if spikes_dmg > 0 {
             let p = &mut s.team_member_mut(idx);

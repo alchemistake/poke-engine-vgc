@@ -537,9 +537,17 @@ function stepPSBattle(battleSeed, teamA, teamB, controller, onInit, onTurn) {
         // No usable moves (all disabled / 0 PP / no valid target). Prefer the
         // Struggle entry if the request offers one; otherwise pick the first
         // move by index (PS will reject unusable ones, which the fuzzer reports).
-        const idx = Math.max(data.moves.findIndex((m) => m.id === 'struggle'), 0);
+        // An enabled move left out only for lack of a target (Helping Hand
+        // with the ally fainted) is still a legal choice: aim it at the empty
+        // ally slot, and PS fails the move.
+        let idx = data.moves.findIndex((m) => m.id === 'struggle');
+        if (idx < 0) idx = data.moves.findIndex((m) => !m.disabled && !revealedDisabled(m) && m.pp > 0);
+        idx = Math.max(idx, 0);
         const m = data.moves[idx];
-        const t = targetsFor(m && m.target);
+        let t = targetsFor(m && m.target);
+        if (t.length === 0 && m && (m.target === 'adjacentAlly' || m.target === 'adjacentAllyOrSelf')) {
+          t = [-(2 - slot)];
+        }
         const target = t.length ? t[controller.random(t.length)] : NO_TARGET;
         return {
           kind: 'move',

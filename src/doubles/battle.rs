@@ -4474,7 +4474,9 @@ fn execute_action_inner(
                 PokemonVolatileStatus::MAGNETRISE => {
                     // PS data/moves.ts magnetrise.onTry: fails with Ingrain or
                     // Gravity (`cant`). TODO(PS parity): Smack Down.
-                    if state.side(ts).active[tslot].ingrain || state.gravity.active {
+                    // PS `addVolatile`: an active volatile (no `onRestart`) makes it
+                    // return false, so the status move fails with no `eachEvent`.
+                    if state.side(ts).active[tslot].ingrain || state.gravity.active || state.side(ts).active[tslot].magnet_rise > 0 {
                         move_failed = true;
                     } else {
                         state.side_mut(ts).active[tslot].magnet_rise = 5;
@@ -6645,6 +6647,7 @@ fn base_power_with_modifiers(
 /// PS `pokemon.isGrounded()` for a slot: Magnet Rise (`magnetrise` volatile)
 /// makes the holder airborne; the item / ability / type checks are on `Pokemon`.
 fn slot_grounded(p: &crate::state::Pokemon, a: &ActiveSlot) -> bool {
+    // PS `isGrounded`: the `smackdown` volatile grounds the holder first.
     a.magnet_rise == 0 && p.is_grounded()
 }
 

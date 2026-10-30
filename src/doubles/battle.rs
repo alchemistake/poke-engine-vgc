@@ -10087,7 +10087,7 @@ fn end_of_turn(
     // TODO(PS parity): `fieldEvent('SwitchIn')` handler ties.
     for (side, slot, _) in pending_switches {
         if apply_on_switch_abilities(state, *side, *slot, rng) {
-            let _ = sorted_actives(state, rng, "speed tie (switch-in)");
+            let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
         }
     }
     if !pending_switches.is_empty() {

@@ -394,7 +394,11 @@ fn ally_faint_copy(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, fain
         }
         state.side_mut(side).team_member_mut(hidx).ability = ability;
         ability_update_cures(state, side, slot);
-        let _ = apply_on_switch_abilities(state, side, slot, rng);
+        // The Start event's `eachEvent('WeatherChange' / 'TerrainChange')` (Cloud
+        // Nine, Drought, ...) is a sort of all actives, as for a switch-in.
+        if apply_on_switch_abilities(state, side, slot, rng) {
+            let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+        }
     }
 }
 
@@ -1460,7 +1464,67 @@ pub fn run_battle_fuzz(
             state.side_two.sync_sc_order();
             each_event_update(state, rng);
             let queue_start = i;
+            // PS runAction tail: `runPursuitActivation` (gen >= 5: `eachEvent('Update')`)
+            // for every live switching pokemon, sides then slots, before the switch
+            // request; Baton Pass / Shed Tail set `skipPursuit`. Then commitChoices
+            // `queue.sort()`s the new switch actions (speed order, ties shuffled)
+            // and they run one by one. PS sim/battle.ts runAction / commitChoices,
+            // sim/battle-actions.ts runPursuitActivation.
+            let mut fs_slots: Vec<(Side, usize)> = Vec::new();
             for (side, slot) in [(Side::One, 0usize), (Side::One, 1), (Side::Two, 0), (Side::Two, 1)] {
+                if !state.side(side).active[slot].force_switch {
+                    continue;
+                }
+                fs_slots.push((side, slot));
+                let a = &state.side(side).active[slot];
+                if a.reviving || a.baton_passing || a.shed_tailing {
+                    continue;
+                }
+                let key = if side == Side::One { "a" } else { "b" };
+                let answered = turn.switches.iter().enumerate().any(|(k, sw)| {
+                    !used_switches[k] && sw.pivot && sw.side == key && sw.slot == slot && sw.position.is_some()
+                });
+                if answered && state.side(side).slot_pokemon(slot).is_some_and(|p| p.hp > 0) {
+                    each_event_update(state, rng);
+                }
+            }
+            if fs_slots.len() >= 2 {
+                update_speed(state);
+                let hs: Vec<ResidualHandler> = fs_slots
+                    .iter()
+                    .enumerate()
+                    .map(|(k, &(sd, sl))| {
+                        let speed = state.side(sd).active[sl]
+                            .pokemon_index
+                            .map(|w| state.side(sd).speed_cache[w as usize] as i32)
+                            .unwrap_or(0);
+                        ResidualHandler { order: 0, priority: 0, speed, sub_order: 0, kind: ResidualKind::Status(sd, k) }
+                    })
+                    .collect();
+                let old = fs_slots.clone();
+                fs_slots = sort_residual_handlers(hs, rng, "speed tie (move order)")
+                    .into_iter()
+                    .filter_map(|h| match h.kind {
+                        ResidualKind::Status(_, k) => Some(old[k]),
+                        _ => None,
+                    })
+                    .collect();
+            }
+            // Two or more `instaswitch` actions: each `switchIn` queues its
+            // `runSwitch` behind the next instaswitch, so they all switch in
+            // first and one `runSwitch` batch follows (as at the end of a turn).
+            // PS sim/battle-actions.ts switchIn / runSwitch, sim/battle.ts runAction.
+            let switching = fs_slots.iter().filter(|&&(sd, sl)| {
+                let a = &state.side(sd).active[sl];
+                let key = if sd == Side::One { "a" } else { "b" };
+                !a.reviving && turn.switches.iter().enumerate().any(|(k, sw)| {
+                    !used_switches[k] && sw.pivot && sw.side == key && sw.slot == sl && sw.position.is_some()
+                })
+            }).count();
+            let batch = switching >= 2;
+            let mut batch_in: Vec<(Side, usize)> = Vec::new();
+            let mut run_switch_speeds: Vec<i16> = Vec::new();
+            for (side, slot) in fs_slots {
                 if !state.side(side).active[slot].force_switch {
                     continue;
                 }
@@ -1492,9 +1556,7 @@ pub fn run_battle_fuzz(
                         // Baton Pass / Shed Tail set `skipPursuit` in `self.onHit`
                         // (PS data/moves.ts), so they skip it.
                         // TODO(PS parity): Shed Tail (not in the engine yet).
-                        if !state.side(side).active[slot].baton_passing && !state.side(side).active[slot].shed_tailing {
-                            each_event_update(state, rng);
-                        }
+                        // (Its `runPursuitActivation` sort ran above, for all switchers.)
                         // The switch answer (`commitChoices` -> `updateSpeed`),
                         // the `instaswitch` action, then the `runSwitch` action.
                         update_speed(state);
@@ -1528,7 +1590,11 @@ pub fn run_battle_fuzz(
                         // queued actions (`queue.cancelAction(oldActive)`).
                         let old_pi = state.side(side).active[slot].pokemon_index;
                         switch_out_end_event(state, rng, side, slot);
-                        switch_in(state, side, slot, position);
+                        if batch {
+                            switch_in_inner(state, side, slot, position);
+                        } else {
+                            switch_in(state, side, slot, position);
+                        }
                         // PS `insertChoice` -> `pokemon.updateSpeed()` for the incoming
                         // pokemon: its `speed` is fresh for `runSwitch`'s speedSort.
                         update_speed(state);
@@ -1607,6 +1673,20 @@ pub fn run_battle_fuzz(
                             // sim/battle-actions.ts switchIn, sim/battle-queue.ts insertChoice.
                             update_speed(state);
                         }
+                        if batch {
+                            // `insertChoice(runSwitch)`: a tie with an already queued
+                            // `runSwitch` draws its place.
+                            update_speed(state);
+                            if let Some(sp) = effective_speed(state, side, slot) {
+                                let ties = run_switch_speeds.iter().filter(|&&x| x == sp).count();
+                                if ties > 0 {
+                                    let _ = rng.label("speed tie (queue insert)").random(ties as u32 + 1);
+                                }
+                                run_switch_speeds.push(sp);
+                            }
+                            batch_in.push((side, slot));
+                            continue;
+                        }
                         each_event_update(state, rng);
                         let _ = sorted_actives(state, rng, "speed tie (switch-in)");
                         apply_sticky_web(state, side, slot);
@@ -1621,6 +1701,36 @@ pub fn run_battle_fuzz(
                         update_forecast(state);
                     }
                 }
+            }
+            if !batch_in.is_empty() {
+                // The batched `runSwitch` (see above): the last instaswitch's
+                // `eachEvent('Update')`, the switch-in sort, each incoming pokemon's
+                // hazards and Start in that order, then the runSwitch's eachEvent.
+                each_event_update(state, rng);
+                let order = sorted_actives(state, rng, "speed tie (switch-in)");
+                for (sd, sl) in order {
+                    if batch_in.contains(&(sd, sl)) {
+                        entry_hazards(state, sd, sl);
+                        apply_sticky_web(state, sd, sl);
+                        refresh_mimicry_slot(state, sd, sl);
+                    }
+                }
+                // Opportunist `onAnySwitchIn` (as `switch_in` does).
+                for sd in [Side::One, Side::Two] {
+                    for sl in 0..2 {
+                        flush_opportunist(state, sd, sl);
+                    }
+                }
+                for &(sd, sl) in &batch_in {
+                    if !state.side(sd).slot_pokemon(sl).is_some_and(|p| p.hp > 0) {
+                        continue;
+                    }
+                    if apply_on_switch_abilities(state, sd, sl, rng) {
+                        let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+                    }
+                }
+                each_event_update(state, rng);
+                update_forecast(state);
             }
             if i < actions.len() {
                 resort_queue(state, rng, &mut actions[i..]);
@@ -6168,11 +6278,19 @@ fn execute_action_inner(
                         && !crate::engine::mechanics::no_entrain(src_ability)
                         && !crate::engine::mechanics::cant_suppress(src_ability) =>
                 {
+                    // `setAbility`: the old ability's End first (Cloud Nine / Air
+                    // Lock `onEnd` -> `eachEvent('WeatherChange')`). PS sim/pokemon.ts setAbility.
+                    if matches!(tm.ability, Abilities::CLOUDNINE | Abilities::AIRLOCK) {
+                        let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+                    }
                     state.side_mut(ts).team_member_mut(ti).ability = src_ability;
                     reset_protean_effect(state, ts, ti);
                     ability_update_cures(state, ts, tsl);
-                    // The new ability's Start event (Intimidate, Drought, ...).
-                    let _ = apply_on_switch_abilities(state, ts, tsl, rng);
+                    // The new ability's Start event (Intimidate, Drought, ...); its
+                    // weather / terrain / Cloud Nine `eachEvent` is a sort.
+                    if apply_on_switch_abilities(state, ts, tsl, rng) {
+                        let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+                    }
                 }
                 _ => move_failed = true,
             }
@@ -6438,11 +6556,20 @@ fn execute_action_inner(
                     // (`suppressingAbility`) and the suppression lasts until the
                     // user switches out, so the copy is not applied here.
                     if state.side(side).team_member(u).ability != Abilities::NONE {
+                        // `setAbility`: `singleEvent('End', oldAbility)` first; a Cloud
+                        // Nine / Air Lock `onEnd` runs `eachEvent('WeatherChange')`.
+                        // PS sim/pokemon.ts setAbility, data/abilities.ts cloudnine.
+                        if matches!(real_ability(state, side, u), Abilities::CLOUDNINE | Abilities::AIRLOCK) {
+                            let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+                        }
                         state.side_mut(side).team_member_mut(u).ability = ta;
                         reset_protean_effect(state, side, u);
                         // PS `setAbility` runs the new ability's Start event
-                        // (Sand Stream, Drought, ...), as Skill Swap does.
-                        let _ = apply_on_switch_abilities(state, side, slot, rng);
+                        // (Sand Stream, Drought, ...), as Skill Swap does: its
+                        // `eachEvent('WeatherChange')` & co. is a sort of all actives.
+                        if apply_on_switch_abilities(state, side, slot, rng) {
+                            let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+                        }
                     }
                 }
                 _ => move_failed = true,
@@ -11857,8 +11984,11 @@ fn each_event_update(state: &mut DoublesState, rng: &mut Gen5Rng) {
             };
             if holder_ok {
                 if trace_copy(state, s, sl, rng).is_some() {
-                    // PS `setAbility` runs the new ability's `Start` event.
-                    let _ = apply_on_switch_abilities(state, s, sl, rng);
+                    // PS `setAbility` runs the new ability's `Start` event (its
+                    // weather / terrain / Cloud Nine `eachEvent` is a sort).
+                    if apply_on_switch_abilities(state, s, sl, rng) {
+                        let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+                    }
                 }
             }
         }

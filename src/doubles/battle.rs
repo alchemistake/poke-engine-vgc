@@ -2170,19 +2170,6 @@ fn execute_action_inner(
     };
 
     let external = state.side(side).active[slot].external_call || action.no_pp;
-    // Deduct PP (pokemon-showdown deducts before the move runs).
-    if !external {
-        let s = state.side_mut(side);
-        if let Some(p) = s.active[slot].pokemon_index {
-            // PS deductPP: `ppData.used = true`.
-            s.moves_used[p as usize][action.choice.move_index as usize] = true;
-            let mv = &mut s.team_member_mut(p).moves[&action.choice.move_index];
-            if mv.pp > 0 {
-                mv.pp -= 1;
-            }
-        }
-    }
-
     // The attacker must still be on the field.
     if state.side(side).active[slot].pokemon_index.is_none() {
         return;
@@ -2303,8 +2290,21 @@ fn execute_action_inner(
         return;
     }
 
+    // Gravity `onBeforeMove` (priority 6, data/moves.ts gravity.condition): moves
+    // with the `gravity` flag are blocked ("cant ... move: Gravity"), before the
+    // paralysis draw (priority 1). No draw.
+    if state.gravity.active && has_gravity_flag(action.choice.move_id) {
+        return;
+    }
+
     // Taunt `onBeforeMove` (priority 5): Status moves are blocked.
     if state.side(side).active[slot].taunt > 0 && action.choice.category == MoveCategory::Status {
+        return;
+    }
+
+    // Imprison `onFoeBeforeMove` (priority 4, PS data/moves.ts imprison): a foe's
+    // Imprison blocks the moves its user knows ("cant ... move: Imprison"). No draw.
+    if action.choice.move_id != Choices::STRUGGLE && imprison_blocks(state, side, action.choice.move_id) {
         return;
     }
 
@@ -2364,6 +2364,31 @@ fn execute_action_inner(
     if action.choice.move_id == Choices::FOCUSPUNCH && state.side(side).active[slot].lost_focus {
         return;
     }
+    }
+
+    // PS `runMove` -> `deductPP` (after BeforeMove and beforeMoveCallback, and
+    // skipped for a locked move). `ppData.used` is set even when the PP is 0,
+    // then the move fails with `|cant|...|nopp|` (Spite, PS battle-actions.ts).
+    // Struggle never checks PP.
+    if !external {
+        let locked = {
+            let a = &state.side(side).active[slot];
+            // PS `getLockedMove`: `lockedmove` (Outrage, ...), uproar, and the
+            // `twoturnmove` volatile (its `onLockMove`: the firing turn).
+            a.locked_move.is_some() || a.uproar > 0 || (a.charging.is_some() && !a.charge_aborted)
+        };
+        if !locked {
+            let s = state.side_mut(side);
+            if let Some(p) = s.active[slot].pokemon_index {
+                s.moves_used[p as usize][action.choice.move_index as usize] = true;
+                let mv = &mut s.team_member_mut(p).moves[&action.choice.move_index];
+                if mv.pp > 0 {
+                    mv.pp -= 1;
+                } else if action.choice.move_id != Choices::STRUGGLE {
+                    return;
+                }
+            }
+        }
     }
 
     // PS `useMove` -> `pokemon.moveUsed` (after `runMove`'s BeforeMove checks,
@@ -5232,12 +5257,43 @@ fn execute_action_inner(
         // Imprison (PS data/moves.ts imprison, `addVolatile('imprison')` on the
         // user): fails if the user already has it, else it lands (`-start`) and
         // the move runs its hit loop.
-        // TODO(PS parity): the foe's `onFoeBeforeMove` / `onFoeDisableMove` blocks.
         if choice.move_id == Choices::IMPRISON && ti == 0 && is_self && !move_failed {
             if state.side(side).active[slot].imprison {
                 move_failed = true;
             } else {
                 state.side_mut(side).active[slot].imprison = true;
+            }
+        }
+        // Spite `onHit` (PS data/moves.ts spite): the target's last move loses
+        // 4 PP (`deductPP(move, 4)`, `ppData.used` set). No last move, or no PP
+        // left, fails silently. No draw.
+        if choice.move_id == Choices::SPITE && ti == 0 && !move_failed {
+            let tgt = &state.side(target_side).active[target_slot];
+            if let (Some(lm), Some(tidx)) = (tgt.last_move, tgt.pokemon_index) {
+                let ts = state.side_mut(target_side);
+                let p = ts.team_member_mut(tidx);
+                let found = (0..4usize).find(|&k| {
+                    let mi = match k {
+                        0 => crate::state::PokemonMoveIndex::M0,
+                        1 => crate::state::PokemonMoveIndex::M1,
+                        2 => crate::state::PokemonMoveIndex::M2,
+                        _ => crate::state::PokemonMoveIndex::M3,
+                    };
+                    p.moves[&mi].id == lm
+                });
+                if let Some(k) = found {
+                    let mi = match k {
+                        0 => crate::state::PokemonMoveIndex::M0,
+                        1 => crate::state::PokemonMoveIndex::M1,
+                        2 => crate::state::PokemonMoveIndex::M2,
+                        _ => crate::state::PokemonMoveIndex::M3,
+                    };
+                    let mv = &mut p.moves[&mi];
+                    if mv.pp > 0 {
+                        mv.pp = (mv.pp - 4).max(0);
+                    }
+                    ts.moves_used[tidx as usize][k] = true;
+                }
             }
         }
         // Defog `onHit`: -1 evasion (unless behind a Substitute), clear the
@@ -9036,29 +9092,36 @@ fn has_notrace(a: Abilities) -> bool {
 /// terrain change (`eachEvent('TerrainChange')`). Types are restored on
 /// switch-out through `type_change`, like Libero / Protean.
 fn refresh_mimicry(state: &mut DoublesState) {
-    let terrain = state.terrain.terrain_type;
     for side in [Side::One, Side::Two] {
         for slot in 0..2 {
-            let s = state.side_mut(side);
-            let Some(idx) = s.active[slot].pokemon_index else { continue };
-            let p = s.team_member(idx);
-            if p.ability != Abilities::MIMICRY {
-                continue;
-            }
-            let want = match crate::engine::mechanics::terrain_pulse_type(terrain, true) {
-                Some(t) => (t, PokemonType::TYPELESS),
-                None => p.base_types,
-            };
-            let cur = p.types;
-            if cur == want {
-                continue;
-            }
-            if s.active[slot].type_change.is_none() {
-                s.active[slot].type_change = Some(cur);
-            }
-            s.team_member_mut(idx).types = want;
+            refresh_mimicry_slot(state, side, slot);
         }
     }
+}
+
+/// Mimicry for one active slot. PS `onStart` (switch-in) and `onTerrainChange`
+/// (`eachEvent('TerrainChange')`, all actives) are the only callers: a switch-in
+/// must not reset the types of the other actives (Magic Powder, Soak).
+fn refresh_mimicry_slot(state: &mut DoublesState, side: Side, slot: usize) {
+    let terrain = state.terrain.terrain_type;
+    let s = state.side_mut(side);
+    let Some(idx) = s.active[slot].pokemon_index else { return };
+    let p = s.team_member(idx);
+    if p.ability != Abilities::MIMICRY {
+        return;
+    }
+    let want = match crate::engine::mechanics::terrain_pulse_type(terrain, true) {
+        Some(t) => (t, PokemonType::TYPELESS),
+        None => p.base_types,
+    };
+    let cur = p.types;
+    if cur == want {
+        return;
+    }
+    if s.active[slot].type_change.is_none() {
+        s.active[slot].type_change = Some(cur);
+    }
+    s.team_member_mut(idx).types = want;
 }
 
 fn apply_on_switch_abilities(
@@ -9370,7 +9433,7 @@ fn revive_member(state: &mut DoublesState, side: Side, position: usize) {
 fn switch_in(state: &mut DoublesState, side: Side, slot: usize, position: usize) {
     switch_in_inner(state, side, slot, position);
     entry_hazards(state, side, slot);
-    refresh_mimicry(state);
+    refresh_mimicry_slot(state, side, slot);
 }
 
 /// Healing Wish / Lunar Dance `slotCondition` `onSwitchIn` -> `onSwap`: a hurt
@@ -10143,12 +10206,21 @@ fn end_turn_disable_moves(state: &DoublesState, rng: &mut Gen5Rng) {
             hs.push((4294967296, speed, 2));
         }
         // TODO(PS parity): choicelock / belch /
-        // stuffcheeks volatiles, Imprison `onFoeDisableMove`.
+        // stuffcheeks volatiles.
         if ss.team_member(xidx).ability == Abilities::GORILLATACTICS {
             hs.push((4294967296, speed, 7));
         }
         if state.gravity.active {
             hs.push((4294967296, 0, 2));
+        }
+        // Imprison `onFoeDisableMove` (data/moves.ts imprison): each active foe
+        // holding Imprison is a handler on this pokemon, keyed by the foe's speed.
+        let other = s.other();
+        for osl in 0..2 {
+            let oa = &state.side(other).active[osl];
+            if oa.imprison && oa.pokemon_index.is_some_and(|i| state.side(other).team_member(i).hp > 0) {
+                hs.push((4294967296, cached_speed(state, other, osl), 2));
+            }
         }
         if hs.len() >= 2 {
             sort_handler_ties(&mut hs, rng, "speed tie (move order)");
@@ -10159,6 +10231,10 @@ fn end_turn_disable_moves(state: &DoublesState, rng: &mut Gen5Rng) {
             ts.push((4294967296, speed, 2));
         }
         if a.partial_trap.is_some() {
+            ts.push((4294967296, speed, 2));
+        }
+        // Ingrain condition `onTrapPokemon` (PS data/moves.ts ingrain: tryTrap).
+        if a.ingrain {
             ts.push((4294967296, speed, 2));
         }
         if a.octolock.is_some() {
@@ -10172,6 +10248,40 @@ fn end_turn_disable_moves(state: &DoublesState, rng: &mut Gen5Rng) {
             sort_handler_ties(&mut ts, rng, "speed tie (trap)");
         }
     }
+}
+
+/// PS Imprison `onFoeBeforeMove` (data/moves.ts imprison): true when an active
+/// foe holds Imprison and its pokemon knows `move_id`.
+fn imprison_blocks(state: &DoublesState, side: Side, move_id: Choices) -> bool {
+    let other = side.other();
+    (0..2).any(|sl| {
+        let a = &state.side(other).active[sl];
+        a.imprison
+            && a.pokemon_index.is_some_and(|i| {
+                let p = state.side(other).team_member(i);
+                p.hp > 0
+                    && [&p.moves.m0, &p.moves.m1, &p.moves.m2, &p.moves.m3].iter().any(|m| m.id == move_id)
+            })
+    })
+}
+
+/// PS move flag `gravity` (champions data): Gravity blocks these moves.
+/// PS data/moves.ts: splash, bounce, floatyfall, fly, flyingpress, highjumpkick,
+/// jumpkick, magnetrise, skydrop, telekinesis.
+fn has_gravity_flag(move_id: Choices) -> bool {
+    matches!(
+        move_id,
+        Choices::SPLASH
+            | Choices::BOUNCE
+            | Choices::FLOATYFALL
+            | Choices::FLY
+            | Choices::FLYINGPRESS
+            | Choices::HIGHJUMPKICK
+            | Choices::JUMPKICK
+            | Choices::MAGNETRISE
+            | Choices::SKYDROP
+            | Choices::TELEKINESIS
+    )
 }
 
 /// PS `speedSort` over a handler list keyed by (order, speed, subOrder):
@@ -11039,9 +11149,9 @@ fn end_of_turn(
                 if pending_switches.iter().any(|&(ps, pl, _)| ps == side && pl == slot) {
                     entry_hazards(state, side, slot);
                     apply_sticky_web(state, side, slot);
+                    refresh_mimicry_slot(state, side, slot);
                 }
             }
-            refresh_mimicry(state);
         } else {
             for (side, slot, _) in pending_switches {
                 apply_sticky_web(state, *side, *slot);

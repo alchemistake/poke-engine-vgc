@@ -651,6 +651,14 @@ function stepPSBattle(battleSeed, teamA, teamB, controller, onInit, onTurn) {
           if (!flag) return;
           const p = side.active[slot];
           const pivot = !!(p && p.hp > 0 && !p.fainted);
+          // Revival Blessing: the answer picks a fainted party member to revive.
+          if (p && side.slotConditions[p.position]['revivalblessing']) {
+            const fainted = side.pokemon.map((q, pos) => ({ q, pos })).filter((x) => x.q.fainted);
+            const pick = fainted[controller.random(fainted.length)];
+            cur.switches.push({ side: key, slot, kind: 'revive', revive: true, position: order.get(pick.q), pivot });
+            toks.push(`switch ${pick.pos + 1}`);
+            return;
+          }
           if (candidates.length > 0) {
             const pickIdx = controller.random(candidates.length);
             const pick = candidates.splice(pickIdx, 1)[0];
@@ -980,9 +988,13 @@ function formatChoicesLabeled(turns, ps, upTo) {
     (t.switches || []).forEach((sw) => {
       const tag = sw.side === 'a' ? 'A' : 'B';
       const bt = sw.side === 'a' ? battleTeamA : battleTeamB;
-      const why = sw.pivot ? 'pivot switch (mid-turn)' : 'faint replacement (end of turn)';
+      const why = sw.revive ? 'Revival Blessing' : sw.pivot ? 'pivot switch (mid-turn)' : 'faint replacement (end of turn)';
       lines.push(
-        sw.kind === 'switch'
+        sw.kind === 'revive'
+          ? `    ${tag} slot ${sw.slot}: ${why}: revive position ${sw.position + 1} (${
+            bt[sw.position] ? bt[sw.position].species : '?'
+          })`
+          : sw.kind === 'switch'
           ? `    ${tag} slot ${sw.slot}: ${why}: in position ${sw.position + 1} (${
             bt[sw.position] ? bt[sw.position].species : '?'
           })`

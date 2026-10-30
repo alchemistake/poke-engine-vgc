@@ -1146,6 +1146,20 @@ pub fn run_battle_fuzz(
                 });
                 if let Some((i, sw)) = found {
                     used_switches[i] = true;
+                    if state.side(side).active[slot].reviving {
+                        state.side_mut(side).active[slot].reviving = false;
+                        if let (true, Some(position)) = (sw.revive, sw.position) {
+                            // The switch answer (`commitChoices` -> `updateSpeed`),
+                            // then the `revivalblessing` action (PS battle.ts
+                            // `runAction`): half HP, status cured.
+                            // TODO(PS parity): reviving the fainted ally still in
+                            // its active slot (queued `instaswitch`).
+                            update_speed(state);
+                            revive_member(state, side, position);
+                            each_event_update(state, rng);
+                        }
+                        continue;
+                    }
                     if let Some(position) = sw.position {
                         // PS `runPursuitActivation` (sim/battle-actions.ts, called
                         // from `Battle.runAction` for a live pokemon with a
@@ -5137,6 +5151,15 @@ fn execute_action_inner(
                 }
             }
         }
+        // Revival Blessing `onTryHit`: fails without a fainted party member.
+        // PS data/moves.ts revivalblessing.
+        if choice.move_id == Choices::REVIVALBLESSING && ti == 0 && !move_failed {
+            if state.side(side).team.iter().any(|p| p.hp <= 0 && p.id != crate::pokemon::PokemonName::NONE) {
+                state.side_mut(side).active[slot].reviving = true;
+            } else {
+                move_failed = true;
+            }
+        }
         // Shed Tail `onTryHit` / `onHit`: needs a replacement, no existing
         // Substitute and more than ceil(maxhp / 2) HP; the user pays that much
         // and the replacement gets the substitute (floor(maxhp / 4) HP).
@@ -6264,6 +6287,11 @@ fn execute_action_inner(
         Choices::PARTINGSHOT => drop_landed,
         _ => false,
     };
+    // Revival Blessing (`selfSwitch: true`): flags the switch request even
+    // without a healthy replacement (battle-actions.ts `spreadMoveHit`).
+    if choice.move_id == Choices::REVIVALBLESSING && state.side(side).active[slot].reviving {
+        state.side_mut(side).active[slot].force_switch = true;
+    }
     let shed = choice.move_id == Choices::SHEDTAIL && state.side(side).active[slot].shed_tailing;
     let baton = choice.move_id == Choices::BATONPASS;
     if baton && state.side(side).find_replacement().is_none() {
@@ -8448,6 +8476,17 @@ fn apply_side_condition(state: &mut DoublesState, side: Side, c: PokemonSideCond
 /// there (an alive occupant is switched out: PS `switchIn` ->
 /// `clearVolatile` resets its boosts), and apply entry hazards. On-switch
 /// abilities are applied by the caller.
+/// Revival Blessing `revivalblessing` action: the fainted party member at
+/// battle-team `position` returns with floor(maxhp / 2) HP (min 1) and no status.
+fn revive_member(state: &mut DoublesState, side: Side, position: usize) {
+    let s = state.side_mut(side);
+    let p = &mut s.team[position];
+    p.hp = (p.maxhp / 2).max(1);
+    p.status = PokemonStatus::NONE;
+    p.sleep_turns = 0;
+    s.toxic_stage[position] = 0;
+}
+
 fn switch_in(state: &mut DoublesState, side: Side, slot: usize, position: usize) {
     switch_in_inner(state, side, slot, position);
     refresh_mimicry(state);

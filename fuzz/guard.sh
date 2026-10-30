@@ -75,9 +75,10 @@ else
 fi
 
 # 6. Score.
-OUT=$(node fuzz/fuzz.js --seed 0 --count 1000 2>&1)
+TARGET=10000
+OUT=$(node fuzz/fuzz.js --seed 0 --count $TARGET 2>&1)
 if [ -z "$OUT" ]; then
-  SCORE=1000
+  SCORE=$TARGET
 else
   # The first failing seed (from the report's `reproduce:` line) is the score.
   SCORE=$(echo "$OUT" | grep -oE 'reproduce: node fuzz/fuzz.js --seed [0-9]+' | head -1 | grep -oE '[0-9]+$')

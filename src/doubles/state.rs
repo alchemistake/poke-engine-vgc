@@ -47,6 +47,9 @@ pub struct ActiveSlot {
     /// PS `move.hit` (1-based) of the current hit of a multi-hit move.
     pub hit_number: u8,
     pub shed_tailing: bool,
+    /// Revival Blessing hit: the slot's switch answer revives a fainted
+    /// party member instead of switching (PS `revivalblessing` slot condition).
+    pub reviving: bool,
     /// Flinched by the previous move's secondary effect; cannot act this turn.
     pub flinched: bool,
     /// Used a move with the `recharge` flag (Hyper Beam, Solar Beam, ...);
@@ -257,6 +260,7 @@ impl ActiveSlot {
             power_trick: false,
             hit_number: 1,
             shed_tailing: false,
+            reviving: false,
             flinched: false,
             recharging: false,
             charging: None,
@@ -729,6 +733,9 @@ pub struct FuzzSwitch {
     /// True for a mid-turn pivot switch (the slot's pokemon was still alive).
     #[serde(default)]
     pub pivot: bool,
+    /// Revival Blessing answer: `position` is the fainted pokemon revived.
+    #[serde(default)]
+    pub revive: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

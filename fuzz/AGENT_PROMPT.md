@@ -29,8 +29,8 @@ cargo build --release --features champions --no-default-features
 
 **The cycle:**
 1. **Find the first failure.**
-   `node fuzz/fuzz.js --seed 0 --count 1000` (about a second; see "Sweep
-   speed" below). No output and exit 0 means all 1000 pass: stop and report.
+   `node fuzz/fuzz.js --seed 0 --count 10000` (about a second; see "Sweep
+   speed" below). No output and exit 0 means all 10000 pass: stop and report.
    Otherwise copy the `reproduce:` line (e.g. `--seed 2 --count 1`). That
    seed is the score.
 2. **Fix only that battle.** Work on its `reproduce:` command. Re-running the

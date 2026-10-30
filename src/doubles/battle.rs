@@ -2627,7 +2627,10 @@ fn pressure_extra_count(state: &DoublesState, action: &Action) -> i8 {
     let all_foes = matches!(
         action.choice.move_id,
         Choices::IMPRISON | Choices::SPIKES | Choices::STEALTHROCK | Choices::TOXICSPIKES
-    ) || matches!(ty, "allAdjacentFoes" | "allAdjacent");
+    ) || matches!(ty, "allAdjacentFoes" | "allAdjacent")
+        // PS getMoveTargets: `all` targets `alliesAndSelf()` plus `foes(true)`
+        // (Wonder Room, Sunny Day, ...); `allySide` / `allyTeam` no foes.
+        || ty == "all";
     let single = matches!(ty, "normal" | "any" | "adjacentFoe" | "randomNormal");
     let slots: Vec<usize> = if all_foes {
         vec![0, 1]
@@ -4255,7 +4258,8 @@ fn execute_action_inner(
                 // Self-Destruct misses its ally Scolipede with no draw).
                 let user_no_guard = state.side(side).team_member(idx).ability == Abilities::NOGUARD
                     && !matches!(choice.move_id, Choices::EXPLOSION | Choices::MISTYEXPLOSION | Choices::SELFDESTRUCT);
-                let no_guard = user_no_guard || d.ability == Abilities::NOGUARD;
+                // Lock-On `onSourceInvulnerability`: the user's locked foe is hit.
+                let no_guard = user_no_guard || d.ability == Abilities::NOGUARD || lock_on_hits(state, side, slot, ts, tsl);
                 if matches!(
                     m,
                     Choices::DIG | Choices::DIVE | Choices::FLY | Choices::BOUNCE | Choices::PHANTOMFORCE | Choices::SHADOWFORCE | Choices::SKYDROP
@@ -10799,7 +10803,12 @@ fn semi_invulnerable_blocks(
             .slot_pokemon(tslot)
             .map(|p| p.ability == Abilities::NOGUARD)
             .unwrap_or(false);
-    !hits_anyway && !no_guard && mv != Choices::HELPINGHAND
+    // PS data/moves.ts lockon.condition `onSourceInvulnerability` (priority 1):
+    // the holder's moves against its locked foe return 0 (hit).
+    let lock_on = (0..2).any(|sl| {
+        state.side(src_side).active[sl].pokemon_index == Some(src_idx) && lock_on_hits(state, src_side, sl, ts, tslot)
+    });
+    !hits_anyway && !no_guard && !lock_on && mv != Choices::HELPINGHAND
 }
 
 /// The `onDamagingHit` abilities that set the field: Sand Spit

@@ -51,6 +51,21 @@ struct Action {
     /// `getActionSpeed` `ModifyPriority`). Re-sorts recompute it with the
     /// current ability (Skill Swap / Trace can give Prankster mid-turn).
     boost: i8,
+    /// PS `action.originalTarget` (`resolveAction`: `getAtLoc(targetLoc)` when
+    /// the action is queued), as (side, team index). Read by `tracksTarget`.
+    orig_target: Option<(Side, PokemonIndex)>,
+}
+
+/// PS sim/battle-queue.ts resolveAction: `originalTarget = pokemon.getAtLoc(targetLoc)`.
+fn orig_target_at(state: &DoublesState, side: Side, loc: i8) -> Option<(Side, PokemonIndex)> {
+    if loc == 0 {
+        return None;
+    }
+    let (ts, tsl) = if loc > 0 { (side.other(), (loc - 1) as usize) } else { (side, (-loc - 1) as usize) };
+    if tsl >= 2 {
+        return None;
+    }
+    state.side(ts).active[tsl].pokemon_index.map(|i| (ts, i))
 }
 
 impl Action {
@@ -759,6 +774,7 @@ fn plan_queue_change(
         prioritized: false,
         no_pp: false,
         recharge: false,
+        orig_target: None,
     };
     // `resolveAction`: no target location -> `getRandomTarget` (a draw), then
     // `getActionSpeed` -> `getTarget`. The new action is a real `move` (not the
@@ -787,6 +803,7 @@ fn plan_queue_change(
         a.target_loc = if ts == a.side { -(tsl as i8 + 1) } else { tsl as i8 + 1 };
         a.target = tsl;
     }
+    a.orig_target = orig_target_at(state, a.side, a.target_loc);
     let _ = ps_get_target_queue_insert(state, rng, &a);
     // `insertChoice`: first / last index among the queue (the target's own
     // action already cancelled) by comparePriority.
@@ -874,6 +891,7 @@ fn instruct_action(
         prioritized: true,
         no_pp: false,
         recharge: false,
+        orig_target: orig_target_at(state, side, loc),
     })
 }
 
@@ -1008,6 +1026,9 @@ pub fn run_battle_fuzz(
         }
     }
     each_event_update(state, rng);
+    // Forecast `onStart` / `onWeatherChange` (PS data/abilities.ts forecast):
+    // a lead's Drizzle / Drought sets the weather, and a Castform lead follows it.
+    update_forecast(state);
     // Turn 0: the initial state right after the leads are sent out (stat
     // calc, species data, leads). Compared before any turn is simulated.
     let mut init = fuzz_snapshot(state, Vec::new());
@@ -1184,6 +1205,7 @@ pub fn run_battle_fuzz(
                                 prioritized: false,
                                 no_pp,
                                 recharge: s.active[slot].recharging,
+                                orig_target: None,
                             });
                         }
                     }
@@ -1275,6 +1297,8 @@ pub fn run_battle_fuzz(
                     a.target_loc = if ts == a.side { -(tsl as i8 + 1) } else { tsl as i8 + 1 };
                 }
             }
+            // `action.originalTarget = pokemon.getAtLoc(action.targetLoc)`.
+            a.orig_target = orig_target_at(state, a.side, a.target_loc);
             let _ = ps_get_target(state, rng, a);
         }
         // Beak Blast (PS data/moves.ts beakblast.priorityChargeCallback): its
@@ -2558,19 +2582,21 @@ fn execute_action_inner(
     // PS `runMove` resolves the target before the BeforeMove checks.
     // Stalwart / Propeller Tail set `tracksTarget` (`getTarget` with an active
     // `originalTarget` returns it without a draw or a redirect).
-    // TODO(PS parity): `originalTarget` when the chosen target already fainted.
+    // PS sim/battle.ts getTarget: `tracksTarget && originalTarget?.isActive`
+    // returns the pokemon chosen when the action was queued, wherever it is now
+    // (Ally Switch). Snipe Shot has `tracksTarget` itself (data/moves.ts).
     let tracks = matches!(
         state.side(side).team_member(action.pokemon_index).ability,
         Abilities::STALWART | Abilities::PROPELLERTAIL
-    );
+    ) || action.choice.move_id == Choices::SNIPESHOT;
     let tracked = if tracks && action.target_loc != 0 {
-        let loc = action.target_loc;
-        let (ts, tsl) = if loc > 0 { (side.other(), (loc - 1) as usize) } else { (side, (-loc - 1) as usize) };
-        if tsl < 2 && state.side(ts).slot_pokemon(tsl).map(|p| p.hp > 0).unwrap_or(false) {
-            Some((ts, tsl))
-        } else {
-            None
-        }
+        action.orig_target.and_then(|(ts, ti)| {
+            (0..2).find(|&sl| {
+                state.side(ts).active[sl].pokemon_index == Some(ti)
+                    && state.side(ts).team_member(ti).hp > 0
+            })
+            .map(|sl| (ts, sl))
+        })
     } else {
         None
     };
@@ -6261,7 +6287,7 @@ fn execute_action_inner(
                     } else {
                         drop
                     };
-                    apply_boosts(state, target_side, tidx, &drop, true);
+                    apply_boosts_from(state, target_side, tidx, &drop, target_side != side, true);
                     success = state.side(target_side).team_boosts[tidx as usize].eva != before;
                 }
             }
@@ -6392,7 +6418,7 @@ fn execute_action_inner(
                 } else {
                     drop
                 };
-                apply_boosts(state, target_side, tidx, &drop, true);
+                apply_boosts_from(state, target_side, tidx, &drop, target_side != side, true);
                 if ooze {
                     // Liquid Ooze `onSourceTryHeal` (`strengthsap` is on its list): the
                     // heal event still runs and the user takes the amount as damage,
@@ -7730,7 +7756,7 @@ fn execute_action_inner(
                     // holder (PS `this.boost` goes through TryBoost).
                     let drop = StatBoosts { speed: -1, ..Default::default() };
                     let drop = mirror_armor_bounce(state, target_side, target_slot, side, idx, &drop);
-                    apply_boosts(state, side, idx, &drop, true);
+                    apply_boosts_from(state, side, idx, &drop, target_side != side, true);
                 }
             }
             maybe_wandering_spirit(state, side, slot, target_side, target_slot, choice, rng);
@@ -8897,7 +8923,7 @@ fn protect_contact_penalty(
             // (`onTryBoost`) bounces it back onto the protector.
             let drop = StatBoosts { attack: -1, ..Default::default() };
             let drop = mirror_armor_bounce(state, target_side, target_slot, side, idx, &drop);
-            apply_boosts(state, side, idx, &drop, true);
+            apply_boosts_from(state, side, idx, &drop, target_side != side, true);
         }
         2 => {
             let maxhp = state.side(side).team_member(idx).maxhp;
@@ -8912,7 +8938,9 @@ fn protect_contact_penalty(
                 try_set_status_with(state, rng, side, slot, st, target_side, tidx, false, true, false);
             }
         }
-        4 => apply_boosts(state, side, idx, &StatBoosts { speed: -1, ..Default::default() }, true),
+        4 => {
+            apply_boosts_from(state, side, idx, &StatBoosts { speed: -1, ..Default::default() }, target_side != side, true);
+        }
         _ => {}
     }
 }
@@ -10276,7 +10304,7 @@ fn mirror_armor_bounce(
         evasion: bounced[6],
     };
     if let Some(sidx) = sidx {
-        apply_boosts(state, side, sidx, &bounced, true);
+        apply_boosts_from(state, side, sidx, &bounced, ts != side, true);
     }
     StatBoosts {
         attack: rest[0],
@@ -12956,6 +12984,7 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
                             prioritized: false,
                             no_pp: false,
                             recharge: s.active[slot].recharging,
+                            orig_target: None,
                         });
                     }
                 }

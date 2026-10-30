@@ -559,6 +559,10 @@ pub struct DoublesState {
     /// resolves faints after the loop, so its per-hit `eachEvent` still sorts
     /// them: (side, slot, team index).
     pub unresolved_faints: Vec<(crate::doubles::state::Side, usize, PokemonIndex)>,
+    /// Disguise holders whose hit was absorbed by a spread move. PS busts the
+    /// forme in `onUpdate`, i.e. inside the next `eachEvent('Update')` after
+    /// its speed sort (the sort still sees the stale speed).
+    pub pending_disguise: Vec<(crate::doubles::state::Side, usize)>,
     /// Sides of every fainted pokemon in `faint()` call order: with both sides
     /// wiped out at once, PS gives the win to the side of the last one
     /// (`checkWin(faintData)`, sim/battle.ts).
@@ -1165,6 +1169,7 @@ impl DoublesState {
             },
             turn: 1,
             unresolved_faints: Vec::new(),
+            pending_disguise: Vec::new(),
             faint_log: Vec::new(),
             pending_after_faint: None,
         };

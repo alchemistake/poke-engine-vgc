@@ -1785,13 +1785,19 @@ fn stat_speed(state: &DoublesState, side: Side, slot: usize) -> i32 {
 }
 
 /// PS `battle.updateSpeed()`: refresh the cached speed of every active.
+/// The cache holds PS's `pokemon.speed` (`getActionSpeed`: `10000 - stat`
+/// under Trick Room, the raw stat otherwise), the same convention the other
+/// cache writes use (`speed_cache[i] = raw stat`, e.g. a Mimikyu bust). Keeping
+/// one convention lets a stale entry tie or order the way PS's does.
 fn update_speed(state: &mut DoublesState) {
+    let trick_room = state.trick_room.active;
     for side in [Side::One, Side::Two] {
         for slot in 0..2 {
-            let sp = effective_speed(state, side, slot);
+            // `effective_speed` is the stat negated under Trick Room.
+            let sp = effective_speed(state, side, slot).map(|sp| if trick_room { 10000 + sp as i32 } else { sp as i32 });
             let s = state.side_mut(side);
             if let (Some(idx), Some(sp)) = (s.active[slot].pokemon_index, sp) {
-                s.speed_cache[idx as usize] = sp;
+                s.speed_cache[idx as usize] = sp as i16;
             }
         }
     }
@@ -3699,11 +3705,29 @@ fn execute_action_inner(
     // holder is used back on its user (no accuracy roll for the original).
     // PS data/abilities.ts magicbounce. Single-target moves only; side moves
     // are handled with the side condition below.
-    // TODO(PS parity): Mold Breaker (breakable), semi-invulnerable holder.
+    // A semi-invulnerable holder does not bounce (`target.isSemiInvulnerable()`
+    // returns early), so a move that still reaches it (Poison-type Toxic) lands.
+    // TODO(PS parity): Mold Breaker (breakable).
+    let holder_semi_invulnerable = state.side(target_side).active[target_slot]
+        .charging
+        .filter(|_| !state.side(target_side).active[target_slot].charge_aborted)
+        .is_some_and(|(m, _)| {
+            matches!(
+                m,
+                Choices::DIG
+                    | Choices::DIVE
+                    | Choices::FLY
+                    | Choices::BOUNCE
+                    | Choices::PHANTOMFORCE
+                    | Choices::SHADOWFORCE
+                    | Choices::SKYDROP
+            )
+        });
     if choice.flags.reflectable
         && !is_self
         && !is_field
         && !is_spread
+        && !holder_semi_invulnerable
         && (target_side, target_slot) != (side, slot)
         && !state.side(side).active[slot].bounced
         && state
@@ -4738,14 +4762,10 @@ fn execute_action_inner(
                     && (side, slot) != (target_side, target_slot)
                     && choice.category != MoveCategory::Status;
                 if busts {
-                    if let Some(tidx) = state.side(target_side).active[target_slot].pokemon_index {
-                        let pm = state.side_mut(target_side).team_member_mut(tidx);
-                        pm.id = crate::pokemon::PokemonName::MIMIKYUBUSTED;
-                        let dmg = (pm.maxhp / 8).max(1);
-                        apply_damage(state, target_side, target_slot, dmg);
-                        // `formeChange` -> `setSpecies`: the cached speed is the raw stat.
-                        let raw = state.side(target_side).team_member(tidx).speed;
-                        state.side_mut(target_side).speed_cache[tidx as usize] = raw as _;
+                    // The forme change runs in the next `eachEvent('Update')`
+                    // (`each_event_update` after its sort).
+                    if !state.pending_disguise.contains(&(target_side, target_slot)) {
+                        state.pending_disguise.push((target_side, target_slot));
                     }
                     0
                 } else {
@@ -4903,7 +4923,9 @@ fn execute_action_inner(
                 // Liquid Ooze (on the drained foe) `onSourceTryHeal`: the drainer
                 // takes the amount instead, even at full HP and under Heal Block
                 // (PS data/abilities.ts liquidooze; the Heal event still runs).
-                let ooze = match state.side(target_side).active[target_slot].pokemon_index {
+                // The holder is read from the hit's target index: a target that
+                // this hit KO'd has already left its slot (PS keeps its ability).
+                let ooze = match hit_target_pi {
                     Some(t) => state.side(target_side).team_member(t).ability == Abilities::LIQUIDOOZE,
                     None => false,
                 };
@@ -5465,12 +5487,15 @@ fn execute_action_inner(
                 }
                 PokemonVolatileStatus::FOCUSENERGY => {
                     // focusenergy.onStart: fails if the target has Dragon Cheer.
+                    // A failed `addVolatile` adds nothing (PS data/moves.ts
+                    // focusenergy.condition.onStart).
                     if state.side(ts).active[tslot].focus_energy
                         || state.side(ts).active[tslot].dragon_cheer.is_some()
                     {
                         move_failed = true;
+                    } else {
+                        state.side_mut(ts).active[tslot].focus_energy = true;
                     }
-                    state.side_mut(ts).active[tslot].focus_energy = true;
                 }
                 PokemonVolatileStatus::INGRAIN => {
                     // `addVolatile` fails if already present.
@@ -7002,7 +7027,8 @@ fn execute_action_inner(
                     }
                     Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION) => {
                         if !safeguard_blocks_confusion(state, side, slot, idx, ts, tslot) {
-                            try_confuse(state, rng, ts, tslot);
+                            let min = if choice.move_id == Choices::AXEKICK { 3 } else { 2 };
+                            try_confuse_from(state, rng, ts, tslot, min);
                         }
                     }
                     Effect::VolatileStatus(vv) => {
@@ -8247,6 +8273,13 @@ fn try_add_volatile_ties(state: &DoublesState, rng: &mut Gen5Rng, ts: Side, tslo
 }
 
 fn try_confuse(state: &mut DoublesState, rng: &mut Gen5Rng, ts: Side, tslot: usize) {
+    try_confuse_from(state, rng, ts, tslot, 2);
+}
+
+/// `try_confuse` with the source's minimum duration: `confusion.onStart` draws
+/// `random(min, 6)`, and `min` is 3 when the source is Axe Kick (PS
+/// data/conditions.ts confusion.onStart), 2 otherwise.
+fn try_confuse_from(state: &mut DoublesState, rng: &mut Gen5Rng, ts: Side, tslot: usize, min: usize) {
     let Some(p) = state.side(ts).slot_pokemon(tslot) else { return };
     if p.hp <= 0 || p.ability == Abilities::OWNTEMPO || state.side(ts).active[tslot].confusion > 0 {
         return;
@@ -8254,7 +8287,7 @@ fn try_confuse(state: &mut DoublesState, rng: &mut Gen5Rng, ts: Side, tslot: usi
     if misty_terrain_blocks_confusion(state, ts, tslot) {
         return;
     }
-    let t = rng.label("volatile duration").random_range(2, 6) as u8;
+    let t = rng.label("volatile duration").random_range(min, 6) as u8;
     state.side_mut(ts).active[tslot].confusion = t;
 }
 
@@ -10842,6 +10875,16 @@ fn selfdestruct_user_faint(state: &mut DoublesState, rng: &mut Gen5Rng, side: Si
 /// draws on speed ties. Called after every action and every hit.
 fn each_event_update(state: &mut DoublesState, rng: &mut Gen5Rng) {
     let order = sorted_actives(state, rng, "speed tie (eachEvent)");
+    // Disguise `onUpdate` (after the sort): a pending absorbed hit busts the forme.
+    let pending = std::mem::take(&mut state.pending_disguise);
+    for (s, sl) in pending {
+        let is_disguised = state.side(s).slot_pokemon(sl).is_some_and(|d| {
+            d.id == crate::pokemon::PokemonName::MIMIKYU && d.ability == Abilities::DISGUISE
+        });
+        if is_disguised {
+            disguise_bust(state, s, sl);
+        }
+    }
     for (s, sl) in order {
         // Trace `onUpdate` (PS data/abilities.ts trace): every Update event
         // while the holder still has Trace and seeks draws a random valid foe.

@@ -204,7 +204,7 @@ pub fn effective_speed(state: &DoublesState, side: Side, slot: usize) -> Option<
     // paralysis (priority -101) halves, unless Quick Feet.
     // TODO(PS parity): Unburden, Slow Start, Iron Ball, Quick Powder, ...
     // `effectiveWeather`: none under Cloud Nine / Air Lock.
-    let weather = if weather_suppressed(state) { Weather::NONE } else { state.weather.weather_type };
+    let weather = effective_weather(state);
     let mut m: i64 = 4096;
     let mut chain = |x: i64| m = (m * x + 2048) >> 12;
     if s.side_conditions.tailwind > 0 {
@@ -941,7 +941,7 @@ fn accuracy_ability_mods(
     }
     if let Some(t) = state.side(tside).slot_pokemon(tslot) {
         if !crate::engine::abilities::ignores_target_ability(attacker, choice, &t.ability) {
-            let w = state.weather.weather_type;
+            let w = effective_weather(state);
             match t.ability {
                 Abilities::SANDVEIL if w == Weather::SAND => post = chain(post, 3277),
                 Abilities::SNOWCLOAK if matches!(w, Weather::HAIL | Weather::SNOW) => post = chain(post, 3277),
@@ -979,6 +979,19 @@ pub fn run_battle_fuzz(
     // the action's `eachEvent('Update')`.
     rng.context = "turn 0: move order".to_string();
     team_preview_draws(state, rng);
+    // Illusion `onBeforeSwitchIn` for the leads (PS data/abilities.ts illusion):
+    // the disguise is fixed when the holder is sent out, from the party order
+    // at that time (a later switch reorders `side.pokemon`).
+    for sd in [Side::One, Side::Two] {
+        for sl in 0..2 {
+            let s = state.side_mut(sd);
+            if let Some(idx) = s.active[sl].pokemon_index {
+                if s.team_member(idx).ability == Abilities::ILLUSION {
+                    s.active[sl].illusion_target = Some(illusion_disguise(s, idx));
+                }
+            }
+        }
+    }
     rng.context = "turn 0: switch-in".to_string();
     // PS `case "start"`: each lead's `switchIn` inserts a `runSwitch` action
     // into the queue (`insertChoice`), drawing on speed ties before the
@@ -1155,6 +1168,10 @@ pub fn run_battle_fuzz(
                                     _ => 0,
                                 },
                                 target_loc: match s.active[slot].charging {
+                                    // A forced Struggle (no usable move) has no target
+                                    // location: `resolveAction` draws a random foe
+                                    // (PS sim/side.ts chooseMove `!moves.length`).
+                                    _ if *struggle => 0,
                                     Some((m, _)) if m == charge_id => s.active[slot].charge_target as i8 + 1,
                                     // A locked move (Thrash, ...) reuses
                                     // `lastMoveTargetLoc` (side.ts `chooseMove`).
@@ -2078,88 +2095,7 @@ thread_local! {
 
 /// PS `flags.breakable` (data/abilities.ts, champions mod).
 fn is_breakable(a: Abilities) -> bool {
-    matches!(
-        a,
-        Abilities::AROMAVEIL
-            | Abilities::ARMORTAIL
-            | Abilities::BATTLEARMOR
-            | Abilities::BIGPECKS
-            | Abilities::BULLETPROOF
-            | Abilities::CLEARBODY
-            | Abilities::CONTRARY
-            | Abilities::DAMP
-            | Abilities::DAZZLING
-            | Abilities::DISGUISE
-            | Abilities::DRYSKIN
-            | Abilities::EARTHEATER
-            | Abilities::FILTER
-            | Abilities::FLASHFIRE
-            | Abilities::FLOWERGIFT
-            | Abilities::FLOWERVEIL
-            | Abilities::FLUFFY
-            | Abilities::FRIENDGUARD
-            | Abilities::FURCOAT
-            | Abilities::GOODASGOLD
-            | Abilities::GRASSPELT
-            | Abilities::GUARDDOG
-            | Abilities::HEATPROOF
-            | Abilities::HEAVYMETAL
-            | Abilities::HYPERCUTTER
-            | Abilities::ICEFACE
-            | Abilities::ICESCALES
-            | Abilities::ILLUMINATE
-            | Abilities::IMMUNITY
-            | Abilities::INNERFOCUS
-            | Abilities::INSOMNIA
-            | Abilities::KEENEYE
-            | Abilities::LEAFGUARD
-            | Abilities::LEVITATE
-            | Abilities::LIGHTMETAL
-            | Abilities::LIGHTNINGROD
-            | Abilities::LIMBER
-            | Abilities::MAGICBOUNCE
-            | Abilities::MAGMAARMOR
-            | Abilities::MARVELSCALE
-            | Abilities::MINDSEYE
-            | Abilities::MIRRORARMOR
-            | Abilities::MOTORDRIVE
-            | Abilities::MULTISCALE
-            | Abilities::OBLIVIOUS
-            | Abilities::OVERCOAT
-            | Abilities::OWNTEMPO
-            | Abilities::PASTELVEIL
-            | Abilities::PUNKROCK
-            | Abilities::PURIFYINGSALT
-            | Abilities::QUEENLYMAJESTY
-            | Abilities::SANDVEIL
-            | Abilities::SAPSIPPER
-            | Abilities::SHELLARMOR
-            | Abilities::SHIELDDUST
-            | Abilities::SIMPLE
-            | Abilities::SNOWCLOAK
-            | Abilities::SOLIDROCK
-            | Abilities::SOUNDPROOF
-            | Abilities::STICKYHOLD
-            | Abilities::STORMDRAIN
-            | Abilities::STURDY
-            | Abilities::SUCTIONCUPS
-            | Abilities::SWEETVEIL
-            | Abilities::TANGLEDFEET
-            | Abilities::TELEPATHY
-            | Abilities::TERASHELL
-            | Abilities::THERMALEXCHANGE
-            | Abilities::THICKFAT
-            | Abilities::UNAWARE
-            | Abilities::VITALSPIRIT
-            | Abilities::VOLTABSORB
-            | Abilities::WATERABSORB
-            | Abilities::WATERBUBBLE
-            | Abilities::WATERVEIL
-            | Abilities::WELLBAKEDBODY
-            | Abilities::WHITESMOKE
-            | Abilities::WONDERGUARD
-            | Abilities::WONDERSKIN
-    )
+    crate::doubles::ability_flags::has_flag(a, crate::doubles::ability_flags::BREAKABLE)
 }
 
 /// Mold Breaker `onModifyMove` (`move.ignoreAbility`): while the move runs,
@@ -2217,21 +2153,7 @@ pub(crate) fn real_ability(state: &DoublesState, side: Side, idx: PokemonIndex) 
 /// PS `cantsuppress` abilities: Gastro Acid fails on them (onTryHit), and
 /// Baton Pass's copied `gastroacid` is dropped on them (onCopy).
 fn gastro_cant_suppress(a: Abilities) -> bool {
-    matches!(
-        a,
-        Abilities::MULTITYPE
-            | Abilities::STANCECHANGE
-            | Abilities::DISGUISE
-            | Abilities::ZENMODE
-            | Abilities::SCHOOLING
-            | Abilities::SHIELDSDOWN
-            | Abilities::POWERCONSTRUCT
-            | Abilities::COMATOSE
-            | Abilities::ICEFACE
-            | Abilities::GULPMISSILE
-            | Abilities::HUNGERSWITCH
-            | Abilities::BATTLEBOND
-    )
+    crate::doubles::ability_flags::has_flag(a, crate::doubles::ability_flags::CANTSUPPRESS)
 }
 
 /// Drop the Mold Breaker blank of a pokemon whose ability really became
@@ -2531,6 +2453,14 @@ fn execute_action(
     // PS beakblast `onAfterMove`: the user's Beak Blast volatile ends with its move.
     // A failed BeforeMove (flinch, sleep, ...) skips AfterMove (PS sim/battle-actions.ts
     // runMove), so the volatile stays until its duration ends in the residual.
+    // PS spitup `onAfterMove`: Stockpile ends after every use that got past
+    // BeforeMove, whatever stopped the hit (miss, semi-invulnerable target,
+    // immunity, Protect). `end_stockpile` is a no-op when already ended.
+    if action.choice.move_id == Choices::SPITUP && move_order.len() > logged_before {
+        if let Some(sl) = (0..2).find(|&sl| state.side(action.side).active[sl].pokemon_index == Some(action.pokemon_index)) {
+            end_stockpile(state, action.side, sl);
+        }
+    }
     if action.choice.move_id == Choices::BEAKBLAST && move_order.len() > logged_before {
         for sl in 0..2 {
             let a = &mut state.side_mut(action.side).active[sl];
@@ -2606,7 +2536,11 @@ fn execute_action_inner(
         ))
     };
 
-    let external = state.side(side).active[slot].external_call || action.no_pp;
+    // `useMove` called by another move (Copycat, Instruct, ...). A locked move
+    // that is not one of the user's own (`no_pp`: Copycat -> Outrage, next
+    // turn) is a normal `runMove` (BeforeMove runs; only `deductPP` finds no
+    // slot), so it is not external. PS sim/battle-actions.ts runMove / useMove.
+    let external = state.side(side).active[slot].external_call;
     // The attacker must still be on the field.
     if state.side(side).active[slot].pokemon_index.is_none() {
         return;
@@ -2859,7 +2793,7 @@ fn execute_action_inner(
     // skipped for a locked move). `ppData.used` is set even when the PP is 0,
     // then the move fails with `|cant|...|nopp|` (Spite, PS battle-actions.ts).
     // Struggle never checks PP.
-    if !external {
+    if !external && !action.no_pp {
         let locked = {
             let a = &state.side(side).active[slot];
             // PS `getLockedMove`: `lockedmove` (Outrage, ...), uproar, and the
@@ -2907,8 +2841,8 @@ fn execute_action_inner(
             // `pokemon.effectiveWeather()`, which is empty while Cloud Nine /
             // Air Lock suppress weather (`field.suppressingWeather()`).
             let mega_sol = state.side(side).team_member(idx).ability == Abilities::MEGASOL;
-            let effective_weather = if weather_suppressed(state) { Weather::NONE } else { state.weather.weather_type };
-            if let Some(t) = crate::engine::mechanics::weather_ball_type(effective_weather, mega_sol) {
+            let eff_weather = effective_weather(state);
+            if let Some(t) = crate::engine::mechanics::weather_ball_type(eff_weather, mega_sol) {
                 modified.move_type = t;
                 modified.base_power = 100.0;
             }
@@ -2976,8 +2910,7 @@ fn execute_action_inner(
     // Thunder / Hurricane `onModifyMove`: accuracy 50 in harsh sunlight
     // (`target.effectiveWeather()`: Cloud Nine / Air Lock suppress it).
     if matches!(modified.move_id, Choices::THUNDER | Choices::HURRICANE)
-        && !weather_suppressed(state)
-        && matches!(state.weather.weather_type, Weather::SUN | Weather::HARSHSUN)
+        && matches!(effective_weather(state), Weather::SUN | Weather::HARSHSUN)
     {
         modified.accuracy = 50.0;
     }
@@ -3076,7 +3009,14 @@ fn execute_action_inner(
                     &choice.move_id.to_string().to_lowercase(),
                 ) == "allAdjacent"
                     && slot_alive(state, side, 1 - slot);
-                if !slot_alive(state, target_side, target_slot) && !all_adjacent_ally {
+                // A `futuremove` (Future Sight) keeps its fainted target: it
+                // targets the slot (PS sim/pokemon.ts getMoveTargets).
+                if crate::engine::mechanics::is_future_move(choice.move_id) {
+                    if let Some((ts, sl)) = resolved {
+                        target_side = ts;
+                        target_slot = sl;
+                    }
+                } else if !slot_alive(state, target_side, target_slot) && !all_adjacent_ally {
                     has_target = false;
                 }
             }
@@ -3208,13 +3148,13 @@ fn execute_action_inner(
     // charge turn (PS locks the move via `twoturnmove.onLockMove`).
     {
         // PS `attacker.effectiveWeather()` (Cloud Nine / Air Lock suppress it).
-        let effective_weather = if weather_suppressed(state) { Weather::NONE } else { state.weather.weather_type };
+        let eff_weather = effective_weather(state);
         let needs_charge = match choice.charge_setup {
             ChargeSetup::None => false,
             ChargeSetup::Always { .. } => true,
-            ChargeSetup::NotSun { .. } => effective_weather != Weather::SUN,
-            ChargeSetup::OnlyRain { .. } => !matches!(effective_weather, Weather::RAIN | Weather::HEAVYRAIN),
-            ChargeSetup::OnlySnow { .. } => matches!(effective_weather, Weather::HAIL | Weather::SNOW),
+            ChargeSetup::NotSun { .. } => eff_weather != Weather::SUN,
+            ChargeSetup::OnlyRain { .. } => !matches!(eff_weather, Weather::RAIN | Weather::HEAVYRAIN),
+            ChargeSetup::OnlySnow { .. } => matches!(eff_weather, Weather::HAIL | Weather::SNOW),
         };
         // PS data/moves.ts electroshot `onTryMove`: `boost({spa: 1})` runs on the
         // charge turn and on the rain-skip turn, before the weather check (the
@@ -3253,6 +3193,9 @@ fn execute_action_inner(
                 };
                 state.side_mut(side).active[slot].charging =
                     Some((choice.move_id, turns.saturating_sub(1)));
+                // `twoturnmove.onStart` runs `runEvent('PrepareHit')` on the charge
+                // turn (Protean / Libero). PS data/conditions.ts twoturnmove.
+                prepare_hit(state, side, slot, idx, choice);
                 // A Copycat-called charge move has no chosen target: keep the
                 // randomly resolved one (PS `lockedMoveTargetLoc`).
                 state.side_mut(side).active[slot].charge_target = match resolved {
@@ -3431,6 +3374,8 @@ fn execute_action_inner(
     if choice.requires_terrain
         && state.terrain.terrain_type == crate::engine::state::Terrain::NONE
     {
+        // `-fail`: `moveThisTurnResult = false` (Stomping Tantrum doubles next turn).
+        state.side_mut(side).active[slot].move_result_this_turn = Some(false);
         push_order(move_order);
         return;
     }
@@ -3444,6 +3389,8 @@ fn execute_action_inner(
             Some((c, _)) => {
                 if !rng.label("volatile duration").random_chance(1, c.max(1) as u32) {
                     state.side_mut(side).active[slot].ally_switch = None;
+                    // A failed PrepareHit is a `-fail`: `moveThisTurnResult = false`.
+                    state.side_mut(side).active[slot].move_result_this_turn = Some(false);
                     push_order(move_order);
                     return;
                 }
@@ -3568,7 +3515,7 @@ fn execute_action_inner(
 
     // Future Sight / Doom Desire `onTry`: queue the delayed hit on the target's
     // slot (fails if one is pending). NOT_FAIL: no accuracy roll now.
-    if matches!(choice.move_id, Choices::FUTURESIGHT | Choices::DOOMDESIRE) && !is_self && !is_field {
+    if crate::engine::mechanics::is_future_move(choice.move_id) && !is_self && !is_field {
         if state.side(target_side).future_move[target_slot].is_some() {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
         } else {
@@ -3585,7 +3532,10 @@ fn execute_action_inner(
         let ok = queue
             .iter()
             .find(|a| a.side == target_side && Some(a.pokemon_index) == tidx)
-            .map(|a| a.choice.priority > 0 && a.choice.category != MoveCategory::Status)
+            // PS: `action.choice === 'move'` (a `recharge` action is not one) and
+            // `move.priority` is the modified priority (`ModifyPriority`: Prankster,
+            // Grassy Glide, ...), set on the move in `resolveAction`.
+            .map(|a| !a.recharge && a.priority > 0 && a.choice.category != MoveCategory::Status)
             .unwrap_or(false);
         if !ok {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
@@ -3620,41 +3570,10 @@ fn execute_action_inner(
         return;
     }
 
-    // Libero / Protean (`onPrepareHit`, after every `onTry` failure above, before the
-    // hit steps; a failed Upper Hand / No Retreat / Stuff Cheeks / Belch changes nothing): once per switch-in, become the move's type. PS sim/battle-actions.ts
-    // `Try` then `PrepareHit`, so a failed `onTry` (Counter, Rest, ...) changes nothing.
-    // PS data/abilities.ts libero / protean.
-    // TODO(PS parity): Protean's champions override, Tera, Terastallized.
-    if matches!(
-        state.side(side).team_member(idx).ability,
-        Abilities::LIBERO | Abilities::PROTEAN
-    ) && !state.side(side).active[slot].protean_done
-        && choice.move_type != PokemonType::TYPELESS
-        && choice.move_id != Choices::STRUGGLE
-        // `move.callsMove` moves (Copycat, Metronome, ...) don't trigger it: the
-        // move they call does (PS data/abilities.ts protean `move.callsMove`).
-        && !matches!(
-            choice.move_id,
-            Choices::ASSIST
-                | Choices::COPYCAT
-                | Choices::MEFIRST
-                | Choices::METRONOME
-                | Choices::MIRRORMOVE
-                | Choices::NATUREPOWER
-                | Choices::SLEEPTALK
-        )
-    {
-        let pm = state.side_mut(side).team_member_mut(idx);
-        if pm.types != (choice.move_type, PokemonType::TYPELESS) {
-            let orig = pm.types;
-            pm.types = (choice.move_type, PokemonType::TYPELESS);
-            let a = &mut state.side_mut(side).active[slot];
-            if a.type_change.is_none() {
-                a.type_change = Some(orig);
-            }
-            a.protean_done = true;
-        }
-    }
+    // PS `runEvent('PrepareHit')` (after every `onTry` failure above, before the
+    // hit steps; a failed Upper Hand / No Retreat / Stuff Cheeks / Belch changes
+    // nothing). PS sim/battle-actions.ts `Try` then `PrepareHit`.
+    prepare_hit(state, side, slot, idx, choice);
 
     // Spread moves (allAdjacentFoes / allAdjacent): PS `getMoveTargets` lists
     // the (alive) allies first, then the foes. Each target is filtered like
@@ -4457,9 +4376,9 @@ fn execute_action_inner(
     // PS data/moves.ts thunder / hurricane (rain: true, sun: 50),
     // bleakwindstorm / sandsearstorm / wildboltstorm (rain: true),
     // blizzard (hail / snow: true).
-    let effective_weather = if weather_suppressed(state) { Weather::NONE } else { state.weather.weather_type };
+    let eff_weather = effective_weather(state);
     let weather_guaranteed = matches!(
-        (choice.move_id, effective_weather),
+        (choice.move_id, eff_weather),
         (
             Choices::THUNDER
                 | Choices::HURRICANE
@@ -4740,11 +4659,14 @@ fn execute_action_inner(
         return;
     }
 
-    // Acupressure (PS target `adjacentAllyOrSelf`; the engine's move target is
-    // User, so the block above skips it): an ally holding a Substitute fails it
-    // in `TryPrimaryHit` (status moves have no damage: `getDamage` is falsy),
-    // unless the user is an Infiltrator. The user itself is not blocked.
-    if choice.move_id == Choices::ACUPRESSURE
+    // `adjacentAllyOrSelf` moves (Acupressure, Milk Drink, ...: the engine's move
+    // target is User, so the block above skips them): an ally holding a
+    // Substitute fails them in `TryPrimaryHit` (status moves have no damage:
+    // `getDamage` is falsy), unless the move bypasses it or the user is an
+    // Infiltrator. The user itself is not blocked.
+    if crate::doubles::move_targets::ps_move_target(&choice.move_id.to_string().to_lowercase()) == "adjacentAllyOrSelf"
+        && choice.category == MoveCategory::Status
+        && !bypasses_substitute(choice)
         && state.side(side).team_member(idx).ability != Abilities::INFILTRATOR
     {
         if let Some((ts, tsl)) = resolved {
@@ -4847,6 +4769,9 @@ fn execute_action_inner(
 
     state.side_mut(side).active[slot].hit_number = 1;
     let faint_mark = state.faint_log.len();
+    // The user's HP before its hits, for its own Emergency Exit (contact
+    // damage, Life Orb-style self damage, recoil: see after the recoil).
+    let user_hp_before = state.side(side).slot_pokemon(slot).map(|p| p.hp).unwrap_or(0);
     'hit_loop: for hit_idx in 0..hit_count {
       state.side_mut(side).active[slot].hit_number = hit_idx as u8 + 1;
       if choice.move_id == Choices::BEATUP {
@@ -4864,6 +4789,11 @@ fn execute_action_inner(
       };
       if smart_hits {
           (target_side, target_slot) = hit_targets[0];
+      }
+      // PS hitStepMoveHitLoop: `if (targets.every(target => !target?.hp)) break;`
+      // at the top of every hit after the first (all multi-hit moves).
+      if hit_idx > 0 && !is_self && !is_field && !hit_targets.iter().any(|&(ts, tsl)| slot_alive(state, ts, tsl)) {
+          break 'hit_loop;
       }
       // `multiaccuracy` (Triple Axel / Triple Kick / Population Bomb): hits after the first roll
       // accuracy again; a miss ends the loop. PS sim/battle-actions.ts
@@ -4913,6 +4843,10 @@ fn execute_action_inner(
           let mut out = vec![(0i16, false); hit_targets.len()];
           for i in order {
               let (ts, tsl) = hit_targets[i];
+              // PS getSpreadDamage skips a target that is gone (`!target`).
+              if state.side(ts).slot_pokemon(tsl).is_none() {
+                  continue;
+              }
               out[i] = compute_hit_damage(state, rng, side, slot, idx, ts, tsl, choice, ate_boosted, sp);
           }
           // PS `spreadDamage`: every target's `Damage` event (Damp) runs after
@@ -5199,7 +5133,7 @@ fn execute_action_inner(
                 if !(is_spread && is_attack) {
                     crate::doubles::events::run_event_ties(state, rng, "Damage", (target_side, target_slot), Some((side, slot)));
                 }
-                state.side_mut(target_side).active[target_slot].illusion_broken = true;
+                damaged_by_move(state, target_side, target_slot);
                 // PS `gotAttacked`: record the attacker in `attackedBy`
                 // (Avalanche's base power check).
                 let turn_now = state.turn;
@@ -5378,8 +5312,7 @@ fn execute_action_inner(
                 Choices::SWEETSCENT => b.boosts.evasion = -2,
                 // PS growth.onModifyMove: +2 Atk / SpA in harsh sunlight.
                 Choices::GROWTH
-                    if matches!(state.weather.weather_type, Weather::SUN | Weather::HARSHSUN)
-                        && !weather_suppressed(state) =>
+                    if matches!(effective_weather(state), Weather::SUN | Weather::HARSHSUN) =>
                 {
                     b.boosts.attack = 2;
                     b.boosts.special_attack = 2;
@@ -5595,7 +5528,7 @@ fn execute_action_inner(
                 (target_side, target_slot)
             };
             // PS `pokemon.effectiveWeather()`: none under Cloud Nine / Air Lock.
-            let weather = if weather_suppressed(state) { Weather::NONE } else { state.weather.weather_type };
+            let weather = effective_weather(state);
             if let Some(tidx) = state.side(ts).active[tslot].pokemon_index {
                 let s = state.side_mut(ts);
                 let pm = s.team_member_mut(tidx);
@@ -5741,18 +5674,19 @@ fn execute_action_inner(
         // Attract / Disable / Encore / Heal Block / Taunt / Torment from others
         // (after the accuracy roll). PS data/abilities.ts aromaveil.
         // TODO(PS parity): Mold Breaker.
-        if matches!(
-            choice.move_id,
-            Choices::ATTRACT | Choices::DISABLE | Choices::ENCORE | Choices::HEALBLOCK | Choices::TAUNT | Choices::TORMENT
-        ) && ti == 0
-            && (target_side, target_slot) != (side, slot)
-            && (0..2).any(|sl| {
-                state
-                    .side(target_side)
-                    .slot_pokemon(sl)
-                    .is_some_and(|p| p.hp > 0 && p.ability == Abilities::AROMAVEIL)
-            })
+        let veiled = match choice.move_id {
+            Choices::ATTRACT => Some(AromaVeiled::Attract),
+            Choices::DISABLE => Some(AromaVeiled::Disable),
+            Choices::ENCORE => Some(AromaVeiled::Encore),
+            Choices::HEALBLOCK => Some(AromaVeiled::HealBlock),
+            Choices::TAUNT => Some(AromaVeiled::Taunt),
+            Choices::TORMENT => Some(AromaVeiled::Torment),
+            _ => None,
+        };
+        if let Some(v) = veiled.filter(|_| ti == 0 && (target_side, target_slot) != (side, slot))
+            .filter(|&v| aroma_veil_blocks(state, target_side, v, Some((side, idx, choice))))
         {
+            let _ = v;
             move_failed = true;
             continue;
         }
@@ -6079,7 +6013,12 @@ fn execute_action_inner(
                 PokemonVolatileStatus::HEALBLOCK => {
                     // data/moves.ts healblock.condition: duration 5 (2 from
                     // Psychic Noise, 7 with Persistent); no refresh while active.
-                    if state.side(ts).active[tslot].heal_block > 0 {
+                    if aroma_veil_blocks(state, ts, AromaVeiled::HealBlock, Some((side, idx, choice))) {
+                        // Blocked (`null`): no effect, and Psychic Noise's hit still counts.
+                        if choice.move_id != Choices::PSYCHICNOISE {
+                            move_failed = true;
+                        }
+                    } else if state.side(ts).active[tslot].heal_block > 0 {
                         // `onRestart`: Psychic Noise returns early (no fail).
                         // PS data/moves.ts healblock.condition.onRestart.
                         if choice.move_id != Choices::PSYCHICNOISE {
@@ -6968,21 +6907,8 @@ fn execute_action_inner(
             if let Some(tidx) = state.side(target_side).active[target_slot].pokemon_index {
                 let real = real_ability(state, target_side, tidx);
                 let pm = state.side_mut(target_side).team_member_mut(tidx);
-                if matches!(
-                    real,
-                    Abilities::MULTITYPE
-                        | Abilities::STANCECHANGE
-                        | Abilities::DISGUISE
-                        | Abilities::ZENMODE
-                        | Abilities::SCHOOLING
-                        | Abilities::SHIELDSDOWN
-                        | Abilities::POWERCONSTRUCT
-                        | Abilities::COMATOSE
-                        | Abilities::ICEFACE
-                        | Abilities::GULPMISSILE
-                        | Abilities::HUNGERSWITCH
-                        | Abilities::BATTLEBOND
-                ) {
+                // PS data/moves.ts worryseed.onTryHit: `flags['cantsuppress']`.
+                if crate::engine::mechanics::cant_suppress(real) {
                     move_failed = true;
                 } else {
                     pm.ability = Abilities::INSOMNIA;
@@ -7845,7 +7771,9 @@ fn execute_action_inner(
         if spread_volatile_fail && !spread_volatile_ok {
             move_failed = true;
         }
-        if is_field || move_failed || move_ty == "all" {
+        // PS useMoveInner: `all` / `foeSide` / `allySide` / `allyTeam` moves run
+        // `tryMoveHit` (one `moveHit`, no hit loop and no `eachEvent('Update')`).
+        if is_field || move_failed || matches!(move_ty, "all" | "foeSide" | "allySide" | "allyTeam") {
             break;
         }
         hits_done += 1;
@@ -7916,18 +7844,7 @@ fn execute_action_inner(
     // the action (allies included: PS runs it for every damaged target).
     // PS data/mods/champions/abilities.ts emergencyexit.
     for &(ts, tsl, before) in &ee_before {
-        let Some(d) = state.side(ts).slot_pokemon(tsl) else { continue };
-        let after = d.hp as i32;
-        let max = d.maxhp as i32;
-        if matches!(d.ability, Abilities::EMERGENCYEXIT | Abilities::WIMPOUT)
-            && after > 0
-            && after * 2 <= max
-            && (before as i32) * 2 > max
-            && state.side(ts).find_replacement().is_some()
-            && !state.side(ts).active[tsl].force_switch
-        {
-            state.side_mut(ts).active[tsl].force_switch = true;
-        }
+        emergency_exit_check(state, ts, tsl, before);
     }
 
     // Healing Wish / Lunar Dance (slot-condition moves) make their first hit-loop
@@ -7988,15 +7905,19 @@ fn execute_action_inner(
     if choice.move_id == Choices::JAWLOCK && hits_done > 0 {
         let user_idx = state.side(side).active[slot].pokemon_index;
         let target_pi = state.side(target_side).active[target_slot].pokemon_index;
+        let user_alive = state.side(side).slot_pokemon(slot).is_some_and(|p| p.hp > 0);
+        let target_alive = state.side(target_side).slot_pokemon(target_slot).is_some_and(|p| p.hp > 0);
         // Each side gains `trapped` (no-op while present), linked to the other.
-        if let (Some(_), true) = (user_idx, state.side(side).slot_pokemon(slot).map(|p| p.hp > 0).unwrap_or(false)) {
+        // PS `addVolatile` with a `linkedStatus` fails when the link's source
+        // has no HP (sim/pokemon.ts addVolatile): a KO'd target traps nobody.
+        if let (Some(_), true) = (user_idx, user_alive && target_alive) {
             let a = &mut state.side_mut(side).active[slot];
             if !a.trapped {
                 a.trapped = true;
                 a.trapper = target_pi.map(|ti| (target_side, ti));
             }
         }
-        if let (Some(_), true) = (target_pi, state.side(target_side).slot_pokemon(target_slot).map(|p| p.hp > 0).unwrap_or(false)) {
+        if let (Some(_), true) = (target_pi, target_alive && user_alive) {
             let a = &mut state.side_mut(target_side).active[target_slot];
             if !a.trapped {
                 a.trapped = true;
@@ -8043,6 +7964,17 @@ fn execute_action_inner(
                     state.unresolved_faints.retain(|&(fs, fsl, _)| (fs, fsl) != (side, slot));
                 }
             }
+        }
+    }
+
+    // The user's own Emergency Exit: PS runs `runEvent('EmergencyExit', pokemon)`
+    // for the user after each `spreadMoveHit` (Rough Skin / Rocky Helmet-style
+    // damage) and after its recoil (sim/battle-actions.ts spreadMoveHit,
+    // applyRecoilDamage).
+    // TODO(PS parity): per hit (a drain heal between hits), crash damage (MoveFail).
+    if hits_done > 0 {
+        if let Some(sl) = (0..2).find(|&sl| state.side(side).active[sl].pokemon_index == Some(idx)) {
+            emergency_exit_check(state, side, sl, user_hp_before);
         }
     }
 
@@ -8361,11 +8293,33 @@ fn has_secondaries(choice: &Choice) -> bool {
 /// base power, then every `onBasePower` handler chained into one 4096-based
 /// modifier (`chainModify`), applied once with `modify`. Handlers run in
 /// priority order: Tough Claws (21) before Helping Hand (10).
+/// PS `basePowerCallback` for moves whose power comes from the user's slot
+/// state; 0.0 when the move has none (the caller then uses the other
+/// callbacks / the move's base power). The result is the base the
+/// `onBasePower` modifiers (Helping Hand, Technician, ...) act on.
+/// PS data/moves.ts beatup / spitup / storedpower / powertrip.
+fn slot_base_power_callback(state: &DoublesState, side: Side, slot: usize, att_slot: &ActiveSlot, choice: &Choice) -> f32 {
+    match choice.move_id {
+        // A Beat Up hit's power can linger in the slot after the move (a later
+        // Future Sight from the same slot must not use it).
+        Choices::BEATUP => att_slot.bp_fixed,
+        Choices::SPITUP => 100.0 * att_slot.stockpile as f32,
+        Choices::STOREDPOWER | Choices::POWERTRIP => {
+            let b = state.side(side).slot_boosts(slot).cloned().unwrap_or_default();
+            crate::engine::mechanics::stored_power([b.atk, b.def, b.spa, b.spd, b.spe, b.acc, b.eva])
+        }
+        _ => 0.0,
+    }
+}
+
 fn base_power_with_modifiers(
     choice: &Choice,
     attacker: &crate::state::Pokemon,
     defender: &crate::state::Pokemon,
     helping_hand_mult: f32,
+    // `onBasePower` modifiers from the user's slot (Charge, Lash Out):
+    // (priority, 4096-based factor), chained with the others.
+    slot_mods: &[(i32, i64)],
     speeds: (i32, i32),
     terrain: crate::engine::state::Terrain,
     defender_semi_invulnerable: bool,
@@ -8462,8 +8416,7 @@ fn base_power_with_modifiers(
         // sandforce.onBasePower (priority 21): x1.3 for Rock / Ground / Steel
         // in a sandstorm (`isWeather`: not while Cloud Nine / Air Lock suppress it).
         Abilities::SANDFORCE
-            if state.weather.weather_type == Weather::SAND
-                && !weather_suppressed(state)
+            if effective_weather(state) == Weather::SAND
                 && matches!(choice.move_type, PokemonType::ROCK | PokemonType::GROUND | PokemonType::STEEL) =>
         {
             mods.push((21, 5325))
@@ -8500,7 +8453,7 @@ fn base_power_with_modifiers(
     // rain / sandstorm / hail / snow (`pokemon.effectiveWeather()`, so Cloud
     // Nine / Air Lock suppression and the user's Mega Sol apply).
     if matches!(choice.move_id, Choices::SOLARBEAM | Choices::SOLARBLADE) {
-        let weather = state.weather.weather_type;
+        let weather = effective_weather(state);
         let weakening = matches!(
             weather,
             Weather::RAIN
@@ -8540,6 +8493,7 @@ fn base_power_with_modifiers(
     if let Some(m) = crate::engine::mechanics::terrain_base_power_modifier(terrain, choice, attacker_grounded, defender_grounded, defender_semi_invulnerable) {
         mods.push((6, m));
     }
+    mods.extend_from_slice(slot_mods);
     // Helping Hand stacks one x1.5 per use (`helping_hand_mult` = 1.5^n).
     let mut hh = helping_hand_mult;
     while hh > 1.01 {
@@ -8641,6 +8595,17 @@ fn illusion_disguise(sd: &crate::doubles::state::DoublesSide, idx: PokemonIndex)
 }
 
 /// PS `field.suppressingWeather()`: an active Cloud Nine / Air Lock holder.
+/// PS `field.effectiveWeather()` (also what `isWeather` reads): no weather
+/// while a Cloud Nine / Air Lock holder is active. Use it for every weather
+/// effect; only setting / ending the weather reads the raw weather.
+fn effective_weather(state: &DoublesState) -> Weather {
+    if weather_suppressed(state) {
+        Weather::NONE
+    } else {
+        state.weather.weather_type
+    }
+}
+
 fn weather_suppressed(state: &DoublesState) -> bool {
     [Side::One, Side::Two].iter().any(|&s| {
         (0..2).any(|sl| {
@@ -8990,7 +8955,7 @@ fn set_status_event_tie(
     }
     // Type and `Immunity`-event checks come before the SetStatus event.
     let raw_ctx = crate::engine::mechanics::StatusContext {
-        sun: matches!(state.weather.weather_type, Weather::SUN | Weather::HARSHSUN) && !weather_suppressed(state),
+        sun: matches!(effective_weather(state), Weather::SUN | Weather::HARSHSUN),
         misty_terrain: false,
         electric_terrain: false,
         safeguard: false,
@@ -9132,7 +9097,7 @@ fn status_immune_ex(
     let ctx = crate::engine::mechanics::StatusContext {
         // PS sunnyday `onImmunity('frz')` checks `effectiveWeather()`, which is
         // empty while a Cloud Nine / Air Lock holder suppresses the weather.
-        sun: matches!(state.weather.weather_type, Weather::SUN | Weather::HARSHSUN) && !weather_suppressed(state),
+        sun: matches!(effective_weather(state), Weather::SUN | Weather::HARSHSUN),
         misty_terrain: state.terrain.terrain_type == crate::engine::state::Terrain::MISTYTERRAIN,
         electric_terrain: state.terrain.terrain_type == crate::engine::state::Terrain::ELECTRICTERRAIN,
         safeguard: safeguard_blocks && state.side(ts).side_conditions.safeguard > 0 && !(infiltrates && ts != src_side),
@@ -9334,7 +9299,7 @@ fn compute_hit_damage(
             attack_boost: atk_boost_stat,
             defense_base: base_def,
             defense_boost: def_boost_stat,
-            weather: if weather_suppressed(state) { Weather::NONE } else { state.weather.weather_type },
+            weather: effective_weather(state),
             // PS data/moves.ts reflect / lightscreen / auroraveil
             // `onAnyModifyDamage`: skipped when `move.infiltrates`
             // (data/abilities.ts infiltrator.onModifyMove).
@@ -9412,7 +9377,7 @@ fn compute_hit_damage(
                 m
             };
             // Solar Power `onModifySpA` (priority 5, exclusive with Plus / Minus).
-            let sun = matches!(state.weather.weather_type, Weather::SUN | Weather::HARSHSUN);
+            let sun = matches!(effective_weather(state), Weather::SUN | Weather::HARSHSUN);
             let m = (m * crate::engine::mechanics::solar_power_spa_modifier(attacker, choice, sun) + 2048) >> 12;
             // Stakeout `onModifyAtk` / `onModifySpA`: x2 against a target that
             // switched in this turn (`!defender.activeTurns`).
@@ -9476,11 +9441,11 @@ fn compute_hit_damage(
             // (`onModifySpD` / `onModifyDef` of the weather condition).
             // PS `effectiveWeather()`: none while Cloud Nine / Air Lock suppress it.
             let has = |t| defender.types.0 == t || defender.types.1 == t;
-            let effective_weather = if weather_suppressed(state) { Weather::NONE } else { state.weather.weather_type };
-            if effective_weather == Weather::SAND && !names_def && has(PokemonType::ROCK) {
+            let eff_weather = effective_weather(state);
+            if eff_weather == Weather::SAND && !names_def && has(PokemonType::ROCK) {
                 m = (m * 6144 + 2048) >> 12;
             }
-            if effective_weather == Weather::SNOW && names_def && has(PokemonType::ICE) {
+            if eff_weather == Weather::SNOW && names_def && has(PokemonType::ICE) {
                 m = (m * 6144 + 2048) >> 12;
             }
             m
@@ -9492,6 +9457,18 @@ fn compute_hit_damage(
                 attacker,
                 defender,
                 att_slot.helping_hand_mult,
+                &{
+                    let mut m: Vec<(i32, i64)> = Vec::new();
+                    // charge.onBasePower (priority 9): x2 for Electric moves.
+                    if att_slot.charge && choice.move_type == PokemonType::ELECTRIC {
+                        m.push((9, 8192));
+                    }
+                    // lashout.onBasePower: x2 if the user's stats were lowered this turn.
+                    if choice.move_id == Choices::LASHOUT && att_slot.stats_lowered_this_turn {
+                        m.push((0, 8192));
+                    }
+                    m
+                },
                 speeds,
                 state.terrain.terrain_type,
                 ally_semi_invulnerable(state, target_side, target_slot),
@@ -9521,9 +9498,9 @@ fn compute_hit_damage(
                 att_slot.bp_double
                     || (matches!(choice.move_id, Choices::STOMPINGTANTRUM | Choices::TEMPERFLARE)
                         && att_slot.move_result_last_turn == Some(false)),
-                // Only Beat Up reads it: a Beat Up hit's base power can linger in the
-                // slot after the move (a later Future Sight from the same slot must not use it).
-                if choice.move_id == Choices::BEATUP { att_slot.bp_fixed } else { 0.0 },
+                // `basePowerCallback`s that read the user's slot (Beat Up, Spit Up,
+                // Stored Power): they run before the `onBasePower` modifiers.
+                slot_base_power_callback(state, side, slot, &att_slot, choice),
                 // PS `rivalry.onBasePower`: both genders must be set (`M` / `F`).
                 {
                     let gendered = |g: Option<&str>| matches!(g, Some("M") | Some("F"));
@@ -9545,39 +9522,6 @@ fn compute_hit_damage(
             ),
         };
         let mut ctx = ctx;
-        // Lash Out `onBasePower`: chainModify(2) if the user's stats were
-        // lowered this turn (PS data/moves.ts lashout).
-        // TODO(PS parity): chained with the other base-power modifiers.
-        if choice.move_id == Choices::LASHOUT && att_slot.stats_lowered_this_turn {
-            ctx.base_power_override = if ctx.base_power_override > 0.0 {
-                ctx.base_power_override
-            } else {
-                choice.base_power
-            } * 2.0;
-        }
-        if matches!(choice.move_id, Choices::STOREDPOWER | Choices::POWERTRIP) {
-            let b = state.side(side).slot_boosts(slot).cloned().unwrap_or_default();
-            let bp = crate::engine::mechanics::stored_power([b.atk, b.def, b.spa, b.spd, b.spe, b.acc, b.eva]);
-            // Helping Hand-style multipliers ride on the override ratio.
-            let ratio = if choice.base_power > 0.0 && ctx.base_power_override > 0.0 {
-                ctx.base_power_override / choice.base_power
-            } else {
-                1.0
-            };
-            ctx.base_power_override = bp * ratio;
-        }
-        if att_slot.charge && choice.move_type == PokemonType::ELECTRIC {
-            // charge.onBasePower (priority 9): chainModify(2).
-            ctx.base_power_override = if ctx.base_power_override > 0.0 {
-                ctx.base_power_override
-            } else {
-                choice.base_power
-            } * 2.0;
-        }
-        if choice.move_id == Choices::SPITUP {
-            // PS `basePowerCallback`: 100 per Stockpile layer.
-            ctx.base_power_override = 100.0 * att_slot.stockpile as f32;
-        }
         if let Some(outcome) = calculate_damage(attacker, defender, choice, rng, spread, &ctx) {
             damage = outcome.damage;
             crit = outcome.crit;
@@ -9667,9 +9611,7 @@ fn contact_abilities(
             // PS `addVolatile('attract')` -> `onAllyTryAddVolatile` (data/abilities.ts
             // aromaveil): an Aroma Veil on the holder's side (itself or its ally)
             // stops it. The Cute Charm roll above still happens.
-            let aroma_veil = (0..2).any(|sl| {
-                state.side(side).slot_pokemon(sl).is_some_and(|p| p.hp > 0 && p.ability == Abilities::AROMAVEIL)
-            });
+            let aroma_veil = aroma_veil_blocks(state, side, AromaVeiled::Attract, None);
             if opposite
                 && !aroma_veil
                 && state.side(side).team_member(idx).ability != Abilities::OBLIVIOUS
@@ -9906,6 +9848,7 @@ fn resolve_future_move(
     };
     if damage > 0 {
         apply_damage(state, ts, tslot, damage);
+        damaged_by_move(state, ts, tslot);
         // PS `DamagingHit` (trySpreadMoveHit) also runs for the delayed hit: the
         // target's damaging-hit boosts (Weak Armor, Justified, ...) and Stamina.
         // PS data/abilities.ts stamina / sim/battle-actions.ts spreadMoveHit.
@@ -9938,6 +9881,96 @@ fn disguise_bust(state: &mut DoublesState, side: Side, slot: usize) {
     apply_damage(state, side, slot, dmg);
     let raw = state.side(side).team_member(idx).speed;
     state.side_mut(side).speed_cache[idx as usize] = raw as _;
+}
+
+/// The volatiles Aroma Veil's `onAllyTryAddVolatile` blocks (PS
+/// data/abilities.ts aromaveil). Keyed by the volatile, whatever adds it
+/// (Taunt, Psychic Noise's Heal Block, Cursed Body's Disable, Cute Charm, ...).
+#[derive(Clone, Copy)]
+enum AromaVeiled {
+    Attract,
+    Disable,
+    Encore,
+    HealBlock,
+    Taunt,
+    Torment,
+}
+
+/// Whether adding `_v` to the pokemon in `ts`/`tsl` is blocked by an active
+/// Aroma Veil on its side (the holder itself or its ally). A move from a Mold
+/// Breaker-style user ignores it (`breakable`). `attacker` is the move's user
+/// when the volatile comes from a move.
+fn aroma_veil_blocks(state: &DoublesState, ts: Side, _v: AromaVeiled, attacker: Option<(Side, PokemonIndex, &Choice)>) -> bool {
+    (0..2).any(|sl| {
+        state.side(ts).slot_pokemon(sl).is_some_and(|p| {
+            p.hp > 0
+                && p.ability == Abilities::AROMAVEIL
+                && !attacker.is_some_and(|(asd, ai, c)| {
+                    crate::engine::abilities::ignores_target_ability(state.side(asd).team_member(ai), c, &Abilities::AROMAVEIL)
+                })
+        })
+    })
+}
+
+/// The user's `onPrepareHit` handlers: Libero / Protean (once per switch-in,
+/// the user becomes the move's type). PS data/abilities.ts libero / protean.
+/// TODO(PS parity): Protean's champions override, Tera.
+fn prepare_hit(state: &mut DoublesState, side: Side, slot: usize, idx: PokemonIndex, choice: &Choice) {
+    if !matches!(state.side(side).team_member(idx).ability, Abilities::LIBERO | Abilities::PROTEAN)
+        || state.side(side).active[slot].protean_done
+        || choice.move_type == PokemonType::TYPELESS
+        || choice.move_id == Choices::STRUGGLE
+        || crate::engine::mechanics::is_future_move(choice.move_id)
+        // `move.callsMove` moves (Copycat, Metronome, ...) don't trigger it: the
+        // move they call does.
+        || matches!(
+            choice.move_id,
+            Choices::ASSIST
+                | Choices::COPYCAT
+                | Choices::MEFIRST
+                | Choices::METRONOME
+                | Choices::MIRRORMOVE
+                | Choices::NATUREPOWER
+                | Choices::SLEEPTALK
+        )
+    {
+        return;
+    }
+    let pm = state.side_mut(side).team_member_mut(idx);
+    if pm.types != (choice.move_type, PokemonType::TYPELESS) {
+        let orig = pm.types;
+        pm.types = (choice.move_type, PokemonType::TYPELESS);
+        let a = &mut state.side_mut(side).active[slot];
+        if a.type_change.is_none() {
+            a.type_change = Some(orig);
+        }
+        a.protean_done = true;
+    }
+}
+
+/// State changes of a pokemon that took damage from a move's hit, shared by
+/// every move-hit path (normal hits, Future Sight / Doom Desire): Illusion
+/// `onDamagingHit` ends the disguise. PS data/abilities.ts illusion.
+fn damaged_by_move(state: &mut DoublesState, ts: Side, tsl: usize) {
+    state.side_mut(ts).active[tsl].illusion_broken = true;
+}
+
+/// Emergency Exit / Wimp Out (champions `onEmergencyExit`): the holder dropped
+/// from above half HP to half or less and is still alive, its side can switch,
+/// and it is not already switching: it switches out after the action.
+/// PS data/mods/champions/abilities.ts emergencyexit / wimpout.
+fn emergency_exit_check(state: &mut DoublesState, ts: Side, tsl: usize, before: i16) {
+    let Some(d) = state.side(ts).slot_pokemon(tsl) else { return };
+    let (after, max) = (d.hp as i32, d.maxhp as i32);
+    if matches!(d.ability, Abilities::EMERGENCYEXIT | Abilities::WIMPOUT)
+        && after > 0
+        && after * 2 <= max
+        && (before as i32) * 2 > max
+        && state.side(ts).find_replacement().is_some()
+        && !state.side(ts).active[tsl].force_switch
+    {
+        state.side_mut(ts).active[tsl].force_switch = true;
+    }
 }
 
 /// Cursed Body (PS data/abilities.ts `onDamagingHit`): 30% to Disable the
@@ -9979,9 +10012,7 @@ fn cursed_body(
     // PS `addVolatile('disable')` -> `TryAddVolatile` -> `onAllyTryAddVolatile`
     // (data/abilities.ts aromaveil): an Aroma Veil on the attacker's side (the
     // holder or its ally) interrupts it. The roll above still happens.
-    let aroma_veil = (0..2).any(|sl| {
-        state.side(side).slot_pokemon(sl).is_some_and(|p| p.hp > 0 && p.ability == Abilities::AROMAVEIL)
-    });
+    let aroma_veil = aroma_veil_blocks(state, side, AromaVeiled::Disable, None);
     // Disable `condition.onStart` (PS data/moves.ts disable): the attacker's
     // move with no PP left is "Move out of PP" and the volatile does not start.
     // The move's PP is already spent when this runs.
@@ -10218,10 +10249,13 @@ fn mirror_armor_bounce(
     b: &StatBoosts,
 ) -> StatBoosts {
     let holder = state.side(ts).team_member(tidx).ability;
-    let Some(sidx) = state.side(side).active[slot].pokemon_index else { return b.clone() };
-    if holder != Abilities::MIRRORARMOR || state.side(side).team_member(sidx).hp <= 0 {
+    if holder != Abilities::MIRRORARMOR {
         return b.clone();
     }
+    // The drop is removed from the holder whatever the source's HP; only the
+    // bounce needs a living source (`if (source.hp) this.boost(...)`). A source
+    // whose faint already emptied its slot gets nothing either.
+    let sidx = state.side(side).active[slot].pokemon_index.filter(|&i| state.side(side).team_member(i).hp > 0);
     let cur = state.side(ts).team_boosts[tidx as usize].clone();
     let now = [cur.atk, cur.def, cur.spa, cur.spd, cur.spe, cur.acc, cur.eva];
     let mut rest = [b.attack, b.defense, b.special_attack, b.special_defense, b.speed, b.accuracy, b.evasion];
@@ -10241,7 +10275,9 @@ fn mirror_armor_bounce(
         accuracy: bounced[5],
         evasion: bounced[6],
     };
-    apply_boosts(state, side, sidx, &bounced, true);
+    if let Some(sidx) = sidx {
+        apply_boosts(state, side, sidx, &bounced, true);
+    }
     StatBoosts {
         attack: rest[0],
         defense: rest[1],
@@ -10485,43 +10521,7 @@ fn apply_boosts_from(
 /// Abilities with the `notrace` flag (PS `data/abilities.ts`): Trace cannot
 /// copy them.
 fn has_notrace(a: Abilities) -> bool {
-    matches!(
-        a,
-        Abilities::ASONEGLASTRIER
-            | Abilities::ASONESPECTRIER
-            | Abilities::BATTLEBOND
-            | Abilities::COMATOSE
-            | Abilities::COMMANDER
-            | Abilities::DISGUISE
-            | Abilities::EMBODYASPECTCORNERSTONE
-            | Abilities::EMBODYASPECTHEARTHFLAME
-            | Abilities::EMBODYASPECTTEAL
-            | Abilities::EMBODYASPECTWELLSPRING
-            | Abilities::FLOWERGIFT
-            | Abilities::FORECAST
-            | Abilities::HUNGERSWITCH
-            | Abilities::ICEFACE
-            | Abilities::ILLUSION
-            | Abilities::IMPOSTER
-            | Abilities::MULTITYPE
-            | Abilities::NEUTRALIZINGGAS
-            | Abilities::POISONPUPPETEER
-            | Abilities::POWERCONSTRUCT
-            | Abilities::POWEROFALCHEMY
-            | Abilities::PROTOSYNTHESIS
-            | Abilities::QUARKDRIVE
-            | Abilities::RECEIVER
-            | Abilities::RKSSYSTEM
-            | Abilities::SCHOOLING
-            | Abilities::SHIELDSDOWN
-            | Abilities::STANCECHANGE
-            | Abilities::TERAFORMZERO
-            | Abilities::TERASHELL
-            | Abilities::TERASHIFT
-            | Abilities::TRACE
-            | Abilities::ZENMODE
-            | Abilities::ZEROTOHERO
-    )
+    crate::doubles::ability_flags::has_flag(a, crate::doubles::ability_flags::NOTRACE)
 }
 
 /// Run the Start effects of the ability of the pokemon in `side`'s
@@ -10794,9 +10794,8 @@ fn apply_on_switch_abilities(
 
 /// Forecast (`onUpdate`, data/abilities.ts): Castform's type follows the
 /// weather (sun Fire, rain Water, hail / snow Ice, otherwise Normal).
-/// TODO(PS parity): Cloud Nine / Air Lock (`effectiveWeather`).
 fn update_forecast(state: &mut DoublesState) {
-    let weather = state.weather.weather_type;
+    let weather = effective_weather(state);
     let t = match weather {
         Weather::SUN | Weather::HARSHSUN => PokemonType::FIRE,
         Weather::RAIN | Weather::HEAVYRAIN => PokemonType::WATER,
@@ -10849,7 +10848,7 @@ fn update_forecast(state: &mut DoublesState) {
 }
 
 fn apply_side_condition(state: &mut DoublesState, side: Side, c: PokemonSideCondition) -> bool {
-    let snow = matches!(state.weather.weather_type, Weather::HAIL | Weather::SNOW);
+    let snow = matches!(effective_weather(state), Weather::HAIL | Weather::SNOW);
     let s = state.side_mut(side);
     let sc = &mut s.side_conditions;
     // PS `addSideCondition` fails on an existing condition (no `onSideRestart`);
@@ -11817,84 +11816,20 @@ fn sorted_actives(state: &DoublesState, rng: &mut Gen5Rng, label: &'static str) 
         .collect()
 }
 
-/// End-of-turn `DisableMove` and `TrapPokemon` event tie draws, per alive
-/// active pokemon in PS `endTurn` order (sides, then slots). Each event's
-/// handler list is speed-sorted and every exact tie group is shuffled.
-/// `DisableMove`: Taunt + Throat Chop, ... `TrapPokemon`: `trapped`,
-/// `partiallytrapped`, `octolock` and Fairy Lock `onTrapPokemon`.
+/// End-of-turn `DisableMove` and `TrapPokemon` (and `MaybeTrapPokemon` for a
+/// pokemon not immune to `trapped`) events, per active pokemon in PS `endTurn`
+/// order (sides, then slots). Only their handler-sort draws.
+/// PS sim/battle.ts endTurn.
+/// TODO(PS parity): `knownType` (Illusion) for MaybeTrapPokemon.
 fn end_turn_disable_moves(state: &DoublesState, rng: &mut Gen5Rng) {
+    use crate::doubles::events::run_event_ties;
     for (s, sl) in [(Side::One, 0usize), (Side::One, 1), (Side::Two, 0), (Side::Two, 1)] {
-        let ss = state.side(s);
-        let Some(xidx) = ss.active[sl].pokemon_index else { continue };
-        // (order, speed, subOrder); every onDisableMove handler has order
-        // `false` (4294967296) and priority 0; Conditions are subOrder 2,
-        // Abilities 7.
-        let mut hs: Vec<(i64, i32, i64)> = Vec::new();
-        let speed = cached_speed(state, s, sl);
-        let a = &ss.active[sl];
-        if a.taunt > 0 {
-            hs.push((4294967296, speed, 2));
-        }
-        if a.throat_chop > 0 {
-            hs.push((4294967296, speed, 2));
-        }
-        if a.disabled.is_some() {
-            hs.push((4294967296, speed, 2));
-        }
-        if a.heal_block > 0 {
-            hs.push((4294967296, speed, 2));
-        }
-        if a.encore.is_some() {
-            hs.push((4294967296, speed, 2));
-        }
-        // Torment `onDisableMove` (PS data/moves.ts torment condition).
-        if a.torment {
-            hs.push((4294967296, speed, 2));
-        }
-        // TODO(PS parity): choicelock / belch /
-        // stuffcheeks volatiles.
-        if ss.team_member(xidx).ability == Abilities::GORILLATACTICS {
-            hs.push((4294967296, speed, 7));
-        }
-        if state.gravity.active {
-            hs.push((4294967296, 0, 2));
-        }
-        // Imprison `onFoeDisableMove` (data/moves.ts imprison): each active foe
-        // holding Imprison is a handler on this pokemon, keyed by the foe's speed.
-        let other = s.other();
-        for osl in 0..2 {
-            let oa = &state.side(other).active[osl];
-            if oa.imprison && oa.pokemon_index.is_some_and(|i| state.side(other).team_member(i).hp > 0) {
-                hs.push((4294967296, cached_speed(state, other, osl), 2));
-            }
-        }
-        if hs.len() >= 2 {
-            sort_handler_ties(&mut hs, rng, "speed tie (move order)");
-        }
-        // `TrapPokemon` runs for the same pokemon right after its DisableMove.
-        let mut ts: Vec<(i64, i32, i64)> = Vec::new();
-        // No Retreat `onStart` = `addVolatile('trapped')`: the same `trapped`
-        // condition (`onTrapPokemon`, subOrder 2) as Block / Mean Look.
-        // PS data/moves.ts noretreat, data/conditions.ts trapped.
-        if a.trapped || a.no_retreat {
-            ts.push((4294967296, speed, 2));
-        }
-        if a.partial_trap.is_some() {
-            ts.push((4294967296, speed, 2));
-        }
-        // Ingrain condition `onTrapPokemon` (PS data/moves.ts ingrain: tryTrap).
-        if a.ingrain {
-            ts.push((4294967296, speed, 2));
-        }
-        if a.octolock.is_some() {
-            ts.push((4294967296, speed, 2));
-        }
-        // Fairy Lock field condition: a field handler (subOrder 5, speed 0).
-        if state.fairy_lock.active {
-            ts.push((4294967296, 0, 5));
-        }
-        if ts.len() >= 2 {
-            sort_handler_ties(&mut ts, rng, "speed tie (trap)");
+        let Some(idx) = state.side(s).active[sl].pokemon_index else { continue };
+        run_event_ties(state, rng, "DisableMove", (s, sl), None);
+        run_event_ties(state, rng, "TrapPokemon", (s, sl), None);
+        // `getImmunity('trapped')`: Ghost types are immune.
+        if state.side(s).team_member(idx).has_type(&PokemonType::GHOST) {
+            run_event_ties(state, rng, "MaybeTrapPokemon", (s, sl), None);
         }
     }
 }
@@ -12289,8 +12224,7 @@ fn end_of_turn(
                     // PS hydration.onResidual: cures its status in rain
                     // (`effectiveWeather`, so not under Cloud Nine / Air Lock).
                     if state.side(side).team_member(idx).status != PokemonStatus::NONE
-                        && !weather_suppressed(state)
-                        && matches!(state.weather.weather_type, Weather::RAIN | Weather::HEAVYRAIN)
+                        && matches!(effective_weather(state), Weather::RAIN | Weather::HEAVYRAIN)
                     {
                         state.side_mut(side).team_member_mut(idx).status = PokemonStatus::NONE;
                     }
@@ -12354,7 +12288,7 @@ fn end_of_turn(
                 if state.side(side).slot_pokemon(slot).map(|p| p.hp <= 0).unwrap_or(true) {
                     continue;
                 }
-                if !matches!(state.weather.weather_type, Weather::SUN | Weather::HARSHSUN) {
+                if !matches!(effective_weather(state), Weather::SUN | Weather::HARSHSUN) {
                     let _ = rng.label("residual roll").random_chance(1, 2);
                 }
             }
@@ -13135,7 +13069,7 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
                     attack_boost,
                     defense_base,
                     defense_boost,
-                    weather: if weather_suppressed(state) { Weather::NONE } else { state.weather.weather_type },
+                    weather: effective_weather(state),
                     reflect: false,
                     light_screen: false,
                     defender_mod: 4096,

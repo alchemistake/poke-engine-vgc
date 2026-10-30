@@ -36,6 +36,12 @@ pub const THAWS_TARGET: [Choices; 5] = [
     Choices::HYDROSTEAM,
 ];
 
+/// PS `move.flags.futuremove` (data/moves.ts): the move targets a slot, so
+/// a fainted target is kept (sim/pokemon.ts getMoveTargets).
+pub fn is_future_move(m: Choices) -> bool {
+    matches!(m, Choices::FUTURESIGHT | Choices::DOOMDESIRE)
+}
+
 /// The field facts `immune_to_status` needs, gathered by each engine from its
 /// own state.
 pub struct StatusContext {
@@ -325,147 +331,24 @@ pub fn fractional_priority(ability: Abilities, category: MoveCategory) -> Option
 /// Abilities with the `failroleplay` flag (PS data/abilities.ts): Role Play
 /// fails when the target has one of these (`onTryHit`).
 pub fn fail_role_play(a: Abilities) -> bool {
-    matches!(
-        a,
-        Abilities::ASONEGLASTRIER
-            | Abilities::ASONESPECTRIER
-            | Abilities::BATTLEBOND
-            | Abilities::COMATOSE
-            | Abilities::COMMANDER
-            | Abilities::DISGUISE
-            | Abilities::EMBODYASPECTCORNERSTONE
-            | Abilities::EMBODYASPECTHEARTHFLAME
-            | Abilities::EMBODYASPECTTEAL
-            | Abilities::EMBODYASPECTWELLSPRING
-            | Abilities::FLOWERGIFT
-            | Abilities::FORECAST
-            | Abilities::HUNGERSWITCH
-            | Abilities::ICEFACE
-            | Abilities::ILLUSION
-            | Abilities::IMPOSTER
-            | Abilities::MULTITYPE
-            | Abilities::NEUTRALIZINGGAS
-            | Abilities::POISONPUPPETEER
-            | Abilities::POWERCONSTRUCT
-            | Abilities::POWEROFALCHEMY
-            | Abilities::PROTOSYNTHESIS
-            | Abilities::QUARKDRIVE
-            | Abilities::RECEIVER
-            | Abilities::RKSSYSTEM
-            | Abilities::SCHOOLING
-            | Abilities::SHIELDSDOWN
-            | Abilities::STANCECHANGE
-            | Abilities::TERAFORMZERO
-            | Abilities::TERASHELL
-            | Abilities::TERASHIFT
-            | Abilities::TRACE
-            | Abilities::WONDERGUARD
-            | Abilities::ZENMODE
-            | Abilities::ZEROTOHERO
-    )
+    crate::doubles::ability_flags::has_flag(a, crate::doubles::ability_flags::FAILROLEPLAY)
 }
 
 /// Abilities with the `cantsuppress` flag (data/abilities.ts): Entrainment,
 /// Mummy, Lingering Aroma and friends can't replace them (`setAbility`).
 pub fn cant_suppress(a: Abilities) -> bool {
-    matches!(
-        a,
-        Abilities::ASONEGLASTRIER
-            | Abilities::ASONESPECTRIER
-            | Abilities::BATTLEBOND
-            | Abilities::COMATOSE
-            | Abilities::DISGUISE
-            | Abilities::GULPMISSILE
-            | Abilities::ICEFACE
-            | Abilities::MULTITYPE
-            | Abilities::POWERCONSTRUCT
-            | Abilities::RKSSYSTEM
-            | Abilities::SCHOOLING
-            | Abilities::SHIELDSDOWN
-            | Abilities::STANCECHANGE
-            | Abilities::TERASHIFT
-            | Abilities::ZENMODE
-            | Abilities::ZEROTOHERO
-    )
+    crate::doubles::ability_flags::has_flag(a, crate::doubles::ability_flags::CANTSUPPRESS)
 }
 
 /// Abilities with the `noentrain` flag (data/abilities.ts): they can't be
 /// copied by Entrainment (`onTryHit`).
 pub fn no_entrain(a: Abilities) -> bool {
-    matches!(
-        a,
-        Abilities::ASONEGLASTRIER
-            | Abilities::ASONESPECTRIER
-            | Abilities::BATTLEBOND
-            | Abilities::COMATOSE
-            | Abilities::COMMANDER
-            | Abilities::DISGUISE
-            | Abilities::EMBODYASPECTCORNERSTONE
-            | Abilities::EMBODYASPECTHEARTHFLAME
-            | Abilities::EMBODYASPECTTEAL
-            | Abilities::EMBODYASPECTWELLSPRING
-            | Abilities::FLOWERGIFT
-            | Abilities::FORECAST
-            | Abilities::HUNGERSWITCH
-            | Abilities::ICEFACE
-            | Abilities::ILLUSION
-            | Abilities::IMPOSTER
-            | Abilities::MULTITYPE
-            | Abilities::NEUTRALIZINGGAS
-            | Abilities::POISONPUPPETEER
-            | Abilities::POWERCONSTRUCT
-            | Abilities::POWEROFALCHEMY
-            | Abilities::PROTOSYNTHESIS
-            | Abilities::QUARKDRIVE
-            | Abilities::RECEIVER
-            | Abilities::RKSSYSTEM
-            | Abilities::SCHOOLING
-            | Abilities::SHIELDSDOWN
-            | Abilities::STANCECHANGE
-            | Abilities::TERAFORMZERO
-            | Abilities::TERASHELL
-            | Abilities::TERASHIFT
-            | Abilities::TRACE
-            | Abilities::WONDERGUARD
-            | Abilities::ZENMODE
-            | Abilities::ZEROTOHERO
-    )
+    crate::doubles::ability_flags::has_flag(a, crate::doubles::ability_flags::NOENTRAIN)
 }
 
 /// Abilities with the `failskillswap` flag (data/abilities.ts).
 pub fn fails_skill_swap(a: Abilities) -> bool {
-    matches!(
-        a,
-        Abilities::ASONEGLASTRIER
-            | Abilities::ASONESPECTRIER
-            | Abilities::BATTLEBOND
-            | Abilities::COMATOSE
-            | Abilities::COMMANDER
-            | Abilities::DISGUISE
-            | Abilities::EMBODYASPECTCORNERSTONE
-            | Abilities::EMBODYASPECTHEARTHFLAME
-            | Abilities::EMBODYASPECTTEAL
-            | Abilities::EMBODYASPECTWELLSPRING
-            | Abilities::HUNGERSWITCH
-            | Abilities::ICEFACE
-            | Abilities::ILLUSION
-            | Abilities::MULTITYPE
-            | Abilities::NEUTRALIZINGGAS
-            | Abilities::POISONPUPPETEER
-            | Abilities::POWERCONSTRUCT
-            | Abilities::PROTOSYNTHESIS
-            | Abilities::QUARKDRIVE
-            | Abilities::RKSSYSTEM
-            | Abilities::SCHOOLING
-            | Abilities::SHIELDSDOWN
-            | Abilities::STANCECHANGE
-            | Abilities::TERAFORMZERO
-            | Abilities::TERASHELL
-            | Abilities::TERASHIFT
-            | Abilities::WONDERGUARD
-            | Abilities::ZENMODE
-            | Abilities::ZEROTOHERO
-    )
+    crate::doubles::ability_flags::has_flag(a, crate::doubles::ability_flags::FAILSKILLSWAP)
 }
 
 /// Weather or terrain an ability sets when its holder switches in (same

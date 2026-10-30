@@ -5,6 +5,7 @@
 //! separate from the singles `State`/`Side` model so the singles engine and its
 //! tests are unaffected.
 
+pub mod ability_flags;
 pub mod battle;
 pub mod damage;
 pub mod event_handlers;

@@ -36,6 +36,7 @@ PROTECTED=(
   fuzz/guard.sh fuzz/install-hooks.sh fuzz/SCORE
   src/doubles/species_types.rs src/doubles/species_weights.rs src/doubles/move_targets.rs
   src/doubles/event_handlers.rs fuzz/gen_event_handlers.js
+  src/doubles/ability_flags.rs fuzz/gen_ability_flags.js
 )
 if [ "${ALLOW_HARNESS_EDIT:-0}" != "1" ]; then
   for f in "${PROTECTED[@]}"; do
@@ -53,6 +54,11 @@ if [ -f fuzz/gen_event_handlers.js ] && ! node fuzz/gen_event_handlers.js | cmp 
   fail "src/doubles/event_handlers.rs is not what fuzz/gen_event_handlers.js generates. Never edit it by hand."
 else
   ok "event handler table up to date"
+fi
+if [ -f fuzz/gen_ability_flags.js ] && ! node fuzz/gen_ability_flags.js | cmp -s - src/doubles/ability_flags.rs; then
+  fail "src/doubles/ability_flags.rs is not what fuzz/gen_ability_flags.js generates. Never edit it by hand."
+else
+  ok "ability flag table up to date"
 fi
 
 # 3. No bulk rewrite of the shared move table.

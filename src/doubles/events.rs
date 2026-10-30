@@ -107,7 +107,8 @@ pub fn pokemon_effects(state: &DoublesState, side: Side, slot: usize) -> Vec<(St
     vol(a.heal_block > 0, "healblock");
     vol(a.syrup_bomb.is_some(), "syrupbomb");
     vol(a.octolock.is_some(), "octolock");
-    vol(a.trapped, "trapped");
+    // No Retreat `onStart` adds the `trapped` volatile (PS data/moves.ts noretreat).
+    vol(a.trapped || a.no_retreat, "trapped");
     vol(a.encore.is_some(), "encore");
     vol(a.torment, "torment");
     vol(a.imprison, "imprison");

@@ -476,7 +476,7 @@ pub fn calculate_damage_with(
 
     // 16-bit trunc
     let result = (base % 65536 + 65536) % 65536;
-    if std::env::var("PE_DEBUG_DMG").is_ok() {
+    if crate::doubles::debug::flags().dmg {
         eprintln!(
             "DMGDBG {} (BP {} {}) vs {}: atk={} def={} base_final={} crit={} tm={:?} type={:?}",
             attacker.id, base_power, choice.move_type, defender.id, attack, defense, result, crit, tm, defender.types

@@ -1066,7 +1066,9 @@ pub fn run_battle_fuzz(
     // side A's leads first, then side B's (p1 switches in before p2).
     // PS `runSwitch` for the four leads: speed sort, SwitchIn handlers, then
     // the action's `eachEvent('Update')`.
-    rng.context = "turn 0: move order".to_string();
+    if rng.trace {
+        rng.context = "turn 0: move order".to_string();
+    }
     team_preview_draws(state, rng);
     // Illusion `onBeforeSwitchIn` for the leads (PS data/abilities.ts illusion):
     // the disguise is fixed when the holder is sent out, from the party order
@@ -1081,7 +1083,9 @@ pub fn run_battle_fuzz(
             }
         }
     }
-    rng.context = "turn 0: switch-in".to_string();
+    if rng.trace {
+        rng.context = "turn 0: switch-in".to_string();
+    }
     // PS `case "start"`: each lead's `switchIn` inserts a `runSwitch` action
     // into the queue (`insertChoice`), drawing on speed ties before the
     // `runSwitch` speed sort below.
@@ -1124,7 +1128,7 @@ pub fn run_battle_fuzz(
         }
 
         let turn_no = state.turn;
-        if std::env::var("PE_DEBUG_DMG").is_ok() {
+        if crate::doubles::debug::flags().dmg {
             eprintln!("=== TURN index {} (state.turn {})", ci + 1, turn_no);
         }
         let turn = match choices.get(ci) {
@@ -1296,7 +1300,7 @@ pub fn run_battle_fuzz(
         }
 
         // Sort by priority/speed, shuffling ties (consumes rng draws).
-        if std::env::var("PE_DEBUG_SPEED").is_ok() {
+        if crate::doubles::debug::flags().speed {
             for a in &actions {
                 eprintln!(
                     "SPEEDDBG t{} {}{} {} prio={} speed={} (member#{} atk={} spe={})",
@@ -1318,7 +1322,9 @@ pub fn run_battle_fuzz(
         // queue is sorted, then `beforeTurn` runs. Every action ends with
         // `eachEvent('Update')` and, when the next action is a move, a
         // re-sort of the queue (`getActionSpeed` again for every queued move).
-        rng.context = format!("turn {}: move order", turn_no);
+        if rng.trace {
+            rng.context = format!("turn {}: move order", turn_no);
+        }
         // `commitChoices` -> `updateSpeed()`.
         update_speed(state);
         for a in actions.iter_mut() {
@@ -1471,14 +1477,16 @@ pub fn run_battle_fuzz(
                 Some(sl) => action.slot = sl,
                 None => continue,
             }
-            rng.context = format!(
-                "turn {}: {}{} {} {}",
-                turn_no,
-                side_tag(action.side),
-                action.slot,
-                state.side(action.side).species_names[action.pokemon_index as usize],
-                action.choice.move_id
-            );
+            if rng.trace {
+                rng.context = format!(
+                    "turn {}: {}{} {} {}",
+                    turn_no,
+                    side_tag(action.side),
+                    action.slot,
+                    state.side(action.side).species_names[action.pokemon_index as usize],
+                    action.choice.move_id
+                );
+            }
             execute_action(state, rng, &action, &mut move_order, &actions[i..]);
             // Round `onTry` (flagged in execute_action_inner, only when the user
             // got past BeforeMove): the first other queued Round is moved to the
@@ -1950,7 +1958,9 @@ pub fn run_battle_fuzz(
         }
 
         // End of turn: residual damage, switches (with hazards), durations.
-        rng.context = format!("turn {}: end of turn", turn_no);
+        if rng.trace {
+            rng.context = format!("turn {}: end of turn", turn_no);
+        }
         // PS stops at once when a side is wiped out: no residual step.
         if state.battle_is_over() == 0.0 {
             end_of_turn(state, rng, &pending_switches, &ee_switches);
@@ -2997,7 +3007,7 @@ fn execute_action_inner(
         if outer_logged.replace(true) {
             return;
         }
-        if std::env::var("PE_DEBUG_DMG").is_ok() {
+        if crate::doubles::debug::flags().dmg {
             eprintln!("PUSHORDER {} {}", name, action.choice.move_id);
         }
         move_order.push(format!(
@@ -4391,7 +4401,7 @@ fn execute_action_inner(
     // (`noguard.onAnyInvulnerability`).
     // TODO(PS parity): Earthquake x2 vs Dig, Surf x2 vs Dive, Gust x2 vs Fly
     // (`onSourceModifyDamage` / `onSourceBasePower`); ally-targeted moves.
-    if std::env::var("PE_DEBUG_DMG").is_ok() {
+    if crate::doubles::debug::flags().dmg {
         eprintln!(
             "INVULNCHK {} -> slot {} charging={:?}",
             choice.move_id, target_slot, state.side(target_side).active[target_slot].charging
@@ -5017,7 +5027,7 @@ fn execute_action_inner(
     }
 
     // Accuracy roll (drawn even at 100%; skipped for always-hit / 0.0).
-    if std::env::var("PE_DEBUG_DMG").is_ok() {
+    if crate::doubles::debug::flags().dmg {
         eprintln!("REACHED_ACC {} {} target_slot={} has_target={}", name, choice.move_id, target_slot, has_target);
     }
     if !is_spread
@@ -5546,7 +5556,7 @@ fn execute_action_inner(
         let hit_target_beak = state.side(hts).active[htsl].beak_blast;
         // Damage this hit dealt (PS `damagedTargets`), for DamagingHit.
         let mut hit_damage: Option<i16> = None;
-        if std::env::var("PE_DEBUG_DMG").is_ok() {
+        if crate::doubles::debug::flags().dmg {
             eprintln!(
                 "HITLOOP {} is_attack={} is_self={} is_field={} has_target={} target_alive={}",
                 choice.move_id,
@@ -13025,7 +13035,7 @@ fn sorted_actives(state: &DoublesState, rng: &mut Gen5Rng, label: &'static str) 
             kind: ResidualKind::Status(s, sl),
         });
     }
-    if std::env::var("PE_DEBUG_ACTIVES").is_ok() {
+    if crate::doubles::debug::flags().actives {
         eprintln!("ACTIVES {} {:?}", label, hs.iter().map(|h| (h.kind.clone(), h.speed)).collect::<Vec<_>>());
     }
     sort_residual_handlers(hs, rng, label)
@@ -13296,7 +13306,7 @@ fn end_of_turn(
     // `runAction('residual')` -> `updateSpeed()` first.
     update_speed(state);
     let handlers = collect_residual_handlers(state);
-    if std::env::var("PE_DEBUG_RES").is_ok() { eprintln!("=== residual ({} handlers) ===", handlers.len()); for h in &handlers { let nm = match &h.kind { ResidualKind::GrassyHeal(sd, sl) | ResidualKind::ThroatChop(sd, sl) | ResidualKind::Stall(sd, sl) => state.side(*sd).active[*sl].pokemon_index.map(|i| state.side(*sd).team_member(i).id.to_string()).unwrap_or_default(), _ => String::new() }; eprintln!("RES order={} sub={} speed={} kind={:?} [{}]", h.order, h.sub_order, h.speed, h.kind, nm); } }
+    if crate::doubles::debug::flags().res { eprintln!("=== residual ({} handlers) ===", handlers.len()); for h in &handlers { let nm = match &h.kind { ResidualKind::GrassyHeal(sd, sl) | ResidualKind::ThroatChop(sd, sl) | ResidualKind::Stall(sd, sl) => state.side(*sd).active[*sl].pokemon_index.map(|i| state.side(*sd).team_member(i).id.to_string()).unwrap_or_default(), _ => String::new() }; eprintln!("RES order={} sub={} speed={} kind={:?} [{}]", h.order, h.sub_order, h.speed, h.kind, nm); } }
     let handlers = sort_residual_handlers(handlers, rng, "speed tie (residual)");
     // A wipe by an immediate faint ends the residual at once (PS `fieldEvent`
     // stops when the battle ends). A wipe by Perish song does not: PS defers
@@ -14452,7 +14462,7 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
                 };
                 let outcome: DamageOutcome = calculate_damage(attacker, defender, &action.choice, rng, false, &ctx)
                     .unwrap_or(DamageOutcome { damage: 0, crit: false });
-                dmg_draw = Some(rng.draw_log.len() as u32 - 1);
+                dmg_draw = Some(rng.draw_count() as u32 - 1);
                 let defender_ability = defender.ability;
                 if apply_damage(state, target_side, target_slot, outcome.damage) {
                     // Re-resolve the targets of ALL remaining actions (turnLoop): each
@@ -14519,7 +14529,7 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
             }
         }
 
-        if std::env::var("PE_SLOT").is_ok() {
+        if crate::doubles::debug::flags().slot {
             let slotname = |s: &crate::doubles::state::DoublesSide| {
                 s.active
                     .iter()

@@ -233,7 +233,9 @@ fn push_pokemon(
                 speed,
                 sub_order: h.sub_order,
             });
-            debug.push(format!("{} {} ({:?}{})", callback, h.id, side, slot));
+            if super::debug::flags().events {
+                debug.push(format!("{} {} ({:?}{})", callback, h.id, side, slot));
+            }
         }
     }
 }
@@ -246,7 +248,9 @@ fn push_global(out: &mut Vec<Key>, ids: &[&str], kinds: &[HandlerKind], callback
             speed: 0,
             sub_order: h.sub_order,
         });
-        debug.push(format!("{} {}", callback, h.id));
+        if super::debug::flags().events {
+            debug.push(format!("{} {}", callback, h.id));
+        }
     }
 }
 
@@ -291,7 +295,9 @@ pub fn run_event_ties_on_effect(
     let (ts, tsl) = target;
     if let Some(priority) = effect_priority {
         hs.push(Key { order: NO_ORDER, priority, speed: cached_speed(state, ts, tsl), sub_order: 0 });
-        dbg.push(format!("on{} (move)", event));
+        if super::debug::flags().events {
+            dbg.push(format!("on{} (move)", event));
+        }
     }
     let on = format!("on{}", event);
     let target_active = state.side(ts).active[tsl].pokemon_index.is_some();
@@ -331,7 +337,7 @@ pub fn run_event_ties_on_effect(
     }
     let field = field_effects(state);
     push_global(&mut hs, &field, &[HandlerKind::Field, HandlerKind::Weather], &on, &mut dbg);
-    if std::env::var("PE_DEBUG_EVENTS").is_ok() && hs.len() > 1 {
+    if crate::doubles::debug::flags().events && hs.len() > 1 {
         eprintln!("EVENT {} target={:?}{} handlers: {}", event, ts, tsl, dbg.join(", "));
     }
     speed_sort_keys(&mut hs, rng);

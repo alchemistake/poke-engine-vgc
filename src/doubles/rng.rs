@@ -11,14 +11,16 @@ pub struct Gen5Rng {
     state: u64,
     /// Total number of `next()` draws made (for logging/verification).
     draws: u64,
-    /// Optional log of every raw `next()` value, for parity verification.
+    /// Log of every raw `next()` value, for parity verification (only while
+    /// `trace` is on).
     pub draw_log: Vec<u32>,
     /// Fuzz tracing: when on, every draw also records `"<label>|<context>"`
     /// in `draw_ctx` so the fuzzer can tell what each draw was used for.
     pub trace: bool,
     /// What the next draw is for ("accuracy", "crit", ...); reset after it.
     pub label: &'static str,
-    /// The action being executed ("turn 3: A0 Weavile ICESHARD", ...).
+    /// The action being executed ("turn 3: A0 Weavile ICESHARD", ...). Only
+    /// kept up to date while `trace` is on.
     pub context: String,
     pub draw_ctx: Vec<String>,
 }
@@ -62,17 +64,18 @@ impl Gen5Rng {
         self.draws += 1;
         self.state = self.state.wrapping_mul(LCG_A).wrapping_add(LCG_C);
         let v = (self.state >> 32) as u32;
-        self.draw_log.push(v);
         if self.trace {
+            self.draw_log.push(v);
             let label = if self.label.is_empty() { "?" } else { self.label };
             let at = std::panic::Location::caller();
             let file = at.file().rsplit('/').next().unwrap_or(at.file());
             self.draw_ctx.push(format!("{}|{} @{}:{}", label, self.context, file, at.line()));
         }
         self.label = "";
-        if let Ok(mode) = std::env::var("PE_DEBUG_RNG") {
+        let debug = super::debug::flags();
+        if debug.rng {
             eprintln!("DRAW #{} {}", self.draws - 1, v);
-            if mode == "bt" {
+            if debug.rng_bt {
                 eprintln!("  stack: {}", engine_stack());
             }
         }

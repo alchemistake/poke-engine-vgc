@@ -8,6 +8,7 @@
 pub mod ability_flags;
 pub mod battle;
 pub mod damage;
+pub mod debug;
 pub mod event_handlers;
 pub mod events;
 pub mod move_targets;

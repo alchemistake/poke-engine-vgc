@@ -25,6 +25,8 @@ path = "bench/bench_doubles.rs"
 
 [profile.release]
 debug = 1
+lto = "fat"
+codegen-units = 1
 
 [dependencies]
 dashmap = "6.1.0"

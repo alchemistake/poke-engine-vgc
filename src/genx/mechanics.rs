@@ -319,6 +319,49 @@ pub fn fractional_priority(ability: Abilities, category: MoveCategory) -> Option
     }
 }
 
+/// Abilities with the `failroleplay` flag (PS data/abilities.ts): Role Play
+/// fails when the target has one of these (`onTryHit`).
+pub fn fail_role_play(a: Abilities) -> bool {
+    matches!(
+        a,
+        Abilities::ASONEGLASTRIER
+            | Abilities::ASONESPECTRIER
+            | Abilities::BATTLEBOND
+            | Abilities::COMATOSE
+            | Abilities::COMMANDER
+            | Abilities::DISGUISE
+            | Abilities::EMBODYASPECTCORNERSTONE
+            | Abilities::EMBODYASPECTHEARTHFLAME
+            | Abilities::EMBODYASPECTTEAL
+            | Abilities::EMBODYASPECTWELLSPRING
+            | Abilities::FLOWERGIFT
+            | Abilities::FORECAST
+            | Abilities::HUNGERSWITCH
+            | Abilities::ICEFACE
+            | Abilities::ILLUSION
+            | Abilities::IMPOSTER
+            | Abilities::MULTITYPE
+            | Abilities::NEUTRALIZINGGAS
+            | Abilities::POISONPUPPETEER
+            | Abilities::POWERCONSTRUCT
+            | Abilities::POWEROFALCHEMY
+            | Abilities::PROTOSYNTHESIS
+            | Abilities::QUARKDRIVE
+            | Abilities::RECEIVER
+            | Abilities::RKSSYSTEM
+            | Abilities::SCHOOLING
+            | Abilities::SHIELDSDOWN
+            | Abilities::STANCECHANGE
+            | Abilities::TERAFORMZERO
+            | Abilities::TERASHELL
+            | Abilities::TERASHIFT
+            | Abilities::TRACE
+            | Abilities::WONDERGUARD
+            | Abilities::ZENMODE
+            | Abilities::ZEROTOHERO
+    )
+}
+
 /// Abilities with the `cantsuppress` flag (data/abilities.ts): Entrainment,
 /// Mummy, Lingering Aroma and friends can't replace them (`setAbility`).
 pub fn cant_suppress(a: Abilities) -> bool {

@@ -770,6 +770,16 @@ fn plan_queue_change(
         charge.target_loc = 0;
         let _ = ps_get_target_queue_insert(state, rng, &charge);
     }
+    // A move with `priorityChargeCallback` (Focus Punch, Beak Blast, Chilly
+    // Reception) first queues a `priorityChargeMove` resolved with no target
+    // location (PS sim/battle-queue.ts resolveAction): one draw of its own,
+    // then the move draws again. The fuzzer labels that second draw "queue
+    // insert" because its stack runs under insertChoice.
+    if matches!(a.choice.move_id, Choices::FOCUSPUNCH | Choices::BEAKBLAST | Choices::CHILLYRECEPTION) {
+        let mut charge = a.clone();
+        charge.target_loc = 0;
+        let _ = ps_get_target_queue_insert(state, rng, &charge);
+    }
     if let Some((ts, tsl)) = ps_get_target_queue_insert(state, rng, &a) {
         a.target_loc = if ts == a.side { -(tsl as i8 + 1) } else { tsl as i8 + 1 };
         a.target = tsl;
@@ -3168,6 +3178,8 @@ fn execute_action_inner(
                 !(count >= 2 && has && ok)
             } =>
         {
+            // PS `onTry` failure (`-fail`): `moveThisTurnResult = false`.
+            state.side_mut(action.side).active[action.slot].move_result_this_turn = Some(false);
             push_order(move_order);
             return;
         }
@@ -4954,7 +4966,13 @@ fn execute_action_inner(
                     if state.side(target_side).team_member(didx).ability == Abilities::ANGERPOINT
                         && state.side(target_side).team_member(didx).hp > damage
                     {
-                        state.side_mut(target_side).team_boosts[didx as usize].atk = 6;
+                        // PS `boost({atk: 12})` -> `statsRaisedThisTurn` when it
+                        // applies (sim/battle.ts boost: success and a positive entry).
+                        let sd = state.side_mut(target_side);
+                        if sd.team_boosts[didx as usize].atk < 6 {
+                            sd.team_boosts[didx as usize].atk = 6;
+                            sd.active[target_slot].stats_raised_this_turn = true;
+                        }
                     }
                 }
             }
@@ -5044,8 +5062,10 @@ fn execute_action_inner(
                     None => false,
                 };
                 if ooze {
+                    // The Ooze damage is an Ability effect: Magic Guard's
+                    // `onDamage` returns false for it (PS data/abilities.ts magicguard).
                     if heal > 0 {
-                        apply_damage(state, side, slot, heal);
+                        apply_indirect_damage(state, side, slot, heal);
                     }
                 } else if heal > 0 && state.side(side).active[slot].heal_block == 0 {
                     let s = state.side_mut(side);
@@ -6053,14 +6073,24 @@ fn execute_action_inner(
         // Role Play `onTryHit` / `onHit` (PS data/moves.ts roleplay): fails when
         // both share an ability, otherwise the user takes the target's ability
         // (`setAbility`, no draw; the switch-out reset restores the base one).
-        // TODO(PS parity): failroleplay / cantsuppress ability flags.
+        // `onTryHit`: a target with the failroleplay flag, or a user whose
+        // ability can't be suppressed, fails; `setAbility` refuses a
+        // cantsuppress target ability (PS data/moves.ts roleplay, data/abilities.ts).
         if choice.move_id == Choices::ROLEPLAY && ti == 0 {
             let user_idx = state.side(side).active[slot].pokemon_index;
             let target_ability = state.side(target_side).active[target_slot]
                 .pokemon_index
                 .map(|t| real_ability(state, target_side, t));
+            let blocked = match (user_idx, target_ability) {
+                (Some(u), Some(ta)) => {
+                    crate::engine::mechanics::fail_role_play(ta)
+                        || crate::engine::mechanics::cant_suppress(ta)
+                        || crate::engine::mechanics::cant_suppress(real_ability(state, side, u))
+                }
+                _ => false,
+            };
             match (user_idx, target_ability) {
-                (Some(u), Some(ta)) if state.side(side).team_member(u).ability != ta => {
+                (Some(u), Some(ta)) if !blocked && state.side(side).team_member(u).ability != ta => {
                     // A user under Gastro Acid has No Ability here (the engine's
                     // model of the `gastroacid` volatile). PS `setAbility` still
                     // sets the copy, but `singleEvent('Start')` is suppressed
@@ -6113,7 +6143,8 @@ fn execute_action_inner(
                     // Liquid Ooze `onSourceTryHeal` (`strengthsap` is on its list): the
                     // heal event still runs and the user takes the amount as damage,
                     // even at full HP. PS data/abilities.ts liquidooze, sim/battle.ts heal.
-                    apply_damage(state, side, slot, atk);
+                    // Magic Guard blocks it too (see apply_indirect_damage).
+                    apply_indirect_damage(state, side, slot, atk);
                 } else {
                     let pm = state.side_mut(side).team_member_mut(idx);
                     pm.hp = (pm.hp + atk).min(pm.maxhp);
@@ -11863,7 +11894,7 @@ fn end_of_turn(
                 if dealt > 0 {
                     // Liquid Ooze `onSourceTryHeal`: the drainer takes the damage.
                     if ooze_src {
-                        apply_damage(state, ss, sslot, dealt);
+                        apply_indirect_damage(state, ss, sslot, dealt);
                     } else if let Some(sidx) = state.side(ss).active[sslot].pokemon_index {
                         let blocked = state.side(ss).active[sslot].heal_block > 0;
                         let m = state.side_mut(ss).team_member_mut(sidx);

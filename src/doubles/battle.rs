@@ -1655,6 +1655,11 @@ fn cached_speed(state: &DoublesState, side: Side, slot: usize) -> i32 {
 /// pokemon get status 'fnt' (the fuzzer reads it as none). A side with no
 /// replacement keeps the fainted pokemon's last status.
 fn check_fainted(state: &mut DoublesState) {
+    // PS `runAction`: `if (this.ended) return true;` comes before `checkFainted()`,
+    // so a battle that ended this turn keeps the fainted pokemon's status.
+    if state.battle_is_over() != 0.0 {
+        return;
+    }
     for side in [Side::One, Side::Two] {
         if possible_switches(state, side).is_empty() {
             continue;
@@ -2752,6 +2757,9 @@ fn execute_action_inner(
                         })
                     }) =>
         {
+            // PS `onTry` failure (`-fail`): `moveThisTurnResult = false`, which
+            // Stomping Tantrum / Temper Flare read next turn (`moveLastTurnResult`).
+            state.side_mut(action.side).active[action.slot].move_result_this_turn = Some(false);
             push_order();
             return;
         }
@@ -4330,9 +4338,11 @@ fn execute_action_inner(
                     state.side_mut(target_side).damaged_by[tidx as usize].push((side, slot, damage, turn_now));
                     // Fire-type damaging move `onDamagingHit` (data/conditions.ts
                     // frz): a frozen target thaws. No draw.
+                    // PS `cureStatus` returns when `!this.hp`: this hook runs after the
+                    // damage, so a target KO'd by the hit stays frozen (`apply_damage` is below).
                     if choice.move_type == PokemonType::FIRE && choice.category != MoveCategory::Status {
                         let pm = state.side_mut(target_side).team_member_mut(tidx);
-                        if pm.status == PokemonStatus::FREEZE {
+                        if pm.status == PokemonStatus::FREEZE && pm.hp > damage {
                             pm.status = PokemonStatus::NONE;
                             pm.sleep_turns = 0;
                         }
@@ -4535,13 +4545,13 @@ fn execute_action_inner(
             } else if let Some(tidx) = state.side(ts).active[tslot].pokemon_index {
                 let before = state.side(ts).team_boosts[tidx as usize].clone();
                 let boosts = if ts != side { mirror_armor_bounce(state, side, slot, ts, tidx, &b.boosts) } else { b.boosts.clone() };
-                apply_boosts_from(state, ts, tidx, &boosts, ts != side, (ts, tslot) != (side, slot));
+                let landed = apply_boosts_from(state, ts, tidx, &boosts, ts != side, (ts, tslot) != (side, slot));
                 let after = &state.side(ts).team_boosts[tidx as usize];
                 if (before.atk, before.def, before.spa, before.spd, before.spe, before.acc, before.eva)
                     != (after.atk, after.def, after.spa, after.spd, after.spe, after.acc, after.eva)
                 {
                     drop_landed = true;
-                } else if choice.category == MoveCategory::Status
+                } else if !landed && choice.category == MoveCategory::Status
                     && choice.heal.is_none()
                     && choice.status.is_none()
                     // Curse here is the non-Ghost self-boost (its volatile is Ghost-only).
@@ -5963,6 +5973,11 @@ fn execute_action_inner(
                 let sd = state.side_mut(side);
                 sd.active.swap(0, 1);
                 sd.ps_order.swap(0, 1);
+                // PS `swapPosition`: `runEvent('Swap', ally)` then `('Swap', user)`.
+                // Slot conditions (Healing Wish / Lunar Dance) stay with their slot,
+                // so the pokemon that arrives in a waiting slot is healed.
+                healing_wish_on_switch_in(sd, slot);
+                healing_wish_on_switch_in(sd, 1 - slot);
             } else {
                 // PS data/moves.ts allyswitch.onHit returns NOT_FAIL after its
                 // `-fail`: the hit still runs its two `eachEvent('Update')`s.
@@ -6383,7 +6398,7 @@ fn execute_action_inner(
         if crate::engine::mechanics::THAWS_TARGET.contains(&choice.move_id) && has_target {
             if let Some(tidx) = state.side(target_side).active[target_slot].pokemon_index {
                 let pm = state.side_mut(target_side).team_member_mut(tidx);
-                if pm.status == PokemonStatus::FREEZE {
+                if pm.status == PokemonStatus::FREEZE && pm.hp > 0 {
                     pm.status = PokemonStatus::NONE;
                     pm.sleep_turns = 0;
                 }
@@ -6645,9 +6660,9 @@ fn execute_action_inner(
         }
     }
 
-    // Healing Wish / Lunar Dance (slot-condition moves) make exactly one
-    // hit-loop `eachEvent('Update')` in PS, while the user still counts as
-    // active (faints are resolved afterwards).
+    // Healing Wish / Lunar Dance (slot-condition moves) make their first hit-loop
+    // `eachEvent('Update')` while the user still counts as active; the faint and
+    // the closing `eachEvent` come after it (see the selfdestruct block).
     if hits_done == 0 && matches!(choice.move_id, Choices::HEALINGWISH | Choices::LUNARDANCE) && !move_failed {
         each_event_update(state, rng);
     }
@@ -6763,9 +6778,11 @@ fn execute_action_inner(
             state.faint_log.insert(faint_mark, f);
         }
         // ...and resolved right after the loop, before its closing `eachEvent`.
-        // (Healing Wish / Lunar Dance keep the user: their one `eachEvent` comes first.)
-        if !matches!(choice.move_id, Choices::HEALINGWISH | Choices::LUNARDANCE) {
-            resolve_faints(state, rng, |fs, fsl| (fs, fsl) == (side, slot));
+        resolve_faints(state, rng, |fs, fsl| (fs, fsl) == (side, slot));
+        // Healing Wish / Lunar Dance: the closing `eachEvent` (PS ~1062) runs after
+        // the faint is resolved, so the fainted user no longer counts in the sort.
+        if matches!(choice.move_id, Choices::HEALINGWISH | Choices::LUNARDANCE) && !move_failed {
+            each_event_update(state, rng);
         }
     }
 
@@ -7784,9 +7801,11 @@ fn compute_hit_damage(
         // Foul Play (`overrideOffensivePokemon: 'target'`): the
         // target's Atk stat and boosts.
         let (base_atk, atk_boost_stat) = if choice.move_id == Choices::BODYPRESS {
-            // `overrideOffensiveStat: 'def'` (Wonder Room swaps the value).
-            let v = if state.wonder_room.active { attacker.special_defense } else { attacker.defense };
-            (v, att_boost.def)
+            // `overrideOffensiveStat: 'def'`. PS Wonder Room `onModifyMove` renames it
+            // to 'spd'; `calculateStat('spd')` then reads the stored Def value, and the
+            // stage is the 'spd' one. So the value is always Def, the stage follows the name.
+            let stage = if state.wonder_room.active { att_boost.spd } else { att_boost.def };
+            (attacker.defense, stage)
         } else if choice.move_id == Choices::FOULPLAY {
             (defender.attack, def_boost.atk)
         } else if is_physical {
@@ -8718,7 +8737,7 @@ fn apply_boosts_from(
     b: &StatBoosts,
     source_is_foe: bool,
     source_is_other: bool,
-) {
+) -> bool {
     // PS `boost` (sim/battle.ts): `if (this.gen > 5 && !target.side.foePokemonLeft())
     // return false`. Once the other side has no Pokemon left, nothing is boosted
     // (a self-boost after the last KO, e.g. Scale Shot's selfBoost).
@@ -8734,7 +8753,7 @@ fn apply_boosts_from(
                     .any(|&(fs, _, pi)| fs == other && pi as usize == i))
     });
     if !left {
-        return;
+        return false;
     }
     // PS `boost`: stat by stat; `AfterEachBoost` (Defiant / Competitive, shared
     // `mechanics::stat_drop_reaction`) fires after each stat that actually
@@ -8798,6 +8817,9 @@ fn apply_boosts_from(
         }
     }
     let mut lowered = false;
+    // PS `boost` returns true when any requested stat changed. Defiant's
+    // reaction is a separate boost and does not count (it can cancel the drop).
+    let mut any_changed = false;
     let mut gained = [0i8; 7];
     for (n, &req) in requested.iter().enumerate() {
         if req == 0 {
@@ -8817,6 +8839,7 @@ fn apply_boosts_from(
         let old = *cur;
         *cur = (old + req).clamp(-6, 6);
         let changed = *cur != old;
+        any_changed |= changed;
         if changed && req > 0 {
             gained[n] = *cur - old;
         }
@@ -8878,6 +8901,7 @@ fn apply_boosts_from(
             }
         }
     }
+    any_changed
 }
 
 /// Abilities with the `notrace` flag (PS `data/abilities.ts`): Trace cannot
@@ -9266,6 +9290,7 @@ fn revive_member(state: &mut DoublesState, side: Side, position: usize) {
 
 fn switch_in(state: &mut DoublesState, side: Side, slot: usize, position: usize) {
     switch_in_inner(state, side, slot, position);
+    entry_hazards(state, side, slot);
     refresh_mimicry(state);
 }
 
@@ -9335,18 +9360,10 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
     }
     let pos = position.min(5);
     let idx = PokemonIndex::deserialize(&pos.to_string());
-    // Read hazard layers + incoming pokemon data before mutating.
-    let (spikes, toxic_spikes) = {
-        let s = state.side(side);
-        (s.side_conditions.spikes, s.side_conditions.toxic_spikes)
+    let alive = {
+        let p = &state.side(side).team[pos];
+        p.hp > 0 && p.id != crate::pokemon::PokemonName::NONE
     };
-    let (alive, types) = {
-        let s = state.side(side);
-        let p = &s.team[pos];
-        (p.hp > 0 && p.id != crate::pokemon::PokemonName::NONE, p.types)
-    };
-    let gravity_on = state.gravity.active;
-    let misty_on = state.terrain.terrain_type == crate::engine::state::Terrain::MISTYTERRAIN;
     let s = state.side_mut(side);
     s.active[slot] = ActiveSlot::empty();
     s.fainted_in_slot[slot] = None;
@@ -9410,6 +9427,33 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
         } else {
             None
         };
+    }
+}
+
+/// PS `fieldEvent('SwitchIn')` for the pokemon now in `slot`: Healing Wish
+/// (slot condition, subOrder 3), then the side-condition hazards (subOrder 4:
+/// Stealth Rock, Spikes, Toxic Spikes), then the pokemon faints if the
+/// hazards KO it. The caller decides when this runs: `switch_in` runs it right
+/// after the placement, the replacement batch runs it in speed-sort order.
+fn entry_hazards(state: &mut DoublesState, side: Side, slot: usize) {
+    let Some(idx) = state.side(side).active[slot].pokemon_index else {
+        return;
+    };
+    // Read hazard layers + incoming pokemon data before mutating.
+    let (spikes, toxic_spikes, types, alive) = {
+        let s = state.side(side);
+        let p = s.team_member(idx);
+        (
+            s.side_conditions.spikes,
+            s.side_conditions.toxic_spikes,
+            p.types,
+            p.hp > 0 && p.id != crate::pokemon::PokemonName::NONE,
+        )
+    };
+    let gravity_on = state.gravity.active;
+    let misty_on = state.terrain.terrain_type == crate::engine::state::Terrain::MISTYTERRAIN;
+    let s = state.side_mut(side);
+    if alive {
         healing_wish_on_switch_in(s, slot);
         let boots = s.team_member(idx).item == crate::engine::items::Items::HEAVYDUTYBOOTS;
         // Magic Guard blocks indirect (non-move) damage, hazards included
@@ -10885,8 +10929,17 @@ fn end_of_turn(
     // PS `switchIn` -> `queue.insertChoice(runSwitch)`: a tie with an already
     // queued `runSwitch` (equal speed) draws `random(firstIndex, lastIndex + 1)`.
     let mut run_switch_speeds: Vec<i16> = Vec::new();
+    // One runSwitch batch (distinct slots): the entry hazards of all incoming
+    // pokemon run together after the switch-in speed sort (below).
+    let batch_distinct = pending_switches.iter().enumerate().all(|(i, &(a, b, _))| {
+        pending_switches.iter().skip(i + 1).all(|&(c, d, _)| (a, b) != (c, d))
+    });
     for (side, slot, position) in pending_switches {
-        switch_in(state, *side, *slot, *position);
+        if batch_distinct {
+            switch_in_inner(state, *side, *slot, *position);
+        } else {
+            switch_in(state, *side, *slot, *position);
+        }
         update_speed(state);
         if let Some(sp) = effective_speed(state, *side, *slot) {
             let ties = run_switch_speeds.iter().filter(|&&x| x == sp).count();
@@ -10898,9 +10951,22 @@ fn end_of_turn(
     }
     if !pending_switches.is_empty() {
         each_event_update(state, rng);
-        let _ = sorted_actives(state, rng, "speed tie (switch-in)");
-        for (side, slot, _) in pending_switches {
-            apply_sticky_web(state, *side, *slot);
+        let order = sorted_actives(state, rng, "speed tie (switch-in)");
+        if batch_distinct {
+            // PS `fieldEvent('SwitchIn')`: each incoming pokemon's handlers all
+            // share its speed, so they run as one group per pokemon, fastest
+            // first (`sorted_actives` order; `speedOrder` breaks speed ties).
+            for (side, slot) in order {
+                if pending_switches.iter().any(|&(ps, pl, _)| ps == side && pl == slot) {
+                    entry_hazards(state, side, slot);
+                    apply_sticky_web(state, side, slot);
+                }
+            }
+            refresh_mimicry(state);
+        } else {
+            for (side, slot, _) in pending_switches {
+                apply_sticky_web(state, *side, *slot);
+            }
         }
     }
 

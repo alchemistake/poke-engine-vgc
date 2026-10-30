@@ -7866,7 +7866,11 @@ fn run_copied_move(
     state.side_mut(action.side).active[action.slot].external_call = true;
     let n = copy_order.len();
     execute_action_inner(state, rng, &sub, copy_order, will_act, queue);
-    state.side_mut(action.side).active[action.slot].external_call = false;
+    // The copy may swap positions (Ally Switch): the flag travels with the
+    // `ActiveSlot`, so clear it on every slot of the side, not only `action.slot`.
+    for sl in 0..2 {
+        state.side_mut(action.side).active[sl].external_call = false;
+    }
     // PS `useMoveInner` sets `setActiveMove(copied)`, so the copied move's
     // `clearActiveMove` records `battle.lastMove` (PS battle.ts clearActiveMove).
     state.copy_called = true;
@@ -8802,7 +8806,21 @@ fn compute_hit_damage(
     spread: bool,
 ) -> (i16, bool) {
     let speeds = (stat_speed(state, side, slot), stat_speed(state, target_side, target_slot));
-    let attacker = state.side(side).team_member(idx);
+    // PS `ignoringAbility` (gen 5+): a pokemon that is not active (a Future Sight
+    // source that fainted or switched out) has its ability ignored, so Levitate
+    // does not keep it out of Psychic Terrain (`isGrounded`) or affect its damage.
+    let attacker_ref = state.side(side).team_member(idx);
+    let attacker_inactive;
+    let attacker = if state.side(side).active[slot].pokemon_index != Some(idx)
+        && attacker_ref.ability != Abilities::NONE
+    {
+        let mut a = attacker_ref.clone();
+        a.ability = Abilities::NONE;
+        attacker_inactive = a;
+        &attacker_inactive
+    } else {
+        attacker_ref
+    };
     // The attacker's slot state applies only while it occupies the slot (a Future
     // Sight source may have left; the slot then belongs to another pokemon).
     let att_slot = if state.side(side).active[slot].pokemon_index == Some(idx) {
@@ -9100,7 +9118,9 @@ fn compute_hit_damage(
                 att_slot.bp_double
                     || (matches!(choice.move_id, Choices::STOMPINGTANTRUM | Choices::TEMPERFLARE)
                         && att_slot.move_result_last_turn == Some(false)),
-                att_slot.bp_fixed,
+                // Only Beat Up reads it: a Beat Up hit's base power can linger in the
+                // slot after the move (a later Future Sight from the same slot must not use it).
+                if choice.move_id == Choices::BEATUP { att_slot.bp_fixed } else { 0.0 },
                 // PS `rivalry.onBasePower`: both genders must be set (`M` / `F`).
                 {
                     let gendered = |g: Option<&str>| matches!(g, Some("M") | Some("F"));
@@ -9994,9 +10014,10 @@ fn apply_boosts_from(
             }
         }
     }
-    // statsRaisedThisTurn (PS `boost`): set when any applied boost is
-    // positive.
-    let raised = requested.iter().any(|&r| r > 0);
+    // statsRaisedThisTurn (PS `boost`): `getCappedBoost` runs first, so a
+    // positive request on a stat already at +6 does not count; the flag is set
+    // when a positive boost actually applied (`gained`, see the loop above).
+    let raised = gained.iter().any(|&g| g > 0);
     if raised {
         let s = state.side_mut(side);
         for a in &mut s.active {
@@ -12236,6 +12257,9 @@ fn end_of_turn(
         {
             if let Some(&(_, _, pos)) = ee_switches.iter().find(|&&(s2, l2, _)| s2 == sd && l2 == sl) {
                 pending_vec.push((sd, sl, pos));
+                // PS `runAction` switches loop: `runPursuitActivation` for every live
+                // pokemon with a `switchFlag` (gen >= 5: `eachEvent('Update')`).
+                each_event_update(state, rng);
             }
         }
     }

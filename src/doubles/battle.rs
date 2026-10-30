@@ -6,7 +6,7 @@
 //! on the same seed and the same move choices.
 
 use crate::choices::{ChargeSetup, Choice, Choices, Effect, MoveCategory, MoveTarget, StatBoosts, MOVES};
-use crate::doubles::damage::{calculate_damage, roll_accuracy, roll_accuracy_boosted, DamageCtx, DamageOutcome};
+use crate::doubles::damage::{calculate_damage, roll_accuracy, roll_accuracy_boosted, roll_accuracy_boosted_labeled, DamageCtx, DamageOutcome};
 use crate::doubles::rng::Gen5Rng;
 use crate::engine::abilities::Abilities;
 use crate::engine::state::PokemonVolatileStatus;
@@ -3069,7 +3069,11 @@ fn execute_action_inner(
     if matches!(choice.move_id, Choices::COUNTER | Choices::MIRRORCOAT) {
         let a = &state.side(side).active[slot];
         let rec = if choice.move_id == Choices::COUNTER { a.counter_vol } else { a.mirror_coat_vol };
-        if !matches!(rec, Some((Some(_), _))) {
+        // PS sim/pokemon.ts getMoveTargets: `onRedirectTarget` returns the recorded
+        // attacker's slot (`getAtSlot`). A fainted pokemon there leaves no target:
+        // `useMoveInner` emits `-fail` with no accuracy roll.
+        let redirect_fainted = matches!(rec, Some((Some((ts, tsl)), _)) if !slot_alive(state, ts, tsl));
+        if !matches!(rec, Some((Some(_), _))) || redirect_fainted {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
             push_order();
             return;
@@ -4265,13 +4269,18 @@ fn execute_action_inner(
           if !is_self && !is_field && !hit_targets.iter().any(|&(ts, tsl)| slot_alive(state, ts, tsl)) {
               break 'hit_loop;
           }
-          let table = [1.0f64, 4.0 / 3.0, 5.0 / 3.0, 2.0, 7.0 / 3.0, 8.0 / 3.0, 3.0];
-          let mut acc = choice.accuracy as f64;
-          let ab = state.side(side).slot_boosts(slot).map(|b| b.acc).unwrap_or(0).clamp(-6, 6) as i32;
-          if ab > 0 { acc *= table[ab as usize]; } else if ab < 0 { acc /= table[(-ab) as usize]; }
-          let eb = state.side(target_side).slot_boosts(target_slot).map(|b| b.eva).unwrap_or(0).clamp(-6, 6) as i32;
-          if eb > 0 { acc /= table[eb as usize]; } else if eb < 0 { acc *= table[(-eb) as usize]; }
-          if (rng.label("multiaccuracy").random(100) as f64) >= acc {
+          let ab = if unaware_zeroes_accuracy(state, side, idx, target_side, target_slot, choice) {
+              0
+          } else {
+              state.side(side).slot_boosts(slot).map(|b| b.acc).unwrap_or(0)
+          };
+          let eb = if ignores_evasion(state.side(side).team_member(idx).ability, choice.move_id) {
+              0
+          } else {
+              state.side(target_side).slot_boosts(target_slot).map(|b| b.eva).unwrap_or(0)
+          };
+          let mods = accuracy_ability_mods(state, side, idx, target_side, target_slot, choice);
+          if !roll_accuracy_boosted_labeled("multiaccuracy", choice.accuracy, ab, eb, mods, rng) {
               break;
           }
       }
@@ -5493,7 +5502,9 @@ fn execute_action_inner(
         // target side's screens and both sides' hazards, clear the terrain.
         if choice.move_id == Choices::DEFOG && ti == 0 {
             let mut success = false;
-            if state.side(target_side).active[target_slot].substitute_health <= 0 {
+            // PS data/moves.ts defog.onHit: `!target.volatiles['substitute'] || move.infiltrates`.
+            let infiltrates = state.side(side).team_member(idx).ability == Abilities::INFILTRATOR;
+            if state.side(target_side).active[target_slot].substitute_health <= 0 || infiltrates {
                 if let Some(tidx) = state.side(target_side).active[target_slot].pokemon_index {
                     let before = state.side(target_side).team_boosts[tidx as usize].eva;
                     // Mirror Armor `onTryBoost` bounces the drop onto the user
@@ -6322,6 +6333,15 @@ fn execute_action_inner(
 
         if choice.move_id == Choices::HELPINGHAND {
             state.side_mut(side).active[1 - slot].helping_hand_mult *= 1.5;
+        }
+
+        // PS `tryMoveHit` -> `runEvent('TryHitSide', target)` for allySide /
+        // foeSide moves: the Pokemon target is the user (allySide) or the chosen
+        // foe (foeSide). Its Magic Bounce holders tie and shuffle before any effect.
+        let ps_target = crate::doubles::move_targets::ps_move_target(&choice.move_id.to_string().to_lowercase());
+        if ps_target == "allySide" || ps_target == "foeSide" {
+            let (ps, pslot) = if ps_target == "allySide" { (side, slot) } else { (target_side, target_slot) };
+            try_hit_side_handler_ties(state, rng, ps);
         }
 
         // Side conditions (Reflect, Light Screen, Spikes, Tailwind, ...).
@@ -7904,7 +7924,7 @@ fn try_set_status(
     src_side: Side,
     src_idx: PokemonIndex,
 ) {
-    try_set_status_with(state, rng, ts, tslot, st, src_side, src_idx, true, true);
+    try_set_status_with(state, rng, ts, tslot, st, src_side, src_idx, true, true, false);
 }
 
 /// Yawn's `onEnd` -> `target.trySetStatus('slp', source)`: the setStatus effect
@@ -7918,7 +7938,7 @@ fn try_set_status_yawn(
     src_side: Side,
     src_idx: PokemonIndex,
 ) {
-    try_set_status_with(state, rng, ts, tslot, PokemonStatus::SLEEP, src_side, src_idx, false, false);
+    try_set_status_with(state, rng, ts, tslot, PokemonStatus::SLEEP, src_side, src_idx, false, false, true);
 }
 
 /// A status from a contact ability (Effect Spore, Static, ...). PS
@@ -7934,7 +7954,7 @@ fn try_set_status_from_ability(
     src_side: Side,
     src_idx: PokemonIndex,
 ) {
-    try_set_status_with(state, rng, ts, tslot, st, src_side, src_idx, false, true);
+    try_set_status_with(state, rng, ts, tslot, st, src_side, src_idx, false, true, false);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -7948,10 +7968,11 @@ fn try_set_status_with(
     src_idx: PokemonIndex,
     substitute_blocks: bool,
     safeguard_blocks: bool,
+    effect_is_yawn: bool,
 ) {
     let Some(tidx) = state.side(ts).active[tslot].pokemon_index else { return };
     let src_slot = (0..2).find(|&sl| state.side(src_side).active[sl].pokemon_index == Some(src_idx));
-    if status_immune_ex(state, ts, tslot, st, ts != src_side, src_side, src_slot.unwrap_or(0), substitute_blocks, safeguard_blocks) {
+    if status_immune_ex(state, ts, tslot, st, ts != src_side, src_side, src_slot.unwrap_or(0), substitute_blocks, safeguard_blocks, effect_is_yawn) {
         return;
     }
     set_status(state, rng, ts, tidx, st);
@@ -7970,7 +7991,7 @@ fn status_immune(
     src_side: Side,
     src_slot: usize,
 ) -> bool {
-    status_immune_ex(state, ts, tslot, status, from_opponent, src_side, src_slot, true, true)
+    status_immune_ex(state, ts, tslot, status, from_opponent, src_side, src_slot, true, true, false)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -7984,6 +8005,7 @@ fn status_immune_ex(
     src_slot: usize,
     substitute_blocks: bool,
     safeguard_blocks: bool,
+    effect_is_yawn: bool,
 ) -> bool {
     let Some(target) = state.side(ts).slot_pokemon(tslot) else { return true };
     // Safeguard / Substitute block statuses from any other pokemon, allies
@@ -8002,6 +8024,20 @@ fn status_immune_ex(
     if status == PokemonStatus::SLEEP
         && (0..2).any(|sl| {
             state.side(ts).slot_pokemon(sl).map(|p| p.hp > 0 && p.ability == Abilities::SWEETVEIL).unwrap_or(false)
+        })
+    {
+        return true;
+    }
+    // Flower Veil `onAllySetStatus` (PS runEvent: `alliesAndSelf`, so the holder
+    // covers itself too): a Grass-type target can't get a status set by another
+    // pokemon (`target !== source`); a Yawn sleep is exempt (`effect.id === 'yawn'`).
+    // PS data/abilities.ts flowerveil. The check covers move, secondary,
+    // ability and Synchronize statuses alike.
+    if !effect_is_yawn
+        && target.has_type(&PokemonType::GRASS)
+        && !(ts == src_side && tslot == src_slot)
+        && (0..2).any(|sl| {
+            state.side(ts).slot_pokemon(sl).map(|p| p.hp > 0 && p.ability == Abilities::FLOWERVEIL).unwrap_or(false)
         })
     {
         return true;
@@ -8992,7 +9028,7 @@ fn maybe_synchronize(
     let src_slot = (0..2).find(|&sl| state.side(source_side).active[sl].pokemon_index == Some(source_idx));
     let tgt_slot = (0..2).find(|&sl| state.side(target_side).active[sl].pokemon_index == Some(target_idx));
     if let (Some(ss), Some(ts)) = (src_slot, tgt_slot) {
-        if status_immune_ex(state, source_side, ss, status, true, target_side, ts, false, true) {
+        if status_immune_ex(state, source_side, ss, status, true, target_side, ts, false, true, false) {
             return;
         }
     }
@@ -10592,6 +10628,26 @@ fn damp_handler_ties(state: &DoublesState, rng: &mut Gen5Rng) {
             && real_ability(state, sd, hidx) == Abilities::DAMP
         {
             hs.push((4294967296, cached_speed(state, sd, sl), 7));
+        }
+    }
+    if hs.len() >= 2 {
+        sort_handler_ties(&mut hs, rng, "speed tie (move order)");
+    }
+}
+
+/// PS `tryMoveHit` `runEvent('TryHitSide', pokemon)` (allySide / foeSide moves):
+/// the handlers are `onAllyTryHitSide` of every active holder among the target's
+/// `alliesAndSelf` (Magic Bounce; it returns early for same-side holders, but the
+/// handler is still sorted). Holders with equal speed tie and shuffle.
+/// PS sim/battle.ts findEventHandlers; data/abilities.ts magicbounce.
+fn try_hit_side_handler_ties(state: &DoublesState, rng: &mut Gen5Rng, ps: Side) {
+    let mut hs: Vec<(i64, i32, i64)> = Vec::new();
+    for sl in 0..2 {
+        let Some(hidx) = state.side(ps).active[sl].pokemon_index else { continue };
+        if state.side(ps).slot_pokemon(sl).map(|p| p.hp > 0).unwrap_or(false)
+            && real_ability(state, ps, hidx) == Abilities::MAGICBOUNCE
+        {
+            hs.push((4294967296, cached_speed(state, ps, sl), 7));
         }
     }
     if hs.len() >= 2 {

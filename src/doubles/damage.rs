@@ -460,6 +460,20 @@ pub fn roll_accuracy_boosted(
     ability_mods: (i32, i32),
     rng: &mut Gen5Rng,
 ) -> bool {
+    roll_accuracy_boosted_labeled("accuracy", accuracy, acc_boost, eva_boost, ability_mods, rng)
+}
+
+/// `roll_accuracy_boosted` with the draw's purpose label. Triple Axel / Triple
+/// Kick hits after the first use `multiaccuracy` (PS hitStepMoveHitLoop
+/// `randomChance(accuracy, 100)` after the same ModifyAccuracy chain).
+pub fn roll_accuracy_boosted_labeled(
+    label: &'static str,
+    accuracy: f32,
+    acc_boost: i8,
+    eva_boost: i8,
+    ability_mods: (i32, i32),
+    rng: &mut Gen5Rng,
+) -> bool {
     let mut acc = accuracy as i32;
     // `runEvent('ModifyAccuracy')`: handlers chain, applied once, higher
     // priority first. Gravity `onModifyAccuracy` (priority 0):
@@ -480,7 +494,7 @@ pub fn roll_accuracy_boosted(
     } else if boost < 0 {
         acc = acc * 3 / (3 - boost);
     }
-    rng.label("accuracy").random_chance(acc.max(0) as u32, 100)
+    rng.label(label).random_chance(acc.max(0) as u32, 100)
 }
 
 pub fn roll_accuracy(accuracy: f32, rng: &mut Gen5Rng) -> bool {

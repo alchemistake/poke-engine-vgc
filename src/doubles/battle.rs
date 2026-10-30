@@ -1961,6 +1961,13 @@ thread_local! {
 }
 
 thread_local! {
+    /// The target the running move resolved to (after any retarget / redirect),
+    /// as PS `getMoveTargets` returns it: Pressure's `pressureTargets`. `None`
+    /// until `execute_action_inner` resolves it for this action.
+    static PRESSURE_TARGET: std::cell::Cell<Option<Option<(Side, usize)>>> = const { std::cell::Cell::new(None) };
+}
+
+thread_local! {
     /// Abilities blanked by Mold Breaker for the running move: (side, team
     /// index, real ability). PS `battle.suppressingAbility(target)`.
     static MOLD_SAVED: std::cell::RefCell<Vec<(Side, PokemonIndex, Abilities)>> = const { std::cell::RefCell::new(Vec::new()) };
@@ -2114,8 +2121,6 @@ fn mold_breaker_forget(side: Side, idx: PokemonIndex) {
 /// `pressureTargets` (PS sim/battle-actions.ts useMoveInner,
 /// sim/pokemon.ts getMoveTargets; `mustpressure` moves count every foe,
 /// `foeSide` moves none).
-// TODO(PS parity): single-target moves use the chosen slot, not the
-// redirected / retargeted one.
 fn pressure_deduct_pp(state: &mut DoublesState, action: &Action) {
     let foe = action.side.other();
     let ty = crate::doubles::move_targets::ps_move_target(&action.choice.move_id.to_string().to_lowercase());
@@ -2123,9 +2128,16 @@ fn pressure_deduct_pp(state: &mut DoublesState, action: &Action) {
         action.choice.move_id,
         Choices::IMPRISON | Choices::SPIKES | Choices::STEALTHROCK | Choices::TOXICSPIKES
     ) || matches!(ty, "allAdjacentFoes" | "allAdjacent");
+    let single = matches!(ty, "normal" | "any" | "adjacentFoe" | "randomNormal");
     let slots: Vec<usize> = if all_foes {
         vec![0, 1]
-    } else if matches!(ty, "normal" | "any" | "adjacentFoe" | "randomNormal") && action.target_loc > 0 {
+    } else if single && PRESSURE_TARGET.with(|c| c.get()).is_some() {
+        // PS `pressureTargets` = the resolved target (post retarget / redirect).
+        match PRESSURE_TARGET.with(|c| c.get()).flatten() {
+            Some((ts, tsl)) if ts == foe => vec![tsl],
+            _ => vec![],
+        }
+    } else if single && action.target_loc > 0 {
         vec![(action.target_loc - 1) as usize]
     } else {
         vec![]
@@ -2163,6 +2175,16 @@ fn execute_action_body(
             })
         }))
     });
+    PRESSURE_TARGET.with(|c| c.set(None));
+    // PS `runMove`: a locked move (lockedmove / twoturnmove firing turn / uproar)
+    // runs with `sourceEffect` = the lock condition, so `useMoveInner`'s Pressure
+    // block (`!sourceEffect || callerMoveForPressure`) is skipped. Externally
+    // called moves keep their caller as the source.
+    let pressure_skipped = {
+        let a = &state.side(action.side).active[action.slot];
+        !(a.external_call || action.no_pp)
+            && (a.locked_move.is_some() || a.uproar > 0 || (a.charging.is_some() && !a.charge_aborted))
+    };
     let before = state.side(action.side).active[action.slot].charging;
     let was_recharging = state.side(action.side).active[action.slot].recharging;
     let order_len = move_order.len();
@@ -2181,7 +2203,7 @@ fn execute_action_body(
         }
     }
     state.in_move = false;
-    if move_order.len() > order_len {
+    if move_order.len() > order_len && !pressure_skipped {
         pressure_deduct_pp(state, action);
     }
     // Destiny Bond `onBeforeMove` (any other move) / `onMoveAborted` (a `cant`)
@@ -2409,6 +2431,7 @@ fn execute_action_inner(
         // `getMoveTargets`: `priorityEvent('RedirectTarget')` after the target is chosen.
         None => ps_get_target(state, rng, action).map(|t| redirect_target(state, action, t)),
     };
+    PRESSURE_TARGET.with(|c| c.set(Some(resolved)));
     // PS `runMove` -> `moveUsed(move, targetLoc)` stores the action's own
     // targetLoc (before any redirect), not the pokemon it finally hit. Instruct,
     // Sleep Talk-style locks and Encore read it back.
@@ -2823,7 +2846,16 @@ fn execute_action_inner(
         // `onTryMove` (`-prepare`, `addVolatile('twoturnmove')`) runs before the
         // target checks, and `getRandomTarget` keeps the fainted foe
         // (`randomFoe() || foe.active[0]`). PS data/moves.ts fly.onTryMove.
-        if !has_target && matches!(choice.charge_setup, ChargeSetup::None) {
+        // The firing turn of a charge move (Fly / Dig after their charge) with
+        // no living target: PS `getMoveTargets` returns no targets, so
+        // `useMoveInner` prints `-fail` before any accuracy roll (battle-actions.ts
+        // `!targets.length`). The charge ends as on any firing turn.
+        let firing_charge = matches!(state.side(side).active[slot].charging, Some((m, 0)) if m == choice.move_id);
+        if !has_target && (matches!(choice.charge_setup, ChargeSetup::None) || firing_charge) {
+            if firing_charge {
+                state.side_mut(side).active[slot].charging = None;
+                state.side_mut(side).active[slot].twoturn_fired = true;
+            }
             modify_move_field_tie(state, rng);
             push_order(move_order);
             return;
@@ -5176,7 +5208,8 @@ fn execute_action_inner(
             } else {
                 (target_side, target_slot)
             };
-            let weather = state.weather.weather_type;
+            // PS `pokemon.effectiveWeather()`: none under Cloud Nine / Air Lock.
+            let weather = if weather_suppressed(state) { Weather::NONE } else { state.weather.weather_type };
             if let Some(tidx) = state.side(ts).active[tslot].pokemon_index {
                 let s = state.side_mut(ts);
                 let pm = s.team_member_mut(tidx);
@@ -5550,21 +5583,26 @@ fn execute_action_inner(
                     };
                 }
                 PokemonVolatileStatus::LOCKEDMOVE => {
-                    // PS lockedmove `onStart`: trueDuration = random(2, 4);
-                    // `onRestart`: duration back to 2 while trueDuration >= 2.
-                    if ts == side && tslot == slot {
-                        state.side_mut(ts).active[tslot].locked_move_id = Some(choice.move_id);
-                    }
-                    match state.side(ts).active[tslot].locked_move {
-                        None => {
-                            let t = rng.label("volatile duration").random_range(2, 4) as u8;
-                            state.side_mut(ts).active[tslot].locked_move = Some((2, t));
+                    // PS `addVolatile` returns false for a fainted pokemon (`!this.hp`),
+                    // so a user that fainted this move (Destiny Bond) takes no lock
+                    // and draws no duration (sim/pokemon.ts addVolatile).
+                    if state.side(ts).slot_pokemon(tslot).is_some_and(|p| p.hp > 0) {
+                        // PS lockedmove `onStart`: trueDuration = random(2, 4);
+                        // `onRestart`: duration back to 2 while trueDuration >= 2.
+                        if ts == side && tslot == slot {
+                            state.side_mut(ts).active[tslot].locked_move_id = Some(choice.move_id);
                         }
-                        Some((d, t)) => {
-                            if t >= 2 {
+                        match state.side(ts).active[tslot].locked_move {
+                            None => {
+                                let t = rng.label("volatile duration").random_range(2, 4) as u8;
                                 state.side_mut(ts).active[tslot].locked_move = Some((2, t));
-                            } else {
-                                state.side_mut(ts).active[tslot].locked_move = Some((d, t));
+                            }
+                            Some((d, t)) => {
+                                if t >= 2 {
+                                    state.side_mut(ts).active[tslot].locked_move = Some((2, t));
+                                } else {
+                                    state.side_mut(ts).active[tslot].locked_move = Some((d, t));
+                                }
                             }
                         }
                     }
@@ -9120,8 +9158,13 @@ fn try_absorb(state: &mut DoublesState, ts: Side, tsl: usize, move_type: Pokemon
     let Some(tidx) = state.side(ts).active[tsl].pokemon_index else { return false };
     match a {
         A::Heal => {
-            let pm = state.side_mut(ts).team_member_mut(tidx);
-            pm.hp = (pm.hp + (pm.maxhp / 4).max(1)).min(pm.maxhp);
+            // PS data/abilities.ts waterabsorb.onTryHit: `this.heal(...)` fails
+            // under Heal Block (data/moves.ts healblock.condition.onTryHeal),
+            // so the target is still immune (`-immune`) but gains no HP.
+            if state.side(ts).active[tsl].heal_block == 0 {
+                let pm = state.side_mut(ts).team_member_mut(tidx);
+                pm.hp = (pm.hp + (pm.maxhp / 4).max(1)).min(pm.maxhp);
+            }
         }
         A::Boost(b) => apply_boosts(state, ts, tidx, &b, false),
         A::FlashFire => state.side_mut(ts).active[tsl].flash_fire = true,

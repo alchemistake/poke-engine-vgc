@@ -783,6 +783,22 @@ fn plan_queue_change(
         charge.target_loc = 0;
         let _ = ps_get_target_queue_insert(state, rng, &charge);
     }
+    // `resolveAction`: `runEvent('FractionalPriority')` (Quick Draw rolls here),
+    // before the random target. Same rule as the turn-start path.
+    {
+        let p = state.side(side).team_member(idx);
+        a.fractional = match crate::engine::mechanics::fractional_priority(p.ability, a.choice.category) {
+            Some(crate::engine::mechanics::FractionalPriority::Fixed(f)) => f,
+            Some(crate::engine::mechanics::FractionalPriority::QuickDraw) => {
+                if rng.label("fractional priority").random_chance(3, 10) {
+                    1
+                } else {
+                    0
+                }
+            }
+            None => 0,
+        };
+    }
     if let Some((ts, tsl)) = ps_get_target_queue_insert(state, rng, &a) {
         a.target_loc = if ts == a.side { -(tsl as i8 + 1) } else { tsl as i8 + 1 };
         a.target = tsl;
@@ -794,7 +810,8 @@ fn plan_queue_change(
     let mut first: Option<usize> = None;
     let mut last: Option<usize> = None;
     for (k, cur) in rest.iter().enumerate() {
-        let cmp = (cur.priority, cur.speed).cmp(&(a.priority, a.speed)); // new first when cur is "less"
+        // `comparePriority`: priority (+ fractional priority), then speed.
+        let cmp = (cur.priority, cur.fractional, cur.speed).cmp(&(a.priority, a.fractional, a.speed)); // new first when cur is "less"
         // compared(new, cur) <= 0 <=> new sorts before or ties with cur
         if cmp != std::cmp::Ordering::Greater && first.is_none() {
             first = Some(k);
@@ -1386,7 +1403,13 @@ pub fn run_battle_fuzz(
             // Encore `onStart` -> `queue.changeAction(target, {choice: 'move', moveid})`:
             // cancel the target's queued move and insert the encored one
             // (`resolveAction` draws a random target; `insertChoice` shuffles ties).
+            // A Counter / Mirror Coat insert also queues its `beforeTurnMove`
+            // (order 5), which runs right after this action (see below).
+            let mut before_turn_move: Option<(Side, PokemonIndex, Choices)> = None;
             if let Some(plan) = state.queue_change.take() {
+                if matches!(plan.action.choice.move_id, Choices::COUNTER | Choices::MIRRORCOAT) {
+                    before_turn_move = Some((plan.action.side, plan.action.pokemon_index, plan.action.choice.move_id));
+                }
                 apply_queue_plan(&mut actions, i, plan);
             }
             // Gravity: `queue.cancelMove(pokemon)` for pokemon whose Fly / Bounce ended.
@@ -1445,6 +1468,23 @@ pub fn run_battle_fuzz(
             state.side_one.sync_sc_order();
             state.side_two.sync_sc_order();
             each_event_update(state, rng);
+            // PS `runAction` case 'beforeTurnMove' (the Encore-inserted
+            // Counter / Mirror Coat): `beforeTurnCallback` adds the volatile,
+            // then the action's own `eachEvent('Update')`. The re-sort after
+            // the previous action is skipped (next action was not a move).
+            if let Some((bs, bidx, bmv)) = before_turn_move {
+                if let Some(bsl) = (0..2).find(|&sl| state.side(bs).active[sl].pokemon_index == Some(bidx)) {
+                    if state.side(bs).team_member(bidx).hp > 0 {
+                        let vol = &mut state.side_mut(bs).active[bsl];
+                        if bmv == Choices::COUNTER {
+                            vol.counter_vol.get_or_insert((None, 0));
+                        } else {
+                            vol.mirror_coat_vol.get_or_insert((None, 0));
+                        }
+                        each_event_update(state, rng);
+                    }
+                }
+            }
             let queue_start = i;
             for (side, slot) in [(Side::One, 0usize), (Side::One, 1), (Side::Two, 0), (Side::Two, 1)] {
                 if !state.side(side).active[slot].force_switch {
@@ -1588,6 +1628,10 @@ pub fn run_battle_fuzz(
                                 a.substitute_health = sub;
                             }
                         }
+                        // PS `switchIn`: `copyVolatileFrom` runs before
+                        // `queue.insertChoice({choice: 'runSwitch'})` -> `updateSpeed`,
+                        // so the passed boosts count in the switch-in speed sorts.
+                        update_speed(state);
                         each_event_update(state, rng);
                         let _ = sorted_actives(state, rng, "speed tie (switch-in)");
                         apply_sticky_web(state, side, slot);
@@ -1595,6 +1639,9 @@ pub fn run_battle_fuzz(
                         if apply_on_switch_abilities(state, side, slot, rng) {
                             let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
                         }
+                        // PS `runAction` (the `runSwitch` action): `resolveFaints`
+                        // before `eachEvent('Update')`, so a hazard KO is gone.
+                        resolve_faints(state, rng, |_, _| true);
                         each_event_update(state, rng);
                         // Forecast `onWeatherChange` (PS data/abilities.ts forecast):
                         // Snow Warning / Drizzle on the pivot's switch-in may have just
@@ -2144,6 +2191,49 @@ fn mold_breaker_restore(state: &mut DoublesState) {
 
 /// The ability as PS's direct reads (`target.ability`, `getAbility()`) see it,
 /// i.e. ignoring a Mold Breaker blank.
+/// The `onTryHit` of a Status move that substitute blocks (champions pool:
+/// electrify, entrainment, gastroacid, lockon, simplebeam, worryseed, yawn):
+/// true when it returns false / null. PS data/moves.ts `<move>.onTryHit`.
+#[allow(clippy::too_many_arguments)]
+fn status_on_try_hit_fails(
+    state: &DoublesState,
+    side: Side,
+    slot: usize,
+    idx: PokemonIndex,
+    ts: Side,
+    tsl: usize,
+    choice: &Choice,
+    queue: &[Action],
+) -> bool {
+    let Some(ti) = state.side(ts).active[tsl].pokemon_index else {
+        return false;
+    };
+    let ta = real_ability(state, ts, ti);
+    let cant = crate::engine::mechanics::cant_suppress(ta);
+    match choice.move_id {
+        Choices::ELECTRIFY => {
+            let will_move = queue.iter().any(|q| q.side == ts && q.pokemon_index == ti);
+            !will_move && state.side(ts).active[tsl].active_turns > 0
+        }
+        Choices::ENTRAINMENT => {
+            let sa = real_ability(state, side, idx);
+            (ts == side && tsl == slot)
+                || ta == sa
+                || cant
+                || ta == Abilities::TRUANT
+                || crate::engine::mechanics::no_entrain(sa)
+        }
+        // (Ability Shield is not in the item pool.)
+        Choices::GASTROACID => cant,
+        Choices::LOCKON => state.side(side).active[slot].lock_on.is_some(),
+        Choices::SIMPLEBEAM => cant || ta == Abilities::SIMPLE || ta == Abilities::TRUANT,
+        Choices::WORRYSEED => cant,
+        // TODO(PS parity): `runStatusImmunity('slp')` (Insomnia, Vital Spirit, ...).
+        Choices::YAWN => state.side(ts).team_member(ti).status != PokemonStatus::NONE,
+        _ => false,
+    }
+}
+
 pub(crate) fn real_ability(state: &DoublesState, side: Side, idx: PokemonIndex) -> Abilities {
     MOLD_SAVED
         .with(|m| m.borrow().iter().find(|&&(s, i, _)| s == side && i == idx).map(|&(_, _, a)| a))
@@ -2350,9 +2440,10 @@ fn execute_action_body(
     }
     if move_order.len() > order_len && !std::mem::take(&mut state.copy_called) {
         state.last_move = Some(action.choice.move_id);
-        // PS `pokemon.moveUsed`: `lastMove` (Encore).
-        if state.side(action.side).active[action.slot].pokemon_index.is_some() {
-            state.side_mut(action.side).active[action.slot].last_move = Some(action.choice.move_id);
+        // PS `pokemon.moveUsed`: `lastMove` (Encore). The user's current slot
+        // (its own Ally Switch moved it).
+        if let Some(sl) = (0..2).find(|&sl| state.side(action.side).active[sl].pokemon_index == Some(action.pokemon_index)) {
+            state.side_mut(action.side).active[sl].last_move = Some(action.choice.move_id);
         }
     }
     // PS runMove `runEvent('AfterMove')`: the handlers are sorted before any of
@@ -4651,10 +4742,15 @@ fn execute_action_inner(
         && !bypasses_substitute(choice)
         && state.side(side).team_member(idx).ability != Abilities::INFILTRATOR
     {
-        // `onTryPrimaryHit` returns null (not false): the hit loop still runs its
-        // `eachEvent('Update')` (once in the loop, once after it).
-        each_event_update(state, rng);
-        each_event_update(state, rng);
+        // PS `spreadMoveHit`: the move's own `TryHit` runs before
+        // `tryPrimaryHitEvent`. A failing `onTryHit` returns `[false]`, so the
+        // hit loop breaks before its `eachEvent('Update')`.
+        if !status_on_try_hit_fails(state, side, slot, idx, target_side, target_slot, choice, queue) {
+            // `onTryPrimaryHit` returns null (not false): the hit loop still runs its
+            // `eachEvent('Update')` (once in the loop, once after it).
+            each_event_update(state, rng);
+            each_event_update(state, rng);
+        }
         push_order(move_order);
         return;
     }
@@ -7683,14 +7779,8 @@ fn execute_action_inner(
             // Sand Spit `onDamagingHit` (PS data/abilities.ts sandspit): the
             // holder sets sand even when this hit KO'd it (the hit's holder).
             if let Some(pi) = hit_target_pi {
-                if state.side(target_side).team_member(pi).ability == Abilities::SANDSPIT
-                    && state.weather.weather_type != Weather::SAND
-                {
-                    state.weather = crate::state::StateWeather {
-                        weather_type: Weather::SAND,
-                        turns_remaining: 5,
-                    };
-                    let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+                if state.side(target_side).team_member(pi).ability == Abilities::SANDSPIT {
+                    field_setting_damaging_hit(state, rng, Abilities::SANDSPIT);
                 }
             }
             // Gooey / Tangling Hair (`onDamagingHit`, also when the hit KO'd the
@@ -7705,22 +7795,8 @@ fn execute_action_inner(
             });
             if let Some(h) = holder {
                 let ability = state.side(target_side).team_member(h).ability;
-        // Sand Spit `onDamagingHit`: `field.setWeather('sandstorm')`;
-        // fails if already up, else `eachEvent('WeatherChange')`.
-        // PS data/abilities.ts sandspit.
-        // TODO(PS parity): Smooth Rock duration, primal weather.
-        // Seed Sower `onDamagingHit`: `field.setTerrain('grassyterrain')`
-        // (fails if already up). PS data/abilities.ts seedsower.
-        // TODO(PS parity): Terrain Extender duration.
-        if ability == Abilities::SEEDSOWER
-            && state.terrain.terrain_type != crate::engine::state::Terrain::GRASSYTERRAIN
-        {
-            state.terrain = crate::state::StateTerrain {
-                terrain_type: crate::engine::state::Terrain::GRASSYTERRAIN,
-                turns_remaining: 5,
-            };
-            refresh_mimicry(state);
-            let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+        if ability == Abilities::SEEDSOWER {
+            field_setting_damaging_hit(state, rng, Abilities::SEEDSOWER);
         }
                 if matches!(ability, Abilities::GOOEY | Abilities::TANGLINGHAIR)
                     && choice.flags.contact
@@ -9761,6 +9837,32 @@ fn semi_invulnerable_blocks(
     !hits_anyway && !no_guard && mv != Choices::HELPINGHAND
 }
 
+/// `onDamagingHit` abilities that set the field (no-op for other abilities).
+/// Sand Spit: `field.setWeather('sandstorm')`; Seed Sower:
+/// `field.setTerrain('grassyterrain')`. Each fails if already up, else
+/// `eachEvent('WeatherChange' / 'TerrainChange')`.
+/// PS data/abilities.ts sandspit / seedsower.
+// TODO(PS parity): Smooth Rock / Terrain Extender duration, primal weather.
+fn field_setting_damaging_hit(state: &mut DoublesState, rng: &mut Gen5Rng, ability: Abilities) {
+    if ability == Abilities::SANDSPIT && state.weather.weather_type != Weather::SAND {
+        state.weather = crate::state::StateWeather {
+            weather_type: Weather::SAND,
+            turns_remaining: 5,
+        };
+        let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+    }
+    if ability == Abilities::SEEDSOWER
+        && state.terrain.terrain_type != crate::engine::state::Terrain::GRASSYTERRAIN
+    {
+        state.terrain = crate::state::StateTerrain {
+            terrain_type: crate::engine::state::Terrain::GRASSYTERRAIN,
+            turns_remaining: 5,
+        };
+        refresh_mimicry(state);
+        let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+    }
+}
+
 fn resolve_future_move(
     state: &mut DoublesState,
     rng: &mut Gen5Rng,
@@ -9860,6 +9962,7 @@ fn resolve_future_move(
             if ability == Abilities::STAMINA && state.side(ts).team_member(didx).hp > 0 {
                 apply_boosts(state, ts, didx, &StatBoosts { defense: 1, ..Default::default() }, false);
             }
+            field_setting_damaging_hit(state, rng, ability);
         }
     }
     // PS trySpreadMoveHit: the hit loop's `eachEvent('Update')`, then

@@ -13,6 +13,7 @@
 //! Type-immune targets and fixed-damage moves make NO draws at all.
 
 use crate::choices::{Choice, MoveCategory};
+use std::borrow::Cow;
 use crate::doubles::rng::Gen5Rng;
 use crate::engine::state::Weather;
 use crate::state::{Pokemon, PokemonType};
@@ -58,6 +59,31 @@ thread_local! {
 
 pub fn set_gravity(on: bool) {
     GRAVITY.with(|g| g.set(on));
+}
+
+/// PS `isGrounded` for a Ground move against a Smack Down'd holder: the
+/// `smackdown` volatile grounds it before the Flying typing and Levitate are
+/// checked (data/moves.ts smackdown, sim/pokemon.ts isGrounded). The chart's
+/// Ground -> Flying entry is then neutral (sim/dex.ts getEffectiveness), so
+/// that view drops the Flying typing and Levitate for this type check only.
+pub fn smackdown_ground_view<'a>(move_type: &PokemonType, defender: &'a Pokemon, smackdown: bool) -> Cow<'a, Pokemon> {
+    use crate::engine::abilities::Abilities;
+    let airborne_typing = defender.types.0 == PokemonType::FLYING || defender.types.1 == PokemonType::FLYING;
+    let levitates = matches!(defender.ability, Abilities::LEVITATE | Abilities::EELEVATE);
+    if !(smackdown && *move_type == PokemonType::GROUND && (airborne_typing || levitates)) {
+        return Cow::Borrowed(defender);
+    }
+    let mut d = defender.clone();
+    if d.types.0 == PokemonType::FLYING {
+        d.types.0 = PokemonType::TYPELESS;
+    }
+    if d.types.1 == PokemonType::FLYING {
+        d.types.1 = PokemonType::TYPELESS;
+    }
+    if levitates {
+        d.ability = Abilities::NONE;
+    }
+    Cow::Owned(d)
 }
 
 /// `type_mod` for a given attacker: Scrappy / Mind's Eye let Normal and Fighting
@@ -179,6 +205,11 @@ pub struct DamageCtx {
     /// An alive ally of the defender has Friend Guard (`onAnyModifyDamage`:
     /// x0.75 on its allies). PS data/abilities.ts friendguard.
     pub friend_guard: bool,
+    /// Sizes (>= 2) of the speed-tie groups of Friend Guard holders on the
+    /// field, in descending speed order (0 = unused). Every active Friend
+    /// Guard is an `onAnyModifyDamage` handler of the ModifyDamage event, even
+    /// when it cannot affect the hit; equal-speed holders shuffle.
+    pub friend_guard_ties: [u8; 4],
     /// Defender has Filter / Solid Rock / Prism Armor (`onSourceModifyDamage`:
     /// x0.75 on a super-effective hit; PS data/abilities.ts filter).
     pub solid_rock: bool,
@@ -376,8 +407,15 @@ pub fn calculate_damage(
     if ctx.sniper && crit {
         chain_in(6144);
     }
-    // PS `runEvent('ModifyDamage')` -> `speedSort` over the handlers; the
-    // screens share order / priority / subOrder (4) / speed, so they shuffle.
+    // PS `runEvent('ModifyDamage')` -> `speedSort` over the handlers. Friend
+    // Guard holders (subOrder 7, speed > 0) sort before the screens (speed 0);
+    // each tie group shuffles (group - 1 draws).
+    for &g in ctx.friend_guard_ties.iter().filter(|&&g| g > 0) {
+        for m in (2..=g as u32).rev() {
+            let _ = rng.label("speed tie (move order)").random(m);
+        }
+    }
+    // The screens share order / priority / subOrder (4) / speed, so they shuffle.
     for m in (2..=ctx.screen_handlers as u32).rev() {
         let _ = rng.label("speed tie (move order)").random(m);
     }

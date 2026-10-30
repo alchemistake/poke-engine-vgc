@@ -1244,6 +1244,10 @@ pub fn run_battle_fuzz(
                             let _ = sorted_actives(state, rng, "speed tie (switch-in)");
                         }
                         each_event_update(state, rng);
+                        // Forecast `onWeatherChange` (PS data/abilities.ts forecast):
+                        // Snow Warning / Drizzle on the pivot's switch-in may have just
+                        // set the weather, so Castform's type follows it now.
+                        update_forecast(state);
                     }
                 }
             }
@@ -1474,6 +1478,41 @@ fn update_speed(state: &mut DoublesState) {
             }
         }
     }
+}
+
+/// PS `runEvent('ModifyDamage')` Friend Guard handlers (`onAnyModifyDamage`,
+/// data/abilities.ts friendguard): one per alive active Friend Guard holder,
+/// sorted by its cached speed. Returns the tie-group sizes (>= 2) in
+/// descending speed order.
+/// TODO(PS parity): other ModifyDamage handlers (defender / attacker abilities,
+/// items) can tie with these too; fainted holders are not counted.
+fn friend_guard_tie_groups(state: &DoublesState) -> [u8; 4] {
+    let mut speeds: Vec<i32> = Vec::new();
+    for sd in [Side::One, Side::Two] {
+        for sl in 0..2 {
+            if let Some(p) = state.side(sd).slot_pokemon(sl) {
+                if p.hp > 0 && p.ability == Abilities::FRIENDGUARD {
+                    speeds.push(cached_speed(state, sd, sl));
+                }
+            }
+        }
+    }
+    speeds.sort_unstable_by(|a, b| b.cmp(a));
+    let mut out = [0u8; 4];
+    let mut g = 0;
+    let mut i = 0;
+    while i < speeds.len() {
+        let mut j = i;
+        while j < speeds.len() && speeds[j] == speeds[i] {
+            j += 1;
+        }
+        if j - i > 1 && g < out.len() {
+            out[g] = (j - i) as u8;
+            g += 1;
+        }
+        i = j;
+    }
+    out
 }
 
 /// The cached PS `pokemon.speed` of a slot's occupant.
@@ -2874,7 +2913,7 @@ fn execute_action_inner(
         let damaging = matches!(choice.category, MoveCategory::Physical | MoveCategory::Special);
         for (ts, tsl) in cands {
             // PS checkMoveBypassesProtect: only moves with the `protect` flag are blocked.
-            if state.side(ts).active[tsl].protected && choice.flags.protect {
+            if state.side(ts).active[tsl].protected && protect_blocks_move(choice, state.side(ts).active[tsl].protect_kind) {
                 // Each protected target still runs the variant's contact penalty.
                 if choice.flags.contact {
                     protect_contact_penalty(state, rng, side, slot, idx, ts, tsl);
@@ -2974,7 +3013,7 @@ fn execute_action_inner(
                 && crate::doubles::damage::type_mod_with_added(
                     state.side(side).team_member(idx),
                     &choice.move_type,
-                    &d,
+                    &crate::doubles::damage::smackdown_ground_view(&choice.move_type, &d, state.side(ts).active[tsl].smackdown),
                     state.side(ts).active[tsl].added_type,
                 )
                 .is_none()
@@ -3129,7 +3168,7 @@ fn execute_action_inner(
     if !is_self
         && !is_field
         && state.side(target_side).active[target_slot].protected
-        && choice.flags.protect
+        && protect_blocks_move(choice, state.side(target_side).active[target_slot].protect_kind)
     {
         if choice.flags.contact {
             protect_contact_penalty(state, rng, side, slot, idx, target_side, target_slot);
@@ -3361,7 +3400,13 @@ fn execute_action_inner(
                 && !slot_grounded(def, &state.side(target_side).active[target_slot]);
             let added = state.side(target_side).active[target_slot].added_type;
             if ground_immune
-                || crate::doubles::damage::type_mod_with_added(state.side(side).team_member(idx), &choice.move_type, def, added).is_none()
+                || crate::doubles::damage::type_mod_with_added(
+                    state.side(side).team_member(idx),
+                    &choice.move_type,
+                    &crate::doubles::damage::smackdown_ground_view(&choice.move_type, def, state.side(target_side).active[target_slot].smackdown),
+                    added,
+                )
+                .is_none()
             {
                 state.side_mut(side).active[slot].move_result_this_turn = Some(false);
                 push_order();
@@ -5977,6 +6022,7 @@ fn execute_action_inner(
                     Effect::VolatileStatus(vv) => {
                         if *vv == PokemonVolatileStatus::PROTECT {
                             state.side_mut(ts).active[tslot].protected = true;
+                            state.side_mut(ts).active[tslot].protect_kind = 0;
                         }
                         // Syrup Bomb condition: duration 4, source = the user
                         // (no refresh while present). PS data/moves.ts syrupbomb.
@@ -7100,6 +7146,16 @@ fn try_partial_trap(
     });
 }
 
+/// PS `checkMoveBypassesProtect`: does the target's protection stop `choice`?
+/// Every `protect` move is stopped by Protect, Spiky Shield and Baneful Bunker.
+/// King's Shield (1), Silk Trap (4) and Burning Bulwark (5) call it with
+/// `blockStatus = false` (data/moves.ts kingsshield / silktrap / burningbulwark),
+/// so Status moves pass through them. Only the PS flow for Status moves is
+/// modelled here; Mat Block and Obstruct are not in the engine yet.
+fn protect_blocks_move(choice: &Choice, kind: u8) -> bool {
+    choice.flags.protect && !(choice.category == MoveCategory::Status && matches!(kind, 1 | 4 | 5))
+}
+
 /// PS `trySetStatus` from a secondary `onHit`: fails on an existing status
 /// or a type immunity; sleep draws its duration.
 /// Contact penalty of a protect variant (PS `onTryHit` of the protect
@@ -7306,10 +7362,16 @@ fn compute_hit_damage(
     } else {
         ActiveSlot::empty()
     };
-    let defender = state
+    let defender_actual = state
         .side(target_side)
         .slot_pokemon(target_slot)
         .expect("target must be present");
+    let defender_view = crate::doubles::damage::smackdown_ground_view(
+        &choice.move_type,
+        defender_actual,
+        state.side(target_side).active[target_slot].smackdown,
+    );
+    let defender: &crate::state::Pokemon = &defender_view;
     let mut damage: i16 = 0;
     let mut crit = false;
     // Fixed-damage and OHKO moves make no crit/randomizer draws.
@@ -7495,6 +7557,7 @@ fn compute_hit_damage(
             .slot_pokemon(1 - target_slot)
             .map(|a| a.hp > 0 && a.ability == Abilities::FRIENDGUARD)
             .unwrap_or(false),
+        friend_guard_ties: friend_guard_tie_groups(state),
         screen_handlers: [Side::One, Side::Two]
             .iter()
             .map(|&sd| {
@@ -8741,12 +8804,16 @@ fn revive_member(state: &mut DoublesState, side: Side, position: usize) {
 fn switch_in(state: &mut DoublesState, side: Side, slot: usize, position: usize) {
     switch_in_inner(state, side, slot, position);
     refresh_mimicry(state);
-    // Healing Wish / Lunar Dance `condition.onSwap` (on switch-in): a hurt
-    // or statused replacement is fully healed and cured; otherwise the
-    // condition keeps waiting. PS data/moves.ts healingwish / lunardance.
-    // TODO(PS parity): Lunar Dance also restores PP (and triggers on PP).
-    if state.side(side).healing_wish_slot[slot] {
-        let s = state.side_mut(side);
+}
+
+/// Healing Wish / Lunar Dance `slotCondition` `onSwitchIn` -> `onSwap`: a hurt
+/// or statused replacement is fully healed and cured; otherwise the condition
+/// keeps waiting. PS data/moves.ts healingwish / lunardance. The slot condition
+/// (speed sort subOrder 3) runs before the side-condition hazards (subOrder 4),
+/// so it is called before Spikes / Stealth Rock damage in `switch_in_inner`.
+/// TODO(PS parity): Lunar Dance also restores PP (and triggers on PP).
+fn healing_wish_on_switch_in(s: &mut DoublesSide, slot: usize) {
+    if s.healing_wish_slot[slot] {
         if let Some(idx) = s.active[slot].pokemon_index {
             let p = s.team_member_mut(idx);
             if p.hp > 0 && (p.hp < p.maxhp || p.status != PokemonStatus::NONE) {
@@ -8877,6 +8944,7 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
         } else {
             None
         };
+        healing_wish_on_switch_in(s, slot);
         let boots = s.team_member(idx).item == crate::engine::items::Items::HEAVYDUTYBOOTS;
         // Magic Guard blocks indirect (non-move) damage, hazards included
         // (PS data/abilities.ts magicguard.onDamage).
@@ -10541,6 +10609,7 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
                     attack_mod: crate::engine::mechanics::attacker_stat_modifier(attacker, &action.choice),
                     crit_bonus: 0,
                     screen_handlers: 0,
+                    friend_guard_ties: [0; 4],
                     friend_guard: false,
                     disguise: false,
                     defense_mod: 4096,

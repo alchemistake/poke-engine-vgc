@@ -1410,7 +1410,12 @@ fn ps_get_target_inner(state: &DoublesState, rng: &mut Gen5Rng, action: &Action)
             _ => {
                 let foes: Vec<usize> = (0..2).filter(|&s| alive(foe, s)).collect();
                 if foes.is_empty() {
-                    None
+                    // PS `getRandomTarget` (sim/battle.ts) with no living foe: no draw;
+                    // the foe slot directly across (fainted) for normal / adjacentFoe /
+                    // randomNormal targets, else `foe.active[0]`. A redirect (Lightning
+                    // Rod, Follow Me) can still apply to that slot.
+                    let across = if matches!(ty, "normal" | "adjacentFoe" | "randomNormal") { 1 - slot } else { 0 };
+                    Some((foe, across))
                 } else {
                     Some((foe, foes[rng.label("retarget").random(foes.len() as u32) as usize]))
                 }
@@ -2688,24 +2693,6 @@ fn execute_action_inner(
         }
     }
 
-    // Libero / Protean (`onPrepareHit`, before the hit steps): once per
-    // switch-in, become the move's type. PS data/abilities.ts libero.
-    // TODO(PS parity): Protean's champions override, Tera, Terastallized.
-    if matches!(
-        state.side(side).team_member(idx).ability,
-        Abilities::LIBERO | Abilities::PROTEAN
-    ) && state.side(side).active[slot].type_change.is_none()
-        && choice.move_type != PokemonType::TYPELESS
-        && choice.move_id != Choices::STRUGGLE
-    {
-        let pm = state.side_mut(side).team_member_mut(idx);
-        if pm.types != (choice.move_type, PokemonType::TYPELESS) {
-            let orig = pm.types;
-            pm.types = (choice.move_type, PokemonType::TYPELESS);
-            state.side_mut(side).active[slot].type_change = Some(orig);
-        }
-    }
-
     // Counter / Mirror Coat `onTry`: fail unless the volatile recorded a hit.
     if matches!(choice.move_id, Choices::COUNTER | Choices::MIRRORCOAT) {
         let a = &state.side(side).active[slot];
@@ -2750,6 +2737,26 @@ fn execute_action_inner(
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
             push_order();
             return;
+        }
+    }
+
+    // Libero / Protean (`onPrepareHit`, after the move's `onTry` and before the hit
+    // steps): once per switch-in, become the move's type. PS sim/battle-actions.ts
+    // `Try` then `PrepareHit`, so a failed `onTry` (Counter, Rest, ...) changes nothing.
+    // PS data/abilities.ts libero / protean.
+    // TODO(PS parity): Protean's champions override, Tera, Terastallized.
+    if matches!(
+        state.side(side).team_member(idx).ability,
+        Abilities::LIBERO | Abilities::PROTEAN
+    ) && state.side(side).active[slot].type_change.is_none()
+        && choice.move_type != PokemonType::TYPELESS
+        && choice.move_id != Choices::STRUGGLE
+    {
+        let pm = state.side_mut(side).team_member_mut(idx);
+        if pm.types != (choice.move_type, PokemonType::TYPELESS) {
+            let orig = pm.types;
+            pm.types = (choice.move_type, PokemonType::TYPELESS);
+            state.side_mut(side).active[slot].type_change = Some(orig);
         }
     }
 
@@ -4488,8 +4495,12 @@ fn execute_action_inner(
                 (target_side, target_slot)
             };
             if let Some(tidx) = state.side(ts).active[tslot].pokemon_index {
+                // PS `trySetStatus` -> `setStatus(this.status || status)`: a target
+                // that already has a status re-applies its own one, which fails
+                // (`-fail` / `[still]`), whatever the move's status. No draw.
+                let already = state.side(ts).team_member(tidx).status != PokemonStatus::NONE;
                 // Already in a status, or immune: the move fails.
-                if status_immune(state, ts, tslot, st.status, ts != side, side, slot) {
+                if already || status_immune(state, ts, tslot, st.status, ts != side, side, slot) {
                     move_failed = true;
                 } else {
                     set_status(state, rng, ts, tidx, st.status);
@@ -7875,6 +7886,21 @@ fn resolve_future_move(
         each_event_update(state, rng);
         return;
     }
+    // Substitute `onTryPrimaryHit` on the delayed hit (PS sim/battle.ts
+    // trySpreadMoveHit -> data/conditions.ts substitute): a damaging move hits
+    // the Substitute unless it bypasses it or the source has Infiltrator
+    // (`data.moveData.infiltrates`). The Substitute takes the damage; no HP loss.
+    let sub_hp = state.side(ts).active[tslot].substitute_health;
+    if sub_hp > 0
+        && !bypasses_substitute(&choice)
+        && state.side(ss).team_member(si).ability != Abilities::INFILTRATOR
+    {
+        let d = damage.min(sub_hp);
+        state.side_mut(ts).active[tslot].substitute_health = sub_hp - d;
+        each_event_update(state, rng);
+        each_event_update(state, rng);
+        return;
+    }
     let damage = match state.side(ts).slot_pokemon(tslot) {
         Some(d) => damage.min(d.hp.max(0)),
         None => damage,
@@ -8048,8 +8074,15 @@ fn skill_swap(
     // The new abilities' Start events (Trace's draw included) run through
     // `apply_on_switch_abilities`.
     // TODO(PS parity): the TerrainChange speed sort after a swapped-in Surge.
-    let _ = apply_on_switch_abilities(state, tgt_side, tgt_slot, rng);
-    let _ = apply_on_switch_abilities(state, src_side, src_slot, rng);
+    // A Start event that sets weather / terrain (Sand Stream, Cloud Nine, ...)
+    // is followed by PS `eachEvent('WeatherChange')` / `TerrainChange`, a speed
+    // sort of all actives (the same as the switch-in loop does).
+    if apply_on_switch_abilities(state, tgt_side, tgt_slot, rng) {
+        let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+    }
+    if apply_on_switch_abilities(state, src_side, src_slot, rng) {
+        let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+    }
     true
 }
 
@@ -10175,9 +10208,13 @@ fn end_of_turn(
 
     // End of the `residual` action (faints are resolved before its eachEvent).
     resolve_faints(state, rng, |_, _| true);
-    if state.battle_is_over() == 0.0 {
-        each_event_update(state, rng);
+    // PS `runAction`: `resolveFaints(...)` then `if (this.ended) return true;`.
+    // A battle decided by the residual's (deferred Perish song) faints runs no
+    // further step: no emergency exit, replacements, `checkFainted`, or endTurn.
+    if state.battle_is_over() != 0.0 {
+        return;
     }
+    each_event_update(state, rng);
     // Emergency Exit / Wimp Out `onEmergencyExit` after the residual action:
     // crossing 50% HP switches the holder out (the answer is the pivot-style
     // choice). PS data/mods/champions/abilities.ts emergencyexit.

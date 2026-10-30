@@ -1062,7 +1062,7 @@ fn build_pokemon(m: &TeamMember) -> Pokemon {
     let ability = parse_ability(&m.ability);
     let (hp, atk, def, spa, spd, spe) =
         compute_stats(base, &m.evs, m.level, nature.clone());
-    let mut moves = vec![MoveSlot::default(); 4];
+    let mut moves: [MoveSlot; 4] = Default::default();
     for (i, mv) in m.moves.iter().enumerate().take(4) {
         let (choices, choice) = move_lookup(mv);
         // PS `baseMoveSlots` pp: `calculatePP(move, 3)`, champions
@@ -1073,6 +1073,7 @@ fn build_pokemon(m: &TeamMember) -> Pokemon {
             choice,
         };
     }
+    let [m0, m1, m2, m3] = moves.map(|ms| crate::state::Move { id: ms.id, disabled: false, pp: ms.pp, choice: ms.choice });
     Pokemon {
         id,
         level: m.level as i8,
@@ -1105,32 +1106,7 @@ fn build_pokemon(m: &TeamMember) -> Pokemon {
         terastallized: false,
         tera_type: PokemonType::NORMAL,
         attacked_by: Vec::new(),
-        moves: crate::state::PokemonMoves {
-            m0: crate::state::Move {
-                id: moves[0].id,
-                disabled: false,
-                pp: moves[0].pp,
-                choice: moves[0].choice.clone(),
-            },
-            m1: crate::state::Move {
-                id: moves[1].id,
-                disabled: false,
-                pp: moves[1].pp,
-                choice: moves[1].choice.clone(),
-            },
-            m2: crate::state::Move {
-                id: moves[2].id,
-                disabled: false,
-                pp: moves[2].pp,
-                choice: moves[2].choice.clone(),
-            },
-            m3: crate::state::Move {
-                id: moves[3].id,
-                disabled: false,
-                pp: moves[3].pp,
-                choice: moves[3].choice.clone(),
-            },
-        },
+        moves: crate::state::PokemonMoves { m0, m1, m2, m3 },
     }
 }
 

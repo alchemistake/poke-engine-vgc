@@ -87,6 +87,10 @@ pub struct ActiveSlot {
     /// Gastro Acid fails (PS addVolatile on an existing volatile). Cleared on
     /// switch-out.
     pub gastro_acid: bool,
+    /// The ability the `gastroacid` volatile suppresses (the member's
+    /// `ability` reads No Ability meanwhile). PS keeps `pokemon.ability`, so
+    /// Skill Swap / Wandering Spirit still trade it.
+    pub gastro_saved: Abilities,
     /// Chilly Reception volatile (`chillyreception`, duration 1, set by its
     /// priority charge): only takes part in the residual sort.
     pub chilly_reception: bool,
@@ -318,6 +322,7 @@ impl ActiveSlot {
             focus_punch: false,
             beak_blast: false,
             gastro_acid: false,
+            gastro_saved: Abilities::NONE,
             chilly_reception: false,
             lost_focus: false,
             stockpile_def: 0,

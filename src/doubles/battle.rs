@@ -1435,7 +1435,20 @@ pub fn run_battle_fuzz(
             }
             // Phazing (PS `runAction`: `forceSwitchFlag` -> `dragIn`) happens
             // before faints are resolved.
-            drag_in_all(state, rng);
+            let dragged = drag_in_all(state, rng);
+            // PS switchIn: `queue.cancelAction(oldActive)`: a pokemon forced out
+            // by Roar / Whirlwind / Dragon Tail loses its queued action (and its
+            // later `getActionSpeed` target draws). PS sim/battle-actions.ts switchIn.
+            if !dragged.is_empty() {
+                let mut k = i;
+                while k < actions.len() {
+                    if dragged.contains(&(actions[k].side, actions[k].pokemon_index)) {
+                        actions.remove(k);
+                    } else {
+                        k += 1;
+                    }
+                }
+            }
             resolve_faints(state, rng, |_, _| true);
             if state.battle_is_over() != 0.0 {
                 break;
@@ -1446,6 +1459,9 @@ pub fn run_battle_fuzz(
             state.side_two.sync_sc_order();
             each_event_update(state, rng);
             let queue_start = i;
+            // Revival Blessing on a fainted pokemon still in its active slot:
+            // PS `revivalblessing` action -> `queue.addChoice({choice: 'instaswitch'})`.
+            let mut revive_instaswitch: Vec<(Side, usize, usize)> = Vec::new();
             for (side, slot) in [(Side::One, 0usize), (Side::One, 1), (Side::Two, 0), (Side::Two, 1)] {
                 if !state.side(side).active[slot].force_switch {
                     continue;
@@ -1463,11 +1479,17 @@ pub fn run_battle_fuzz(
                             // The switch answer (`commitChoices` -> `updateSpeed`),
                             // then the `revivalblessing` action (PS battle.ts
                             // `runAction`): half HP, status cured.
-                            // TODO(PS parity): reviving the fainted ally still in
-                            // its active slot (queued `instaswitch`).
                             update_speed(state);
                             revive_member(state, side, position);
                             each_event_update(state, rng);
+                            // `action.target.position < side.active.length`: the
+                            // revived pokemon is still its slot's occupant.
+                            if let Some(sl) = (0..2).find(|&sl| {
+                                state.side(side).active[sl].pokemon_index.is_none()
+                                    && state.side(side).fainted_in_slot[sl].map(|f| f.0 as usize) == Some(position)
+                            }) {
+                                revive_instaswitch.push((side, sl, position));
+                            }
                         }
                         continue;
                     }
@@ -1605,6 +1627,32 @@ pub fn run_battle_fuzz(
             }
             if i < actions.len() {
                 resort_queue(state, rng, &mut actions[i..]);
+            }
+            // The queued `instaswitch` (sorted before the moves): `switchIn` at the
+            // pokemon's own position, `eachEvent('Update')`, then its `runSwitch`
+            // action, and the gen 8+ re-sort before the next move. PS sim/battle.ts
+            // runAction ('revivalblessing', 'instaswitch', 'runSwitch').
+            if !revive_instaswitch.is_empty() {
+                for (side, slot, position) in revive_instaswitch {
+                    update_speed(state);
+                    // PS switchIn: `oldActive` is the revived pokemon itself, now
+                    // with HP, so `runPursuitActivation` (eachEvent 'Update') and its
+                    // ability's End event run first.
+                    each_event_update(state, rng);
+                    switch_out_end_event(state, rng, side, slot);
+                    switch_in(state, side, slot, position);
+                    each_event_update(state, rng);
+                    let _ = sorted_actives(state, rng, "speed tie (switch-in)");
+                    apply_sticky_web(state, side, slot);
+                    if apply_on_switch_abilities(state, side, slot, rng) {
+                        let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+                    }
+                    each_event_update(state, rng);
+                    update_forecast(state);
+                }
+                if i < actions.len() {
+                    resort_queue(state, rng, &mut actions[i..]);
+                }
             }
         }
 
@@ -1997,7 +2045,8 @@ fn switch_out_end_event(state: &DoublesState, rng: &mut Gen5Rng, side: Side, slo
     }
 }
 
-fn drag_in_all(state: &mut DoublesState, rng: &mut Gen5Rng) {
+fn drag_in_all(state: &mut DoublesState, rng: &mut Gen5Rng) -> Vec<(Side, PokemonIndex)> {
+    let mut dragged = Vec::new();
     for side in [Side::One, Side::Two] {
         for slot in 0..2 {
             if !state.side(side).active[slot].drag_out {
@@ -2012,6 +2061,9 @@ fn drag_in_all(state: &mut DoublesState, rng: &mut Gen5Rng) {
                 continue;
             }
             let pick = options[rng.label("drag in").random(options.len() as u32) as usize];
+            if let Some(out) = state.side(side).active[slot].pokemon_index {
+                dragged.push((side, out));
+            }
             switch_out_end_event(state, rng, side, slot);
             switch_in(state, side, slot, pick);
             let _ = sorted_actives(state, rng, "speed tie (switch-in)");
@@ -2021,6 +2073,7 @@ fn drag_in_all(state: &mut DoublesState, rng: &mut Gen5Rng) {
             }
         }
     }
+    dragged
 }
 
 /// PS re-sort of the remaining queue after an action (gen 8+ `runAction`
@@ -2619,7 +2672,23 @@ fn execute_action_inner(
             if ts == side { -(tsl as i8 + 1) } else { tsl as i8 + 1 };
     }
 
-    // `useMove` (external) skips the BeforeMove step entirely.
+    // `useMove` (external: Magic Bounce, Sleep Talk, ...) skips BeforeMove, but
+    // `useMoveInner` runs `runEvent('ModifyMove')`: Throat Chop (sound) and
+    // Heal Block (`heal` flag) `onModifyMove` return false, so `move` is false
+    // and `baseTarget !== move.target` calls `getRandomTarget(pokemon, false)`,
+    // a `randomFoe` sample when a foe is up; then the move does nothing.
+    // PS sim/battle-actions.ts useMoveInner, sim/battle.ts getRandomTarget,
+    // data/moves.ts throatchop / healblock `condition.onModifyMove`.
+    if external
+        && ((state.side(side).active[slot].throat_chop > 0 && action.choice.flags.sound)
+            || (state.side(side).active[slot].heal_block > 0 && action.choice.flags.heal))
+    {
+        let foes = (0..2).filter(|&sl| state.side(side.other()).slot_pokemon(sl).is_some_and(|p| p.hp > 0)).count();
+        if foes > 0 {
+            let _ = rng.label("retarget").random(foes as u32);
+        }
+        return;
+    }
     if !external {
     // PS `runEvent('BeforeMove')` speed-sorts every holder's BeforeMove handlers
     // before any callback runs. Heal Block and Throat Chop are both priority 6 on
@@ -3107,15 +3176,18 @@ fn execute_action_inner(
         let wonder = state.wonder_room.active;
         let atk = crate::engine::mechanics::boost_stat(ab.atk, a.attack).max(1) as i64;
         let spa = crate::engine::mechanics::boost_stat(ab.spa, a.special_attack).max(1) as i64;
-        // Wonder Room swaps the defensive stat name (and its boost) for the value.
+        // PS getStat(stat, false, true) under Wonder Room: the stored value
+        // stays (`storedStats[statName]` is read first) but `statName` swaps
+        // before the boost lookup, so Def takes the SpD boost and vice versa
+        // (sim/pokemon.ts getStat, "Download ignores Wonder Room's effect").
         let def = if wonder {
-            crate::engine::mechanics::boost_stat(db.spd, d.special_defense)
+            crate::engine::mechanics::boost_stat(db.spd, d.defense)
         } else {
             crate::engine::mechanics::boost_stat(db.def, d.defense)
         }
         .max(1) as i64;
         let spd = if wonder {
-            crate::engine::mechanics::boost_stat(db.def, d.defense)
+            crate::engine::mechanics::boost_stat(db.def, d.special_defense)
         } else {
             crate::engine::mechanics::boost_stat(db.spd, d.special_defense)
         }
@@ -3123,7 +3195,7 @@ fn execute_action_inner(
         let s1 = (2 * a.level as i64) / 5 + 2;
         let physical = (s1 * 90 * atk) / def / 50;
         let special = (s1 * 90 * spa) / spd / 50;
-        if physical > special || (physical == special && rng.random_chance(1, 2)) {
+        if physical > special || (physical == special && rng.label("other: onModifyMove").random_chance(1, 2)) {
             shell_side_arm_choice = {
                 let mut c = choice.clone();
                 c.category = MoveCategory::Physical;
@@ -4534,22 +4606,19 @@ fn execute_action_inner(
     ) && !is_self
         && !is_field
     {
+        // PS hitStepBreakProtect: `broke` when any protection volatile or guard
+        // side condition was removed; then (gen >= 6) `delete target.volatiles['stall']`.
         let sc = &mut state.side_mut(target_side).side_conditions;
+        let guard_broke = sc.crafty_shield > 0 || sc.mat_block > 0 || sc.quick_guard > 0 || sc.wide_guard > 0;
         sc.crafty_shield = 0;
         sc.mat_block = 0;
         sc.quick_guard = 0;
         sc.wide_guard = 0;
-    }
-    if matches!(
-        choice.move_id,
-        Choices::FEINT | Choices::PHANTOMFORCE | Choices::SHADOWFORCE | Choices::HYPERSPACEFURY | Choices::HYPERSPACEHOLE
-    ) && !is_self
-        && !is_field
-        && state.side(target_side).active[target_slot].protected
-    {
         let t = &mut state.side_mut(target_side).active[target_slot];
-        t.protected = false;
-        t.stall = None;
+        if t.protected || guard_broke {
+            t.protected = false;
+            t.stall = None;
+        }
     }
 
     // Uproar `onTryHit` (move-level, so after the immunity and accuracy steps):
@@ -11139,6 +11208,12 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
                 let raw = pm.speed;
                 s.speed_cache[idx as usize] = raw as _;
             }
+        }
+        // Same `setSpecies(baseSpecies)`: Hunger Switch's `formeChange` is not
+        // permanent, so Morpeko-Hangry comes back in as Morpeko (both formes
+        // share base stats and types). PS data/abilities.ts hungerswitch.
+        if s.team_member(idx).id == crate::pokemon::PokemonName::MORPEKOHANGRY {
+            s.team_member_mut(idx).id = crate::pokemon::PokemonName::MORPEKO;
         }
         // PS data/conditions.ts tox.onSwitchIn: the toxic stage resets to 0
         // when a poisoned pokemon switches in (first residual is 1x again).

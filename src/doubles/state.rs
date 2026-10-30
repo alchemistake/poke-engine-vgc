@@ -540,6 +540,10 @@ pub struct DoublesState {
     pub queue_prioritize: Option<(Side, usize)>,
     /// Quash `onHit`: the target's queued action is moved last (`order = 201`).
     pub queue_quash: Option<(Side, usize)>,
+    /// Instruct `onHit`: the target's last move is queued again at the front of
+    /// the queue (`resolveAction` + `prioritizeAction`). (side, slot, pokemon,
+    /// move id, the target's signed `lastMoveTargetLoc`).
+    pub queue_instruct: Option<(Side, usize, PokemonIndex, Choices, i8)>,
     /// A move is executing (Destiny Bond only reacts to move damage).
     pub in_move: bool,
     /// Gravity `onFieldStart`: queued moves cancelled (`queue.cancelMove`).
@@ -1083,6 +1087,7 @@ impl DoublesState {
             queue_round: false,
             queue_prioritize: None,
             queue_quash: None,
+            queue_instruct: None,
             in_move: false,
             queue_cancel: Vec::new(),
             wonder_room_seen: false,

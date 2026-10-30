@@ -662,6 +662,68 @@ fn plan_queue_change(
     Some(QueuePlan { remove: j, insert, action: a })
 }
 
+/// Moves Instruct cannot repeat: PS data/moves.ts (champions mod) flags
+/// `failinstruct`, `charge` or `recharge`.
+const INSTRUCT_FAIL_IDS: &[Choices] = &[
+    Choices::BEAKBLAST, Choices::BELCH, Choices::BLAZINGTORQUE, Choices::CELEBRATE,
+    Choices::COMBATTORQUE, Choices::DYNAMAXCANNON, Choices::FREEZESHOCK, Choices::HOLDHANDS,
+    Choices::ICEBURN, Choices::KINGSSHIELD, Choices::MAGICALTORQUE, Choices::METEORASSAULT,
+    Choices::METRONOME, Choices::MIMIC, Choices::NOXIOUSTORQUE, Choices::OBSTRUCT,
+    Choices::PRISMATICLASER, Choices::ROAROFTIME, Choices::ROLLOUT, Choices::SHADOWFORCE,
+    Choices::SHELLTRAP, Choices::SKETCH, Choices::WICKEDTORQUE, Choices::ASSIST, Choices::BIDE,
+    Choices::BLASTBURN, Choices::BOUNCE, Choices::CHATTER, Choices::COPYCAT, Choices::DIG,
+    Choices::DIVE, Choices::ELECTROSHOT, Choices::ETERNABEAM, Choices::FLY, Choices::FOCUSPUNCH,
+    Choices::FRENZYPLANT, Choices::GEOMANCY, Choices::GIGAIMPACT, Choices::HYDROCANNON,
+    Choices::HYPERBEAM, Choices::ICEBALL, Choices::INSTRUCT, Choices::MEFIRST, Choices::METEORBEAM,
+    Choices::MIRRORMOVE, Choices::NATUREPOWER, Choices::OUTRAGE, Choices::PETALDANCE,
+    Choices::PHANTOMFORCE, Choices::RAZORWIND, Choices::ROCKWRECKER, Choices::SKULLBASH,
+    Choices::SKYATTACK, Choices::SKYDROP, Choices::SLEEPTALK, Choices::SOLARBEAM, Choices::SOLARBLADE,
+    Choices::STRUGGLE, Choices::THRASH, Choices::TRANSFORM, Choices::UPROAR,
+];
+
+/// The action PS `resolveAction` builds for an Instruct repeat: the target's
+/// `lastMove` with its last target location (no draw: the location is set).
+/// Prioritized, so it runs next (`prioritizeAction`, order 3).
+fn instruct_action(
+    state: &DoublesState,
+    side: Side,
+    slot: usize,
+    idx: PokemonIndex,
+    mv: Choices,
+    loc: i8,
+) -> Option<Action> {
+    let p = state.side(side).team_member(idx);
+    let mi = [&p.moves.m0, &p.moves.m1, &p.moves.m2, &p.moves.m3]
+        .iter()
+        .position(|m| m.id == mv)?;
+    let mut choice = move_by_index(p, mi).choice.clone();
+    choice.move_index = match mi {
+        0 => crate::state::PokemonMoveIndex::M0,
+        1 => crate::state::PokemonMoveIndex::M1,
+        2 => crate::state::PokemonMoveIndex::M2,
+        _ => crate::state::PokemonMoveIndex::M3,
+    };
+    if let Some(cat) = champions_move_category(choice.move_id) {
+        choice.category = cat;
+        choice.base_power = 0.0;
+    }
+    let boost = ability_priority_boost(p, &choice) + grassy_glide_boost(state, p, &choice);
+    Some(Action {
+        side,
+        slot,
+        pokemon_index: idx,
+        priority: choice.priority + boost,
+        choice,
+        speed: effective_speed(state, side, slot).unwrap_or(0),
+        target: (loc.unsigned_abs() as usize).saturating_sub(1).min(1),
+        target_loc: loc,
+        fractional: 0,
+        prioritized: true,
+        no_pp: false,
+        recharge: false,
+    })
+}
+
 /// Applies a planned queue change to `actions[from..]`.
 fn apply_queue_plan(actions: &mut Vec<Action>, from: usize, plan: QueuePlan) {
     actions.remove(from + plan.remove);
@@ -1126,6 +1188,13 @@ pub fn run_battle_fuzz(
                         a.prioritized = true;
                         actions.insert(i, a);
                     }
+                }
+            }
+            // Instruct `onHit` -> `queue.prioritizeAction(resolveAction(...))`: the
+            // target's last move runs next, with its last target location.
+            if let Some((ts, tsl, tidx, mv, loc)) = state.queue_instruct.take() {
+                if let Some(a) = instruct_action(state, ts, tsl, tidx, mv, loc) {
+                    actions.insert(i, a);
                 }
             }
             // Phazing (PS `runAction`: `forceSwitchFlag` -> `dragIn`) happens
@@ -3061,39 +3130,10 @@ fn execute_action_inner(
     if !is_self && !is_ally && !is_field && !toxic_hits {
         // An aborted charge (confusion self-hit, ...) already lost its `twoturnmove`
         // volatile: no semi-invulnerability (the residual handler lingers).
-        if let Some((charging, _)) = state
-            .side(target_side)
-            .active[target_slot]
-            .charging
-            .filter(|_| !state.side(target_side).active[target_slot].charge_aborted)
-        {
-            let hits_anyway = match charging {
-                Choices::DIG => matches!(choice.move_id, Choices::EARTHQUAKE | Choices::MAGNITUDE),
-                Choices::FLY | Choices::BOUNCE => matches!(
-                    choice.move_id,
-                    Choices::GUST
-                        | Choices::TWISTER
-                        | Choices::SKYUPPERCUT
-                        | Choices::THUNDER
-                        | Choices::HURRICANE
-                        | Choices::SMACKDOWN
-                        | Choices::THOUSANDARROWS
-                ),
-                Choices::DIVE => matches!(choice.move_id, Choices::SURF | Choices::WHIRLPOOL),
-                Choices::PHANTOMFORCE | Choices::SHADOWFORCE => false,
-                _ => true, // not a semi-invulnerable charge (Meteor Beam, ...)
-            };
-            let no_guard = state.side(side).team_member(idx).ability == Abilities::NOGUARD
-                || state
-                    .side(target_side)
-                    .slot_pokemon(target_slot)
-                    .map(|p| p.ability == Abilities::NOGUARD)
-                    .unwrap_or(false);
-            if !hits_anyway && !no_guard && choice.move_id != Choices::HELPINGHAND {
-                state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-                push_order();
-                return;
-            }
+        if semi_invulnerable_blocks(state, side, idx, choice.move_id, target_side, target_slot) {
+            state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+            push_order();
+            return;
         }
     }
 
@@ -5272,6 +5312,64 @@ fn execute_action_inner(
             }
         }
 
+        // Instruct (PS data/moves.ts instruct.onHit): fails without a last move
+        // (`lastMove`), when that move has `failinstruct` / charge / recharge, or
+        // when its PP slot is empty. Otherwise the target's last move is queued
+        // again at the front of the queue, with the target's last target location.
+        // TODO(PS parity): the beakblast / focuspunch / shelltrap volatiles on the
+        // target (not modeled; focuspunch is checked through `focus_punch`).
+        if choice.move_id == Choices::INSTRUCT && ti == 0 && !move_failed {
+            let t = &state.side(target_side).active[target_slot];
+            let tidx = t.pokemon_index;
+            let last = t.last_move;
+            let loc = t.last_target_loc;
+            let focus = t.focus_punch;
+            let repeat = match (tidx, last) {
+                (Some(ti_), Some(m)) if !INSTRUCT_FAIL_IDS.contains(&m) && !focus => {
+                    let p = state.side(target_side).team_member(ti_);
+                    let pp_ok = [&p.moves.m0, &p.moves.m1, &p.moves.m2, &p.moves.m3]
+                        .iter()
+                        .find(|mv| mv.id == m)
+                        .map_or(true, |mv| mv.pp > 0);
+                    if pp_ok { Some((ti_, m)) } else { None }
+                }
+                _ => None,
+            };
+            match repeat {
+                Some((ti_, m)) => state.queue_instruct = Some((target_side, target_slot, ti_, m, loc)),
+                None => move_failed = true,
+            }
+        }
+
+        // Magnetic Flux (PS data/moves.ts magneticflux.onHitSide, target allySide):
+        // each living active ally of the user, the user included, with Plus or
+        // Minus gets +1 Def and +1 SpD (`boost`, the user as the source). Fails
+        // with no such ally or when no stat changes.
+        if choice.move_id == Choices::MAGNETICFLUX && ti == 0 && !move_failed {
+            let mut did = false;
+            for sl in 0..2 {
+                let Some(aidx) = state.side(side).active[sl].pokemon_index else { continue };
+                let m = state.side(side).team_member(aidx);
+                if m.hp <= 0 || !matches!(m.ability, Abilities::PLUS | Abilities::MINUS) {
+                    continue;
+                }
+                let before = (state.side(side).team_boosts[aidx as usize].def, state.side(side).team_boosts[aidx as usize].spd);
+                apply_boosts_from(
+                    state,
+                    side,
+                    aidx,
+                    &StatBoosts { defense: 1, special_defense: 1, ..Default::default() },
+                    false,
+                    sl != slot,
+                );
+                let tb = &state.side(side).team_boosts[aidx as usize];
+                did |= (tb.def, tb.spd) != before;
+            }
+            if !did {
+                move_failed = true;
+            }
+        }
+
         // Disable `condition.onStart`: fails if already disabled or the last
         // move is out of PP; the duration drops by one when the target still
         // has a queued action. PS data/moves.ts disable.
@@ -5739,7 +5837,12 @@ fn execute_action_inner(
         }
 
         // Side conditions (Reflect, Light Screen, Spikes, Tailwind, ...).
-        if let Some(sc) = &choice.side_condition {
+        // Stone Axe / Ceaseless Edge set their hazard in `onAfterHit` only when
+        // `!move.hasSheerForce` (PS data/moves.ts stoneaxe, ceaselessedge): a
+        // Sheer Force holder sets none.
+        let hazard_sheer_force = matches!(choice.move_id, Choices::STONEAXE | Choices::CEASELESSEDGE)
+            && state.side(side).team_member(idx).ability == Abilities::SHEERFORCE;
+        if let Some(sc) = choice.side_condition.as_ref().filter(|_| !hazard_sheer_force) {
             let cs = if sc.target == MoveTarget::User {
                 side
             } else if sc.target == MoveTarget::Ally {
@@ -7961,6 +8064,61 @@ fn try_absorb(state: &mut DoublesState, ts: Side, tsl: usize, move_type: Pokemon
 /// accuracy roll, then crit + damage roll. Skipped when the target slot is
 /// empty / fainted or the user is the target.
 // TODO(PS parity): source no longer active, secondaries, Infiltrator / Normalize.
+/// The duration of one of the side conditions a `SideDuration` residual handler
+/// counts down (see `ResidualKind::SideDuration` for the index).
+fn side_condition_duration_mut(state: &mut DoublesState, side: Side, which: u8) -> &mut i8 {
+    let sc = &mut state.side_mut(side).side_conditions;
+    match which {
+        0 => &mut sc.reflect,
+        1 => &mut sc.light_screen,
+        2 => &mut sc.safeguard,
+        3 => &mut sc.mist,
+        4 => &mut sc.lucky_chant,
+        5 => &mut sc.aurora_veil,
+        6 => &mut sc.quick_guard,
+        _ => &mut sc.wide_guard,
+    }
+}
+
+/// PS `hitStepInvulnerabilityEvent` for a semi-invulnerable target: the move
+/// misses (no draw) unless it is one of the moves that still hit that charge
+/// turn (`onInvulnerability` in data/moves.ts), or a No Guard side is involved.
+/// The charge must still be live (an aborted charge lost its `twoturnmove`).
+fn semi_invulnerable_blocks(
+    state: &DoublesState,
+    src_side: Side,
+    src_idx: PokemonIndex,
+    mv: Choices,
+    ts: Side,
+    tslot: usize,
+) -> bool {
+    let t = &state.side(ts).active[tslot];
+    let Some((charging, _)) = t.charging.filter(|_| !t.charge_aborted) else { return false };
+    let hits_anyway = match charging {
+        Choices::DIG => matches!(mv, Choices::EARTHQUAKE | Choices::MAGNITUDE),
+        Choices::FLY | Choices::BOUNCE => matches!(
+            mv,
+            Choices::GUST
+                | Choices::TWISTER
+                | Choices::SKYUPPERCUT
+                | Choices::THUNDER
+                | Choices::HURRICANE
+                | Choices::SMACKDOWN
+                | Choices::THOUSANDARROWS
+        ),
+        Choices::DIVE => matches!(mv, Choices::SURF | Choices::WHIRLPOOL),
+        Choices::PHANTOMFORCE | Choices::SHADOWFORCE => false,
+        _ => true, // not a semi-invulnerable charge (Meteor Beam, ...)
+    };
+    let no_guard = state.side(src_side).team_member(src_idx).ability == Abilities::NOGUARD
+        || state
+            .side(ts)
+            .slot_pokemon(tslot)
+            .map(|p| p.ability == Abilities::NOGUARD)
+            .unwrap_or(false);
+    !hits_anyway && !no_guard && mv != Choices::HELPINGHAND
+}
+
 fn resolve_future_move(
     state: &mut DoublesState,
     rng: &mut Gen5Rng,
@@ -7985,6 +8143,11 @@ fn resolve_future_move(
     let Some(mut choice) = MOVES.get(&mv).cloned() else { return };
     choice.accuracy = 100.0;
     if state.side(ts).slot_pokemon(tslot).map(|d| crate::doubles::damage::type_mod(&choice.move_type, d).is_none()).unwrap_or(true) {
+        return;
+    }
+    // `hitStepInvulnerabilityEvent` runs before accuracy: a semi-invulnerable
+    // target (Dig, Fly, ...) misses the delayed hit with no accuracy draw.
+    if semi_invulnerable_blocks(state, ss, si, mv, ts, tslot) {
         return;
     }
     let ab = if src_slot.is_some() {
@@ -9130,6 +9293,12 @@ enum ResidualKind {
     /// A handler with no modeled effect (duration countdowns, ...): it only
     /// takes part in the sort, where ties still consume PRNG draws.
     Marker,
+    /// A side condition with a duration (reflect, light screen, safeguard, mist,
+    /// lucky chant, aurora veil, quick guard, wide guard). PS `fieldEvent`
+    /// drops the duration when this handler is reached, so a battle that ends
+    /// earlier in the residual leaves the later ones undropped. The payload is
+    /// the `side_condition_duration_mut` index.
+    SideDuration(Side, u8),
     /// Weather `onFieldResidual` (sandstorm damage via `eachEvent('Weather')`).
     Weather,
     /// brn / psn / tox `onResidual`.
@@ -9243,16 +9412,16 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
     for side in [Side::One, Side::Two] {
         // Side conditions with a duration (`onSideResidualOrder` 26).
         let sc = &state.side(side).side_conditions;
-        for (active, sub) in [
-            (sc.reflect > 0, 1),
-            (sc.light_screen > 0, 2),
-            (sc.safeguard > 0, 3),
-            (sc.mist > 0, 4),
-            (sc.lucky_chant > 0, 6),
-            (sc.aurora_veil > 0, 10),
+        for (active, sub, which) in [
+            (sc.reflect > 0, 1, 0u8),
+            (sc.light_screen > 0, 2, 1),
+            (sc.safeguard > 0, 3, 2),
+            (sc.mist > 0, 4, 3),
+            (sc.lucky_chant > 0, 6, 4),
+            (sc.aurora_veil > 0, 10, 5),
         ] {
             if active {
-                push(26, 0, sub, ResidualKind::Marker);
+                push(26, 0, sub, ResidualKind::SideDuration(side, which));
             }
         }
         // Tailwind (sub 5): its countdown ends in the residual, so the speeds
@@ -9262,10 +9431,10 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
         }
         // quickguard (duration 1, side condition: subOrder 4, no order).
         if state.side(side).side_conditions.quick_guard > 0 {
-            push(NO_ORDER, 0, 4, ResidualKind::Marker);
+            push(NO_ORDER, 0, 4, ResidualKind::SideDuration(side, 6));
         }
         if state.side(side).side_conditions.wide_guard > 0 {
-            push(NO_ORDER, 0, 4, ResidualKind::Marker);
+            push(NO_ORDER, 0, 4, ResidualKind::SideDuration(side, 7));
         }
         for slot in 0..2 {
             let s = state.side(side);
@@ -9736,6 +9905,12 @@ fn end_of_turn(
         }
         match h.kind {
             ResidualKind::Marker => {}
+            ResidualKind::SideDuration(side, which) => {
+                let d = side_condition_duration_mut(state, side, which);
+                if *d > 0 {
+                    *d -= 1;
+                }
+            }
             ResidualKind::Weather => {
                 // PS `fieldEvent`: the duration drops before the callback; at 0
                 // the weather just ends (no `onFieldResidual`, no damage).
@@ -10483,21 +10658,6 @@ fn end_of_turn(
     }
     for side in [Side::One, Side::Two] {
         let s = state.side_mut(side);
-        let sc = &mut s.side_conditions;
-        for d in [
-            &mut sc.reflect,
-            &mut sc.light_screen,
-            &mut sc.aurora_veil,
-            &mut sc.safeguard,
-            &mut sc.lucky_chant,
-            &mut sc.mist,
-            &mut sc.quick_guard,
-            &mut sc.wide_guard,
-        ] {
-            if *d > 0 {
-                *d -= 1;
-            }
-        }
         // Clear per-turn volatiles.
         for a in &mut s.active {
             a.counter_vol = None;

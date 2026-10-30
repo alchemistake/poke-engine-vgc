@@ -465,7 +465,7 @@ pub struct DoublesSide {
     /// `futuremove` slot condition per position: (move, source side, source index, residuals seen).
     pub future_move: [Option<(Choices, Side, PokemonIndex, u8)>; 2],
     /// Side conditions in insertion order (PS object key order).
-    pub sc_order: Vec<String>,
+    pub sc_order: Vec<&'static str>,
     /// Supersweet Syrup already triggered (PS `syrupTriggered`, once per
     /// battle per pokemon).
     pub syrup_triggered: [bool; 6],
@@ -1341,7 +1341,7 @@ pub struct FullSlot {
     pub maxhp: i16,
     pub fainted: bool,
     /// Normalized status: none | burn | sleep | freeze | paralyze | poison | toxic
-    pub status: String,
+    pub status: &'static str,
     /// Active slot index (0/1) if on field, else null.
     pub active_slot: Option<usize>,
     pub boosts: Boosts,
@@ -1350,7 +1350,7 @@ pub struct FullSlot {
 /// Side conditions as (id, duration) pairs, ids lowercase (e.g. "reflect").
 #[derive(Debug, Clone, Serialize)]
 pub struct SideConditionEntry {
-    pub id: String,
+    pub id: &'static str,
     /// `None` for conditions without a duration (hazards): PS reports none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<i8>,
@@ -1361,11 +1361,11 @@ pub struct FuzzTurnState {
     pub turn: u32,
     pub a: Vec<FullSlot>,
     pub b: Vec<FullSlot>,
-    pub weather: String,
-    pub terrain: String,
+    pub weather: &'static str,
+    pub terrain: &'static str,
     pub trick_room: bool,
     /// Active pseudo-weather ids (sorted), e.g. ["trickroom"], ["tailwind"].
-    pub pseudo_weather: Vec<String>,
+    pub pseudo_weather: Vec<&'static str>,
     pub a_side_conditions: Vec<SideConditionEntry>,
     pub b_side_conditions: Vec<SideConditionEntry>,
     /// Execution order this turn, entries "SIDE<slot>:Species:movename".
@@ -1406,43 +1406,43 @@ pub fn normalize_status(s: PokemonStatus) -> &'static str {
 pub fn side_condition_entries(sc: &SideConditions) -> Vec<SideConditionEntry> {
     let mut v = vec![];
     if sc.reflect != 0 {
-        v.push(SideConditionEntry { id: "reflect".into(), duration: Some(sc.reflect) });
+        v.push(SideConditionEntry { id: "reflect", duration: Some(sc.reflect) });
     }
     if sc.light_screen != 0 {
-        v.push(SideConditionEntry { id: "lightscreen".into(), duration: Some(sc.light_screen) });
+        v.push(SideConditionEntry { id: "lightscreen", duration: Some(sc.light_screen) });
     }
     if sc.aurora_veil != 0 {
-        v.push(SideConditionEntry { id: "auroraveil".into(), duration: Some(sc.aurora_veil) });
+        v.push(SideConditionEntry { id: "auroraveil", duration: Some(sc.aurora_veil) });
     }
     if sc.tailwind != 0 {
-        v.push(SideConditionEntry { id: "tailwind".into(), duration: Some(sc.tailwind) });
+        v.push(SideConditionEntry { id: "tailwind", duration: Some(sc.tailwind) });
     }
     if sc.safeguard != 0 {
-        v.push(SideConditionEntry { id: "safeguard".into(), duration: Some(sc.safeguard) });
+        v.push(SideConditionEntry { id: "safeguard", duration: Some(sc.safeguard) });
     }
     if sc.lucky_chant != 0 {
-        v.push(SideConditionEntry { id: "luckychant".into(), duration: Some(sc.lucky_chant) });
+        v.push(SideConditionEntry { id: "luckychant", duration: Some(sc.lucky_chant) });
     }
     if sc.spikes != 0 {
-        v.push(SideConditionEntry { id: "spikes".into(), duration: None });
+        v.push(SideConditionEntry { id: "spikes", duration: None });
     }
     if sc.stealth_rock != 0 {
-        v.push(SideConditionEntry { id: "stealthrock".into(), duration: None });
+        v.push(SideConditionEntry { id: "stealthrock", duration: None });
     }
     if sc.sticky_web != 0 {
-        v.push(SideConditionEntry { id: "stickyweb".into(), duration: None });
+        v.push(SideConditionEntry { id: "stickyweb", duration: None });
     }
     if sc.toxic_spikes != 0 {
-        v.push(SideConditionEntry { id: "toxicspikes".into(), duration: None });
+        v.push(SideConditionEntry { id: "toxicspikes", duration: None });
     }
     if sc.protect != 0 {
-        v.push(SideConditionEntry { id: "protect".into(), duration: Some(sc.protect) });
+        v.push(SideConditionEntry { id: "protect", duration: Some(sc.protect) });
     }
     if sc.quick_guard != 0 {
-        v.push(SideConditionEntry { id: "quickguard".into(), duration: Some(sc.quick_guard) });
+        v.push(SideConditionEntry { id: "quickguard", duration: Some(sc.quick_guard) });
     }
     if sc.wide_guard != 0 {
-        v.push(SideConditionEntry { id: "wideguard".into(), duration: Some(sc.wide_guard) });
+        v.push(SideConditionEntry { id: "wideguard", duration: Some(sc.wide_guard) });
     }
     v
 }
@@ -1462,7 +1462,7 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<String>) -> FuzzTurnS
                 let active_slot = s
                     .active
                     .iter()
-                    .position(|sl| sl.pokemon_index == Some(PokemonIndex::deserialize(&i.to_string())));
+                    .position(|sl| sl.pokemon_index.map(|x| x as usize) == Some(i));
                 let boosts = {
                     let b = &s.team_boosts[i];
                     Boosts {
@@ -1480,35 +1480,35 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<String>) -> FuzzTurnS
                     hp: p.hp,
                     maxhp: p.maxhp,
                     fainted: p.hp <= 0,
-                    status: normalize_status(p.status).to_string(),
+                    status: normalize_status(p.status),
                     active_slot,
                     boosts,
                 }
             })
             .collect()
     };
-    let sc_entries = |sc: &SideConditions, order: &[String]| -> Vec<SideConditionEntry> {
+    let sc_entries = |sc: &SideConditions, order: &[&'static str]| -> Vec<SideConditionEntry> {
         // The harness lists `sideConditions` sorted by id.
         let _ = order;
         let mut v = side_condition_entries(sc);
         v.sort_by(|a, b| a.id.cmp(&b.id));
         v
     };
-    let mut pseudo_weather: Vec<String> = vec![];
+    let mut pseudo_weather: Vec<&'static str> = vec![];
     if state.trick_room.active {
-        pseudo_weather.push("trickroom".into());
+        pseudo_weather.push("trickroom");
     }
     if state.wonder_room.active {
-        pseudo_weather.push("wonderroom".into());
+        pseudo_weather.push("wonderroom");
     }
     if state.magic_room.active {
-        pseudo_weather.push("magicroom".into());
+        pseudo_weather.push("magicroom");
     }
     if state.gravity.active {
-        pseudo_weather.push("gravity".into());
+        pseudo_weather.push("gravity");
     }
     if state.fairy_lock.active {
-        pseudo_weather.push("fairylock".into());
+        pseudo_weather.push("fairylock");
     }
     pseudo_weather.sort();
     // pokemon-showdown reports the weather CONDITION id (e.g. "raindance",
@@ -1528,8 +1528,14 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<String>) -> FuzzTurnS
         turn: state.turn,
         a: snap_side(&state.side_one),
         b: snap_side(&state.side_two),
-        weather: weather_name.to_string(),
-        terrain: format!("{}", state.terrain.terrain_type).to_lowercase(),
+        weather: weather_name,
+        terrain: match state.terrain.terrain_type {
+            Terrain::NONE => "none",
+            Terrain::ELECTRICTERRAIN => "electricterrain",
+            Terrain::PSYCHICTERRAIN => "psychicterrain",
+            Terrain::MISTYTERRAIN => "mistyterrain",
+            Terrain::GRASSYTERRAIN => "grassyterrain",
+        },
         trick_room: state.trick_room.active,
         pseudo_weather,
         a_side_conditions: sc_entries(&state.side_one.side_conditions, &state.side_one.sc_order),
@@ -1604,7 +1610,7 @@ impl DoublesSide {
     /// Keep `sc_order` in step with the conditions currently up: new ones are
     /// appended, ended ones dropped.
     pub fn sync_sc_order(&mut self) {
-        let present: Vec<String> = side_condition_entries(&self.side_conditions).into_iter().map(|e| e.id).collect();
+        let present: Vec<&'static str> = side_condition_entries(&self.side_conditions).into_iter().map(|e| e.id).collect();
         self.sc_order.retain(|o| present.contains(o));
         for id in present {
             if !self.sc_order.contains(&id) {

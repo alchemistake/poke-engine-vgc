@@ -64,7 +64,13 @@ pub fn pokemon_effects(state: &DoublesState, side: Side, slot: usize) -> Vec<(St
 /// `pokemon_effects` without allocating: calls `f` for each effect, in the
 /// same order (the order PS collects their handlers in).
 /// TODO(PS parity): the ability under Gastro Acid (the engine stores NONE).
-pub fn visit_pokemon_effects(state: &DoublesState, side: Side, slot: usize, mut f: impl FnMut(Effect)) {
+pub fn visit_pokemon_effects(state: &DoublesState, side: Side, slot: usize, f: impl FnMut(Effect)) {
+    visit_effects(state, side, slot, true, f);
+}
+
+/// `visit_pokemon_effects`; with `volatiles` false it stops after the
+/// ability (status and ability only).
+fn visit_effects(state: &DoublesState, side: Side, slot: usize, volatiles: bool, mut f: impl FnMut(Effect)) {
     use HandlerKind::*;
     let s = state.side(side);
     let a = &s.active[slot];
@@ -83,6 +89,9 @@ pub fn visit_pokemon_effects(state: &DoublesState, side: Side, slot: usize, mut 
         f(Effect::Id(st, Status));
     }
     f(Effect::Ability(real_ability(state, side, idx)));
+    if !volatiles {
+        return;
+    }
     let mut vol = |on: bool, id: &'static str| {
         if on {
             f(Effect::Id(id, Volatile));
@@ -352,6 +361,9 @@ struct EventTable {
     poke: [Vec<PokeEntry>; 5],
     /// Union of the `bit`s in `poke[i]`.
     poke_mask: [u128; 5],
+    /// Some pokemon handler is a volatile or slot condition (else a slot's
+    /// status and ability are enough).
+    needs_volatiles: bool,
     /// `on` / `onFoe` / `onAny` side condition handlers.
     side: [Vec<GlobalEntry>; 3],
     /// `on` weather / terrain / pseudo-weather handlers.
@@ -465,6 +477,9 @@ fn build_tables() -> Tables {
                 })
                 .collect()
         };
+        let needs_volatiles = poke_names
+            .iter()
+            .any(|cb| handlers(cb).iter().any(|h| matches!(h.kind, HandlerKind::Volatile | HandlerKind::Slot)));
         let side = side_names.map(|cb| global(cb, &SIDE_IDS, &[HandlerKind::Side]));
         let field = global(poke_names[ON], &FIELD_IDS, &[HandlerKind::Field, HandlerKind::Weather]);
         events.push(EventTable {
@@ -472,6 +487,7 @@ fn build_tables() -> Tables {
             prefixed: !UNPREFIXED.contains(&name),
             poke,
             poke_mask,
+            needs_volatiles,
             side,
             field,
             poke_names,
@@ -490,9 +506,9 @@ struct SlotEffects {
     mask: u128,
 }
 
-fn slot_effects(t: &Tables, state: &DoublesState, side: Side, slot: usize) -> SlotEffects {
+fn slot_effects(t: &Tables, state: &DoublesState, side: Side, slot: usize, volatiles: bool) -> SlotEffects {
     let mut e = SlotEffects { bits: [0; 16], n: 0, mask: 0 };
-    visit_pokemon_effects(state, side, slot, |fx| {
+    visit_effects(state, side, slot, volatiles, |fx| {
         let bit = match fx {
             Effect::Id(id, kind) => t.fx.get(&(kind as u8, id)).copied().unwrap_or(NO_BIT),
             Effect::Ability(ab) => t.ability_bit.get(ab as usize).copied().unwrap_or(NO_BIT),
@@ -533,8 +549,8 @@ impl Collector<'_> {
             return;
         }
         let si = side as usize * 2 + slot;
-        let (t, state) = (self.t, self.state);
-        let fx = *self.slots[si].get_or_insert_with(|| slot_effects(t, state, side, slot));
+        let (t, state, volatiles) = (self.t, self.state, self.ev.needs_volatiles);
+        let fx = *self.slots[si].get_or_insert_with(|| slot_effects(t, state, side, slot, volatiles));
         if fx.mask & self.ev.poke_mask[prefix] == 0 {
             return;
         }

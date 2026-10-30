@@ -3724,12 +3724,12 @@ fn execute_action_inner(
       if smart_hits {
           (target_side, target_slot) = hit_targets[0];
       }
-      // `multiaccuracy` (Triple Axel / Triple Kick): hits after the first roll
+      // `multiaccuracy` (Triple Axel / Triple Kick / Population Bomb): hits after the first roll
       // accuracy again; a miss ends the loop. PS sim/battle-actions.ts
       // hitStepMoveHitLoop. The loop top checks `targets.every(!hp)` before the
       // roll, so a fainted target ends it here with no draw.
       // TODO(PS parity): ModifyAccuracy / Accuracy events (abilities, items).
-      if hit_idx > 0 && matches!(choice.move_id, Choices::TRIPLEAXEL | Choices::TRIPLEKICK) {
+      if hit_idx > 0 && matches!(choice.move_id, Choices::TRIPLEAXEL | Choices::TRIPLEKICK | Choices::POPULATIONBOMB) {
           if !is_self && !is_field && !hit_targets.iter().any(|&(ts, tsl)| slot_alive(state, ts, tsl)) {
               break 'hit_loop;
           }

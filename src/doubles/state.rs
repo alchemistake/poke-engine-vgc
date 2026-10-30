@@ -949,10 +949,12 @@ fn build_pokemon(m: &TeamMember) -> Pokemon {
         let choices = Choices::from_str(&id.to_uppercase())
             .unwrap_or_else(|_| panic!("unknown move {mv}"));
         let choice: Choice = MOVES.get(&choices).cloned().unwrap();
+        // PS `baseMoveSlots` pp: `calculatePP(move, 3)`, champions
+        // scripts.ts `(move.pp / 5 + 1) * 4` (stored as `Choice.pp`).
         moves[i] = MoveSlot {
             id: choices,
+            pp: choice.pp as i8,
             choice,
-            pp: 32,
         };
     }
     Pokemon {

@@ -858,8 +858,11 @@ pub fn run_battle_fuzz(
     // into the queue (`insertChoice`), drawing on speed ties before the
     // `runSwitch` speed sort below.
     queue_insert_draws(state, rng);
-    let _ = sorted_actives(state, rng, "speed tie (switch-in)");
-    for (side, slot) in [(Side::One, 0), (Side::One, 1), (Side::Two, 0), (Side::Two, 1)] {
+    // PS `runSwitch` -> `fieldEvent('SwitchIn')`: the leads' on-switch handlers
+    // (`onStart` abilities such as Sand Stream / Snow Warning) run fastest
+    // first, so the slower lead's weather is the one that stays.
+    let lead_order = sorted_actives(state, rng, "speed tie (switch-in)");
+    for (side, slot) in lead_order {
         if apply_on_switch_abilities(state, side, slot, rng) {
             // Terrain just set (e.g. Grassy Surge): `eachEvent("TerrainChange")`.
             let _ = sorted_actives(state, rng, "speed tie (switch-in)");
@@ -2990,6 +2993,18 @@ fn execute_action_inner(
     ) && state.side(side).active[slot].type_change.is_none()
         && choice.move_type != PokemonType::TYPELESS
         && choice.move_id != Choices::STRUGGLE
+        // `move.callsMove` moves (Copycat, Metronome, ...) don't trigger it: the
+        // move they call does (PS data/abilities.ts protean `move.callsMove`).
+        && !matches!(
+            choice.move_id,
+            Choices::ASSIST
+                | Choices::COPYCAT
+                | Choices::MEFIRST
+                | Choices::METRONOME
+                | Choices::MIRRORMOVE
+                | Choices::NATUREPOWER
+                | Choices::SLEEPTALK
+        )
     {
         let pm = state.side_mut(side).team_member_mut(idx);
         if pm.types != (choice.move_type, PokemonType::TYPELESS) {
@@ -3665,6 +3680,23 @@ fn execute_action_inner(
             .map(|t| matches!(real_ability(state, target_side, t), Abilities::TRUANT | Abilities::INSOMNIA))
             .unwrap_or(false);
         if bad {
+            state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+            push_order();
+            return;
+        }
+    }
+
+    // Trick / Switcheroo `onTryImmunity`: `!target.hasAbility('stickyhold')`, so a
+    // Sticky Hold target fails before the accuracy roll (no draw).
+    // PS data/moves.ts trick / switcheroo.
+    if matches!(choice.move_id, Choices::TRICK | Choices::SWITCHEROO) && !is_self && !is_field {
+        let sticky = state
+            .side(target_side)
+            .active[target_slot]
+            .pokemon_index
+            .map(|t| real_ability(state, target_side, t) == Abilities::STICKYHOLD)
+            .unwrap_or(false);
+        if sticky {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
             push_order();
             return;
@@ -6393,15 +6425,15 @@ fn execute_action_inner(
                         // gated on the target having raised a stat this turn
                         // (PS `statsRaisedThisTurn`).
                         if state.side(ts).active[tslot].stats_raised_this_turn {
+                            // PS `target.trySetStatus` (Burning Jealousy): the status
+                            // immunity check applies (a Fire type can't be burned).
                             if let Some(st) = status {
                                 let st = *st;
                                 if let Some(tidx) = state.side(ts).active[tslot].pokemon_index {
-                                    let s = state.side_mut(ts);
-                                    let pm = s.team_member_mut(tidx);
-                                    if pm.status == PokemonStatus::NONE {
-                                        pm.status = st;
-                                        if st == PokemonStatus::TOXIC {
-                                            s.toxic_stage[tidx as usize] = 1;
+                                    if !status_immune(state, ts, tslot, st, ts != side, side, slot) {
+                                        set_status(state, rng, ts, tidx, st);
+                                        if ts != side {
+                                            maybe_synchronize(state, ts, tidx, side, idx, st);
                                         }
                                     }
                                 }

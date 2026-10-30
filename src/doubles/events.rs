@@ -31,6 +31,9 @@ const LEFT_TO_RIGHT: [&str; 4] = ["Invulnerability", "TryHit", "DamagingHit", "E
 /// PS sim/battle.ts findEventHandlers (`prefixedHandlers`).
 const UNPREFIXED: [&str; 5] = ["BeforeTurn", "Update", "Weather", "WeatherChange", "TerrainChange"];
 
+/// PS volatile id per `ActiveSlot::protect_kind`.
+pub const PROTECT_IDS: [&str; 6] = ["protect", "kingsshield", "spikyshield", "banefulbunker", "silktrap", "burningbulwark"];
+
 /// The status, ability and volatile ids (PS ids) of the pokemon in a slot,
 /// plus its slot conditions. Abilities are reported even when suppressed:
 /// PS sorts a suppressed handler and skips it only when it would run.
@@ -74,8 +77,7 @@ pub fn pokemon_effects(state: &DoublesState, side: Side, slot: usize) -> Vec<(St
             vol(true, &m.to_string().to_lowercase());
         }
     }
-    let protect = ["protect", "kingsshield", "spikyshield", "banefulbunker", "silktrap", "burningbulwark"];
-    vol(a.protected, protect[(a.protect_kind as usize).min(5)]);
+    vol(a.protected, PROTECT_IDS[(a.protect_kind as usize).min(5)]);
     vol(a.endure, "endure");
     vol(a.substitute_health > 0, "substitute");
     vol(a.salt_cure, "saltcure");

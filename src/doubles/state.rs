@@ -164,6 +164,9 @@ pub struct ActiveSlot {
     pub protect_kind: u8,
     /// `perishsong` volatile: remaining duration (0 = none); faints at 0.
     pub perish: u8,
+    /// PS ids of the volatiles in insertion order (PS `pokemon.volatiles` key
+    /// order), kept by `sync_vol_order`. Orders the Residual handlers.
+    pub vol_order: Vec<String>,
     /// `flashfire` volatile: Fire moves x1.5 (ModifyAtk / ModifySpA).
     pub flash_fire: bool,
     /// `charge` volatile: the next Electric move has doubled power.
@@ -357,6 +360,7 @@ impl ActiveSlot {
             follow_me: 0,
             protect_kind: 0,
             perish: 0,
+            vol_order: Vec::new(),
             flash_fire: false,
             charge: false,
             no_retreat: false,

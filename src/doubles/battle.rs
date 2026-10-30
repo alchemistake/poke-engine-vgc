@@ -2333,7 +2333,9 @@ fn execute_action_body(
         .position(|a| a.pokemon_index == Some(action.pokemon_index))
         .unwrap_or(action.slot);
     let had_db = state.side(action.side).active[db_slot].destinybond;
-    if action.choice.move_id != Choices::DESTINYBOND || move_order.len() == order_len {
+    // Any other move already removed it before running (above), so a Destiny
+    // Bond called by Sleep Talk / Copycat during that move keeps its volatile.
+    if action.choice.move_id == Choices::DESTINYBOND && move_order.len() == order_len {
         state.side_mut(action.side).active[db_slot].destinybond = false;
     }
     // Destiny Bond itself: `volatileStatus: 'destinybond'` is added when the
@@ -2405,35 +2407,36 @@ fn execute_action_body(
     // Protect, an immunity, ...). PS data/moves.ts jumpkick / supercellslam
     // (`damage(baseMaxhp / 2)`), sim/battle-actions.ts useMoveInner.
     let no_target_fail = NO_TARGET_FAIL.with(|c| c.get());
-    if action.choice.crash.is_some()
-        && move_order.len() > order_len
-        && !no_target_fail
-        && state.side(action.side).active[action.slot].move_result_this_turn == Some(false)
-    {
-        if let Some(p) = state.side(action.side).slot_pokemon(action.slot) {
+    if move_order.len() > order_len && !no_target_fail {
+        move_fail_self_damage(state, action.side, action.slot, &action.choice);
+    }
+}
+
+/// `onMoveFail` self-damage, run by `useMoveInner` when `moveResult` is false
+/// (a miss, Protect, an immunity, ...) for the move that was used, a called
+/// one included. Crash damage (Jump Kick, High Jump Kick, Axe Kick, Supercell
+/// Slam): `damage(baseMaxhp / 2)`. Steel Beam `onMoveFail` / Mind Blown,
+/// Chloroblast `mindBlownRecoil`: the user loses round(maxhp / 2) (Magic Guard
+/// blocks it); Steel Beam's hit recoil is its `heal` entry. PS data/moves.ts
+/// jumpkick / supercellslam / steelbeam, sim/battle-actions.ts useMoveInner,
+/// recoilDamage.
+fn move_fail_self_damage(state: &mut DoublesState, side: Side, slot: usize, choice: &Choice) {
+    if state.side(side).active[slot].move_result_this_turn != Some(false) {
+        return;
+    }
+    if choice.crash.is_some() {
+        if let Some(p) = state.side(side).slot_pokemon(slot) {
             if p.hp > 0 {
                 let dmg = (p.maxhp / 2).max(1);
-                apply_damage(state, action.side, action.slot, dmg);
+                apply_damage(state, side, slot, dmg);
             }
         }
     }
-    // Steel Beam `onMoveFail` / Mind Blown, Chloroblast `mindBlownRecoil`: the
-    // user loses round(maxhp / 2) (Magic Guard blocks it). Steel Beam's hit
-    // recoil is its `heal` entry. PS data/moves.ts steelbeam,
-    // sim/battle-actions.ts recoilDamage.
-    if move_order.len() > order_len
-        && !no_target_fail
-        && match action.choice.move_id {
-            Choices::STEELBEAM | Choices::MINDBLOWN | Choices::CHLOROBLAST => {
-                state.side(action.side).active[action.slot].move_result_this_turn == Some(false)
-            }
-            _ => false,
-        }
-    {
-        if let Some(p) = state.side(action.side).slot_pokemon(action.slot) {
+    if matches!(choice.move_id, Choices::STEELBEAM | Choices::MINDBLOWN | Choices::CHLOROBLAST) {
+        if let Some(p) = state.side(side).slot_pokemon(slot) {
             if p.hp > 0 && p.ability != Abilities::MAGICGUARD {
                 let dmg = ((p.maxhp as f32 / 2.0).round() as i16).max(1);
-                apply_damage(state, action.side, action.slot, dmg);
+                apply_damage(state, side, slot, dmg);
             }
         }
     }
@@ -4772,7 +4775,18 @@ fn execute_action_inner(
     // The user's HP before its hits, for its own Emergency Exit (contact
     // damage, Life Orb-style self damage, recoil: see after the recoil).
     let user_hp_before = state.side(side).slot_pokemon(slot).map(|p| p.hp).unwrap_or(0);
+    // PS hitStepMoveHitLoop `isSleepUsable`: the move (Snore, Sleep Talk) or
+    // its source (a move called by Sleep Talk, the only call an asleep user
+    // makes) is usable while asleep.
+    let sleep_usable = matches!(choice.move_id, Choices::SNORE | Choices::SLEEPTALK)
+        || (state.side(side).active[slot].external_call
+            && state.side(side).team_member(idx).status == PokemonStatus::SLEEP);
     'hit_loop: for hit_idx in 0..hit_count {
+      // PS hitStepMoveHitLoop: `if (hit > 1 && pokemon.status === 'slp' &&
+      // !isSleepUsable) break;` (the user fell asleep mid-move: Effect Spore).
+      if hit_idx > 0 && !sleep_usable && state.side(side).team_member(idx).status == PokemonStatus::SLEEP {
+          break 'hit_loop;
+      }
       state.side_mut(side).active[slot].hit_number = hit_idx as u8 + 1;
       if choice.move_id == Choices::BEATUP {
           let a = &mut state.side_mut(side).active[slot];
@@ -6013,7 +6027,21 @@ fn execute_action_inner(
                 PokemonVolatileStatus::HEALBLOCK => {
                     // data/moves.ts healblock.condition: duration 5 (2 from
                     // Psychic Noise, 7 with Persistent); no refresh while active.
-                    if aroma_veil_blocks(state, ts, AromaVeiled::HealBlock, Some((side, idx, choice))) {
+                    // Psychic Noise's Heal Block is a `secondary`: Sheer Force
+                    // deletes it and the target's Shield Dust filters it out
+                    // (PS data/abilities.ts sheerforce / shielddust).
+                    let secondary_removed = choice.move_id == Choices::PSYCHICNOISE
+                        && (state.side(side).team_member(idx).ability == Abilities::SHEERFORCE
+                            || state.side(ts).slot_pokemon(tslot).is_some_and(|p| {
+                                p.ability == Abilities::SHIELDDUST
+                                    && !crate::engine::abilities::ignores_target_ability(
+                                        state.side(side).team_member(idx),
+                                        choice,
+                                        &p.ability,
+                                    )
+                            }));
+                    if secondary_removed {
+                    } else if aroma_veil_blocks(state, ts, AromaVeiled::HealBlock, Some((side, idx, choice))) {
                         // Blocked (`null`): no effect, and Psychic Noise's hit still counts.
                         if choice.move_id != Choices::PSYCHICNOISE {
                             move_failed = true;
@@ -6975,7 +7003,9 @@ fn execute_action_inner(
             if cands.is_empty() {
                 move_failed = true;
             } else {
-                let m = cands[rng.label("sample").random(cands.len() as u32) as usize];
+                // PS runs `onHit` inside `hitStepMoveHitLoop`, so the
+                // harness tags this `sample` "multihit" (fuzz_purpose.js).
+                let m = cands[rng.label("multihit").random(cands.len() as u32) as usize];
                 run_copied_move(state, rng, action, m, &mut copy_order, will_act, queue);
             }
         }
@@ -8141,6 +8171,7 @@ fn run_copied_move(
     queue: &[Action],
 ) {
     let Some(mc) = MOVES.get(&m).cloned() else { return };
+    let called_type = mc.move_type;
     let mut sub = action.clone();
     sub.choice = mc;
     sub.target = 0;
@@ -8177,6 +8208,30 @@ fn run_copied_move(
     state.copy_called = true;
     if copy_order.len() > n {
         state.last_move = Some(m);
+    }
+    // The called move's own `onMoveFail` (crash damage, ...) runs inside its
+    // `useMoveInner`, not in the caller's.
+    if copy_order.len() > n && !NO_TARGET_FAIL.with(|c| c.get()) {
+        if let Some(sl) = (0..2).find(|&sl| state.side(action.side).active[sl].pokemon_index == Some(action.pokemon_index)) {
+            move_fail_self_damage(state, action.side, sl, &MOVES[&m]);
+        }
+    }
+    // PS runMove: `if (this.battle.activeMove) move = this.battle.activeMove;`
+    // makes the called move the one `AfterMove` sees, so Charge's `onAfterMove`
+    // (data/moves.ts charge.condition) is used up by a called Electric move.
+    if called_type == PokemonType::ELECTRIC && m != Choices::CHARGE {
+        if let Some(sl) = (0..2).find(|&sl| state.side(action.side).active[sl].pokemon_index == Some(action.pokemon_index)) {
+            state.side_mut(action.side).active[sl].charge = false;
+        }
+    }
+    // A called Destiny Bond adds its volatile like a direct one (PS data/moves.ts
+    // destinybond `volatileStatus`), unless `onPrepareHit` failed it.
+    if m == Choices::DESTINYBOND && copy_order.len() > n {
+        if let Some(sl) = (0..2).find(|&sl| state.side(action.side).active[sl].pokemon_index == Some(action.pokemon_index)) {
+            if state.side(action.side).active[sl].move_result_this_turn != Some(false) {
+                state.side_mut(action.side).active[sl].destinybond = true;
+            }
+        }
     }
 }
 
@@ -8787,14 +8842,16 @@ fn safeguard_blocks_confusion(
 }
 
 /// Misty Terrain `onTryAddVolatile` (PS data/conditions.ts): a grounded
-/// pokemon can't be confused. TODO(PS parity): semi-invulnerable exemption.
-// PS data/moves.ts mistyterrain.onTryAddVolatile: `!target.isGrounded()` lets the
-// add through, so Magnet Rise (and Gravity / Ingrain / Smackdown as grounding) decide.
+/// pokemon can't be confused.
+// PS data/moves.ts mistyterrain.onTryAddVolatile: `!target.isGrounded() ||
+// target.isSemiInvulnerable()` lets the add through, so Magnet Rise (and Gravity /
+// Ingrain / Smackdown as grounding) and Dig / Fly charge turns decide.
 fn misty_terrain_blocks_confusion(state: &DoublesState, ts: Side, tslot: usize) -> bool {
     let Some(p) = state.side(ts).slot_pokemon(tslot) else { return false };
     let a = &state.side(ts).active[tslot];
     state.terrain.terrain_type == crate::engine::state::Terrain::MISTYTERRAIN
         && slot_grounded(p, a, state.gravity.active)
+        && !ally_semi_invulnerable(state, ts, tslot)
 }
 
 /// PS `addVolatile` -> `runEvent('TryAddVolatile', target, source)` (sim/pokemon.ts
@@ -9109,7 +9166,9 @@ fn status_immune_ex(
             .slot_pokemon(src_slot)
             .map(|p| p.ability)
             .unwrap_or(Abilities::NONE),
-        target_grounded: ps_grounded(state, ts, tslot),
+        // PS mistyterrain / electricterrain `onSetStatus`: both skip a target
+        // that is not grounded or is semi-invulnerable (`isSemiInvulnerable`).
+        target_grounded: ps_grounded(state, ts, tslot) && !ally_semi_invulnerable(state, ts, tslot),
     };
     crate::engine::mechanics::immune_to_status(target, &status, &ctx)
 }
@@ -9152,9 +9211,13 @@ fn yawn_volatile_blocked(state: &DoublesState, ts: Side, tslot: usize, src_side:
         return true;
     }
     // Safeguard `onTryAddVolatile` (PS data/moves.ts safeguard): yawn from
-    // another pokemon is blocked.
+    // another pokemon is blocked, unless an Infiltrator move hits a foe
+    // (`effect.infiltrates && !target.isAlly(source)`). Substitute
+    // `onTryPrimaryHit` lets any `move.infiltrates` through.
+    let infiltrates = state.side(src_side).slot_pokemon(src_slot).is_some_and(|p| p.ability == Abilities::INFILTRATOR);
     (ts, tslot) != (src_side, src_slot)
-        && (state.side(ts).active[tslot].substitute_health > 0 || state.side(ts).side_conditions.safeguard > 0)
+        && ((state.side(ts).active[tslot].substitute_health > 0 && !infiltrates)
+            || (state.side(ts).side_conditions.safeguard > 0 && !(infiltrates && ts != src_side)))
 }
 
 /// One target's damage for a hit (fixed / OHKO / `calculate_damage`), without

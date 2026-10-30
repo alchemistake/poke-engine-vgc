@@ -60,8 +60,9 @@ pub struct StatusContext {
     pub sleep_clause: bool,
     /// The ability of the pokemon inflicting the status (Corrosion).
     pub source_ability: Abilities,
-    /// PS `target.isGrounded()` (Misty / Electric Terrain): the engine's own
-    /// check, which knows Gravity and the slot's volatiles.
+    /// PS `target.isGrounded() && !target.isSemiInvulnerable()` (Misty /
+    /// Electric Terrain): the engine's own check, which knows Gravity and the
+    /// slot's volatiles.
     pub target_grounded: bool,
 }
 

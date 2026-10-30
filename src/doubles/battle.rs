@@ -2778,7 +2778,7 @@ fn execute_action_body(
     // handler is not in this sort.
     if BEFORE_MOVE_ABORTED.with(|c| c.replace(false)) {
         if let Some(sl) = (0..2).find(|&sl| state.side(action.side).active[sl].pokemon_index == Some(action.pokemon_index)) {
-            crate::doubles::events::run_event_ties(state, rng, "MoveAborted", (action.side, sl), None);
+            crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::MoveAborted, (action.side, sl), None);
         }
     }
     if mold_breaker {
@@ -3125,7 +3125,7 @@ fn execute_action_inner(
     // the user, two foes' Imprison, ...), whether or not the move is blocked.
     // PS sim/battle-actions.ts runMove. TODO(PS parity): the `|cant|` message
     // names the handler that ran first (order not modelled).
-    crate::doubles::events::run_event_ties(state, rng, "BeforeMove", (side, slot), resolved);
+    crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::BeforeMove, (side, slot), resolved);
     BEFORE_MOVE_ABORTED.with(|c| c.set(true));
     // A pokemon that must recharge (Hyper Beam / Solar Beam) cannot act.
     // No PRNG draw (PS `mustrecharge.onBeforeMove` returns false).
@@ -3796,7 +3796,7 @@ fn execute_action_inner(
         t.0 != need && t.1 != need
     };
     if !try_move_fails {
-        crate::doubles::events::run_event_ties(state, rng, "TryMove", (side, slot), Some((target_side, target_slot)));
+        crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::TryMove, (side, slot), Some((target_side, target_slot)));
     }
 
     // Stockpile family (PS `onTry` / `stockpile` condition). No PRNG draws.
@@ -5508,7 +5508,7 @@ fn execute_action_inner(
           // all the rolls and before any secondary.
           for (i, &(d, _)) in out.iter().enumerate() {
               if d > 0 {
-                  crate::doubles::events::run_event_ties(state, rng, "Damage", hit_targets[i], Some((side, slot)));
+                  crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::Damage, hit_targets[i], Some((side, slot)));
               }
           }
           out
@@ -5820,7 +5820,7 @@ fn execute_action_inner(
             if damage > 0 {
                 // PS `runEvent('Damage')`: Damp's `onAnyDamage` (spread attacks: above).
                 if !(is_spread && is_attack) {
-                    crate::doubles::events::run_event_ties(state, rng, "Damage", (target_side, target_slot), Some((side, slot)));
+                    crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::Damage, (target_side, target_slot), Some((side, slot)));
                 }
                 damaged_by_move(state, target_side, target_slot);
                 // PS `gotAttacked`: record the attacker in `attackedBy`
@@ -7957,7 +7957,7 @@ fn execute_action_inner(
         let ps_target = crate::doubles::move_targets::ps_move_target(&choice.move_id.to_string().to_lowercase());
         if ps_target == "allySide" || ps_target == "foeSide" {
             let (ps, pslot) = if ps_target == "allySide" { (side, slot) } else { (target_side, target_slot) };
-            crate::doubles::events::run_event_ties(state, rng, "TryHitSide", (ps, pslot), Some((side, slot)));
+            crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::TryHitSide, (ps, pslot), Some((side, slot)));
         }
 
         // Side conditions (Reflect, Light Screen, Spikes, Tailwind, ...).
@@ -9775,8 +9775,8 @@ fn try_add_volatile_ties(state: &DoublesState, rng: &mut Gen5Rng, ts: Side, tslo
     }
     // `runStatusImmunity(status.id)` -> `runEvent('Immunity')` first (Magnet
     // Rise / Dig / ... `onImmunity` handlers). PS sim/pokemon.ts addVolatile.
-    crate::doubles::events::run_event_ties(state, rng, "Immunity", (ts, tslot), None);
-    crate::doubles::events::run_event_ties(state, rng, "TryAddVolatile", (ts, tslot), None);
+    crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::Immunity, (ts, tslot), None);
+    crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::TryAddVolatile, (ts, tslot), None);
 }
 
 fn try_confuse(state: &mut DoublesState, rng: &mut Gen5Rng, ts: Side, tslot: usize) {
@@ -9942,14 +9942,14 @@ fn set_status_event_tie(
     if type_immune {
         return;
     }
-    crate::doubles::events::run_event_ties(state, rng, "Immunity", (ts, tslot), None);
+    crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::Immunity, (ts, tslot), None);
     if st == PokemonStatus::FREEZE
         && (target.ability == Abilities::MAGMAARMOR
             || matches!(effective_weather(state), Weather::SUN | Weather::HARSHSUN))
     {
         return;
     }
-    crate::doubles::events::run_event_ties(state, rng, "SetStatus", (ts, tslot), None);
+    crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::SetStatus, (ts, tslot), None);
 }
 
 /// Yawn's `onEnd` -> `target.trySetStatus('slp', source)`: the setStatus effect
@@ -10541,13 +10541,14 @@ fn compute_hit_damage(
         let att_active = state.side(side).active[slot].pokemon_index == Some(idx);
         let mut on_event = |ev: crate::doubles::damage::DamageEvent, rng: &mut Gen5Rng| {
             use crate::doubles::damage::DamageEvent;
+            use crate::doubles::events::Event;
             if !att_active {
                 return false;
             }
             let (src, tgt) = ((side, slot), (target_side, target_slot));
             match ev {
                 DamageEvent::ModifyCritRatio => {
-                    crate::doubles::events::run_event_ties(state, rng, "ModifyCritRatio", src, Some(tgt));
+                    crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::ModifyCritRatio, src, Some(tgt));
                 }
                 DamageEvent::BasePower => {
                     // The move's own `onBasePower` (none has a priority) joins the sort.
@@ -10558,24 +10559,24 @@ fn compute_hit_damage(
                             | Choices::SOLARBEAM | Choices::SOLARBLADE | Choices::VENOSHOCK
                     );
                     crate::doubles::events::run_event_ties_on_effect(
-                        state, rng, "BasePower", src, Some(tgt), own.then_some(0),
+                        state, rng, crate::doubles::events::Event::BasePower, src, Some(tgt), own.then_some(0),
                     );
                 }
                 DamageEvent::ModifyStats => {
-                    let atk = if choice.category == MoveCategory::Physical { "ModifyAtk" } else { "ModifySpA" };
+                    let atk = if choice.category == MoveCategory::Physical { Event::ModifyAtk } else { Event::ModifySpA };
                     // `overrideDefensiveStat: 'def'` (Psyshock, Psystrike, Secret Sword).
                     let def = if choice.category == MoveCategory::Physical
                         || matches!(choice.move_id, Choices::PSYSHOCK | Choices::PSYSTRIKE | Choices::SECRETSWORD)
                     {
-                        "ModifyDef"
+                        Event::ModifyDef
                     } else {
-                        "ModifySpD"
+                        Event::ModifySpD
                     };
                     crate::doubles::events::run_event_ties(state, rng, atk, src, Some(tgt));
                     crate::doubles::events::run_event_ties(state, rng, def, tgt, Some(src));
                 }
                 DamageEvent::ModifyDamage => {
-                    crate::doubles::events::run_event_ties(state, rng, "ModifyDamage", src, Some(tgt));
+                    crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::ModifyDamage, src, Some(tgt));
                 }
             }
             true
@@ -13056,20 +13057,20 @@ fn end_turn_disable_moves(state: &DoublesState, rng: &mut Gen5Rng) {
     use crate::doubles::events::run_event_ties;
     for (s, sl) in [(Side::One, 0usize), (Side::One, 1), (Side::Two, 0), (Side::Two, 1)] {
         let Some(idx) = state.side(s).active[sl].pokemon_index else { continue };
-        run_event_ties(state, rng, "DisableMove", (s, sl), None);
-        run_event_ties(state, rng, "TrapPokemon", (s, sl), None);
+        run_event_ties(state, rng, crate::doubles::events::Event::DisableMove, (s, sl), None);
+        run_event_ties(state, rng, crate::doubles::events::Event::TrapPokemon, (s, sl), None);
         // Every TrapPokemon handler that calls `pokemon.tryTrap()` runs
         // `runStatusImmunity('trapped')` -> `runEvent('Immunity')` (a sort; Dig /
         // Dive + Magnet Rise tie). Ghost types stop at `getImmunity`, no event.
         // PS sim/pokemon.ts tryTrap / runStatusImmunity.
         if !state.side(s).team_member(idx).has_type(&PokemonType::GHOST) {
             for _ in 0..try_trap_calls(state, s, sl) {
-                run_event_ties(state, rng, "Immunity", (s, sl), None);
+                run_event_ties(state, rng, crate::doubles::events::Event::Immunity, (s, sl), None);
             }
         }
         // `getImmunity('trapped')`: Ghost types are immune.
         if state.side(s).team_member(idx).has_type(&PokemonType::GHOST) {
-            run_event_ties(state, rng, "MaybeTrapPokemon", (s, sl), None);
+            run_event_ties(state, rng, crate::doubles::events::Event::MaybeTrapPokemon, (s, sl), None);
         }
     }
 }
@@ -13257,7 +13258,7 @@ fn after_move_secondary_ties(state: &mut DoublesState, rng: &mut Gen5Rng, target
 /// PS sim/battle-actions.ts hitStepAccuracy.
 /// TODO(PS parity): `accuracy: true` moves also run this event.
 fn accuracy_event_ties(state: &DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize, ts: Side, tsl: usize) {
-    crate::doubles::events::run_event_ties(state, rng, "Accuracy", (ts, tsl), Some((side, slot)));
+    crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::Accuracy, (ts, tsl), Some((side, slot)));
 }
 
 fn sort_handler_ties(hs: &mut [(i64, i32, i64)], rng: &mut Gen5Rng, label: &'static str) {
@@ -13416,7 +13417,7 @@ fn end_of_turn(
                     {
                         continue;
                     }
-                    crate::doubles::events::run_event_ties(state, rng, "Immunity", (side, slot), None);
+                    crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::Immunity, (side, slot), None);
                     // Dig / Dive charge turn: immune to sandstorm (PS
                     // data/moves.ts dig / dive `condition.onImmunity`). Fly,
                     // Bounce and Sky Drop have no such handler, so they take it.

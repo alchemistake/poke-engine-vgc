@@ -7,7 +7,7 @@
 //! makes the sort's draws, from:
 //! - the handler table generated from PS (`event_handlers.rs`), and
 //! - ONE list of what effects the engine state holds (`pokemon_effects`,
-//!   `side_effects`, `field_effects`).
+//!   `side_mask`, `field_mask`).
 //!
 //! A new volatile or side condition goes into those lists once and is then
 //! sorted in every event PS gives it a handler for.
@@ -23,27 +23,38 @@ use crate::state::PokemonStatus;
 /// PS `comparePriority`'s "no order" (`order || 4294967296`).
 const NO_ORDER: i64 = 4294967296;
 
-/// Events whose handlers PS sorts left to right instead of `speedSort`
-/// (no draws). PS sim/battle.ts runEvent.
-const LEFT_TO_RIGHT: [&str; 4] = ["Invulnerability", "TryHit", "DamagingHit", "EntryHazard"];
-
-/// Events run through `eachEvent`: only `on<Event>` handlers, no prefixed ones.
-/// PS sim/battle.ts findEventHandlers (`prefixedHandlers`).
-const UNPREFIXED: [&str; 5] = ["BeforeTurn", "Update", "Weather", "WeatherChange", "TerrainChange"];
-
 /// PS volatile id per `ActiveSlot::protect_kind`.
 pub const PROTECT_IDS: [&str; 6] = ["protect", "kingsshield", "spikyshield", "banefulbunker", "silktrap", "burningbulwark"];
+
+/// One effect of a pokemon reported by `visit_pokemon_effects`.
+#[derive(Clone, Copy)]
+pub enum Effect {
+    /// A status, volatile or slot condition: its PS id.
+    Id(&'static str, HandlerKind),
+    /// The ability (PS id: the lowercased name).
+    Ability(crate::engine::abilities::Abilities),
+}
 
 /// The status, ability and volatile ids (PS ids) of the pokemon in a slot,
 /// plus its slot conditions. Abilities are reported even when suppressed:
 /// PS sorts a suppressed handler and skips it only when it would run.
-/// TODO(PS parity): the ability under Gastro Acid (the engine stores NONE).
 pub fn pokemon_effects(state: &DoublesState, side: Side, slot: usize) -> Vec<(String, HandlerKind)> {
+    let mut v = Vec::new();
+    visit_pokemon_effects(state, side, slot, |e| match e {
+        Effect::Id(id, kind) => v.push((id.to_string(), kind)),
+        Effect::Ability(ab) => v.push((ab.to_string().to_lowercase(), HandlerKind::Ability)),
+    });
+    v
+}
+
+/// `pokemon_effects` without allocating: calls `f` for each effect, in the
+/// same order (the order PS collects their handlers in).
+/// TODO(PS parity): the ability under Gastro Acid (the engine stores NONE).
+pub fn visit_pokemon_effects(state: &DoublesState, side: Side, slot: usize, mut f: impl FnMut(Effect)) {
     use HandlerKind::*;
-    let mut v: Vec<(String, HandlerKind)> = Vec::new();
     let s = state.side(side);
     let a = &s.active[slot];
-    let Some(idx) = a.pokemon_index else { return v };
+    let Some(idx) = a.pokemon_index else { return };
     let p = s.team_member(idx);
     let st = match p.status {
         PokemonStatus::BURN => Some("brn"),
@@ -55,13 +66,12 @@ pub fn pokemon_effects(state: &DoublesState, side: Side, slot: usize) -> Vec<(St
         _ => None,
     };
     if let Some(st) = st {
-        v.push((st.to_string(), Status));
+        f(Effect::Id(st, Status));
     }
-    let ab = real_ability(state, side, idx);
-    v.push((ab.to_string().to_lowercase(), Ability));
-    let mut vol = |on: bool, id: &str| {
+    f(Effect::Ability(real_ability(state, side, idx)));
+    let mut vol = |on: bool, id: &'static str| {
         if on {
-            v.push((id.to_string(), Volatile));
+            f(Effect::Id(id, Volatile));
         }
     };
     vol(a.confusion > 0, "confusion");
@@ -69,12 +79,18 @@ pub fn pokemon_effects(state: &DoublesState, side: Side, slot: usize) -> Vec<(St
     vol(a.recharging, "mustrecharge");
     if let Some((m, _)) = a.charging.filter(|_| !a.charge_aborted) {
         vol(true, "twoturnmove");
-        if matches!(
-            m,
-            Choices::DIG | Choices::DIVE | Choices::FLY | Choices::BOUNCE | Choices::PHANTOMFORCE
-                | Choices::SHADOWFORCE | Choices::SKYDROP
-        ) {
-            vol(true, &m.to_string().to_lowercase());
+        let semi_invulnerable = match m {
+            Choices::DIG => Some("dig"),
+            Choices::DIVE => Some("dive"),
+            Choices::FLY => Some("fly"),
+            Choices::BOUNCE => Some("bounce"),
+            Choices::PHANTOMFORCE => Some("phantomforce"),
+            Choices::SHADOWFORCE => Some("shadowforce"),
+            Choices::SKYDROP => Some("skydrop"),
+            _ => None,
+        };
+        if let Some(id) = semi_invulnerable {
+            vol(true, id);
         }
     }
     vol(a.protected, PROTECT_IDS[(a.protect_kind as usize).min(5)]);
@@ -127,73 +143,344 @@ pub fn pokemon_effects(state: &DoublesState, side: Side, slot: usize) -> Vec<(St
     vol(a.electrify, "electrify");
     vol(a.power_trick, "powertrick");
     if s.future_move[slot].is_some() {
-        v.push(("futuremove".to_string(), Slot));
+        f(Effect::Id("futuremove", Slot));
     }
     if s.wish[slot].is_some() {
-        v.push(("wish".to_string(), Slot));
+        f(Effect::Id("wish", Slot));
     }
-    v
 }
 
-/// The side conditions of a side (PS ids).
-pub fn side_effects(state: &DoublesState, side: Side) -> Vec<&'static str> {
+/// Side condition ids (PS ids); a side's active ones are a bit mask over
+/// this list (`side_mask`).
+const SIDE_IDS: [&str; 15] = [
+    "reflect", "lightscreen", "auroraveil", "safeguard", "mist", "luckychant", "tailwind", "quickguard",
+    "wideguard", "craftyshield", "matblock", "spikes", "toxicspikes", "stealthrock", "stickyweb",
+];
+
+/// The side conditions of a side, as bits over `SIDE_IDS`.
+fn side_mask(state: &DoublesState, side: Side) -> u32 {
     let sc = &state.side(side).side_conditions;
     [
-        (sc.reflect, "reflect"),
-        (sc.light_screen, "lightscreen"),
-        (sc.aurora_veil, "auroraveil"),
-        (sc.safeguard, "safeguard"),
-        (sc.mist, "mist"),
-        (sc.lucky_chant, "luckychant"),
-        (sc.tailwind, "tailwind"),
-        (sc.quick_guard, "quickguard"),
-        (sc.wide_guard, "wideguard"),
-        (sc.crafty_shield, "craftyshield"),
-        (sc.mat_block, "matblock"),
-        (sc.spikes, "spikes"),
-        (sc.toxic_spikes, "toxicspikes"),
-        (sc.stealth_rock, "stealthrock"),
-        (sc.sticky_web, "stickyweb"),
+        sc.reflect,
+        sc.light_screen,
+        sc.aurora_veil,
+        sc.safeguard,
+        sc.mist,
+        sc.lucky_chant,
+        sc.tailwind,
+        sc.quick_guard,
+        sc.wide_guard,
+        sc.crafty_shield,
+        sc.mat_block,
+        sc.spikes,
+        sc.toxic_spikes,
+        sc.stealth_rock,
+        sc.sticky_web,
     ]
     .iter()
-    .filter(|(n, _)| *n > 0)
-    .map(|&(_, id)| id)
-    .collect()
+    .enumerate()
+    .fold(0, |m, (i, &n)| if n > 0 { m | 1 << i } else { m })
 }
 
-/// Weather, terrain and pseudo-weathers (PS ids).
-pub fn field_effects(state: &DoublesState) -> Vec<&'static str> {
+/// Weather, terrain and pseudo-weather ids (PS ids); the field's active ones
+/// are a bit mask over this list (`field_mask`).
+const FIELD_IDS: [&str; 16] = [
+    "raindance", "primordialsea", "sunnyday", "desolateland", "sandstorm", "hail", "snowscape",
+    "electricterrain", "grassyterrain", "mistyterrain", "psychicterrain",
+    "trickroom", "gravity", "magicroom", "wonderroom", "fairylock",
+];
+
+/// Weather, terrain and pseudo-weathers, as bits over `FIELD_IDS`.
+fn field_mask(state: &DoublesState) -> u32 {
     use crate::engine::state::Terrain;
-    let mut v = Vec::new();
-    match state.weather.weather_type {
-        Weather::RAIN => v.push("raindance"),
-        Weather::HEAVYRAIN => v.push("primordialsea"),
-        Weather::SUN => v.push("sunnyday"),
-        Weather::HARSHSUN => v.push("desolateland"),
-        Weather::SAND => v.push("sandstorm"),
-        Weather::HAIL => v.push("hail"),
-        Weather::SNOW => v.push("snowscape"),
-        _ => {}
+    let weather = match state.weather.weather_type {
+        Weather::RAIN => Some(0),
+        Weather::HEAVYRAIN => Some(1),
+        Weather::SUN => Some(2),
+        Weather::HARSHSUN => Some(3),
+        Weather::SAND => Some(4),
+        Weather::HAIL => Some(5),
+        Weather::SNOW => Some(6),
+        _ => None,
+    };
+    let terrain = match state.terrain.terrain_type {
+        Terrain::ELECTRICTERRAIN => Some(7),
+        Terrain::GRASSYTERRAIN => Some(8),
+        Terrain::MISTYTERRAIN => Some(9),
+        Terrain::PSYCHICTERRAIN => Some(10),
+        _ => None,
+    };
+    let mut m = 0;
+    for bit in [weather, terrain].iter().flatten() {
+        m |= 1 << bit;
     }
-    match state.terrain.terrain_type {
-        Terrain::ELECTRICTERRAIN => v.push("electricterrain"),
-        Terrain::GRASSYTERRAIN => v.push("grassyterrain"),
-        Terrain::MISTYTERRAIN => v.push("mistyterrain"),
-        Terrain::PSYCHICTERRAIN => v.push("psychicterrain"),
-        _ => {}
-    }
-    for (on, id) in [
-        (state.trick_room.active, "trickroom"),
-        (state.gravity.active, "gravity"),
-        (state.magic_room.active, "magicroom"),
-        (state.wonder_room.active, "wonderroom"),
-        (state.fairy_lock.active, "fairylock"),
-    ] {
-        if on {
-            v.push(id);
+    for (i, on) in [
+        state.trick_room.active,
+        state.gravity.active,
+        state.magic_room.active,
+        state.wonder_room.active,
+        state.fairy_lock.active,
+    ]
+    .iter()
+    .enumerate()
+    {
+        if *on {
+            m |= 1 << (11 + i);
         }
     }
-    v
+    m
+}
+
+/// The events the engine sorts handlers for (`run_event_ties`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Event {
+    Accuracy,
+    BasePower,
+    BeforeMove,
+    Damage,
+    DisableMove,
+    Immunity,
+    MaybeTrapPokemon,
+    ModifyAtk,
+    ModifyCritRatio,
+    ModifyDamage,
+    ModifyDef,
+    ModifySpA,
+    ModifySpD,
+    MoveAborted,
+    SetStatus,
+    TrapPokemon,
+    TryAddVolatile,
+    TryHitSide,
+    TryMove,
+}
+
+impl Event {
+    const ALL: [Event; 19] = [
+        Event::Accuracy,
+        Event::BasePower,
+        Event::BeforeMove,
+        Event::Damage,
+        Event::DisableMove,
+        Event::Immunity,
+        Event::MaybeTrapPokemon,
+        Event::ModifyAtk,
+        Event::ModifyCritRatio,
+        Event::ModifyDamage,
+        Event::ModifyDef,
+        Event::ModifySpA,
+        Event::ModifySpD,
+        Event::MoveAborted,
+        Event::SetStatus,
+        Event::TrapPokemon,
+        Event::TryAddVolatile,
+        Event::TryHitSide,
+        Event::TryMove,
+    ];
+
+    /// The PS event name (`"ModifyAtk"`).
+    pub fn name(self) -> &'static str {
+        match self {
+            Event::Accuracy => "Accuracy",
+            Event::BasePower => "BasePower",
+            Event::BeforeMove => "BeforeMove",
+            Event::Damage => "Damage",
+            Event::DisableMove => "DisableMove",
+            Event::Immunity => "Immunity",
+            Event::MaybeTrapPokemon => "MaybeTrapPokemon",
+            Event::ModifyAtk => "ModifyAtk",
+            Event::ModifyCritRatio => "ModifyCritRatio",
+            Event::ModifyDamage => "ModifyDamage",
+            Event::ModifyDef => "ModifyDef",
+            Event::ModifySpA => "ModifySpA",
+            Event::ModifySpD => "ModifySpD",
+            Event::MoveAborted => "MoveAborted",
+            Event::SetStatus => "SetStatus",
+            Event::TrapPokemon => "TrapPokemon",
+            Event::TryAddVolatile => "TryAddVolatile",
+            Event::TryHitSide => "TryHitSide",
+            Event::TryMove => "TryMove",
+        }
+    }
+}
+
+/// Callback prefixes of pokemon handlers (`POKE_PREFIXES[i]` + event name).
+const POKE_PREFIXES: [&str; 5] = ["on", "onAlly", "onAny", "onFoe", "onSource"];
+const ON: usize = 0;
+const ALLY: usize = 1;
+const ANY: usize = 2;
+const FOE: usize = 3;
+const SOURCE: usize = 4;
+/// Callback prefixes of side handlers (`side[i]` of an `EventTable`).
+const SIDE_ON: usize = 0;
+const SIDE_FOE: usize = 1;
+const SIDE_ANY: usize = 2;
+
+/// A pokemon handler of one callback: `bit` is its effect (`Tables::fx`).
+struct PokeEntry {
+    bit: u8,
+    id: &'static str,
+    order: i64,
+    priority: i32,
+    sub_order: i32,
+    /// Magic Bounce's `onAllyTryHitSide` sorts by `getStat('spe', true, true)`
+    /// (no boosts, no modifiers). PS sim/battle.ts resolvePriority.
+    raw_speed: bool,
+}
+
+/// A side / field handler of one callback: `idx` is its bit in `SIDE_IDS` /
+/// `FIELD_IDS`.
+struct GlobalEntry {
+    idx: u8,
+    id: &'static str,
+    order: i64,
+    priority: i32,
+    sub_order: i32,
+}
+
+/// The handlers of one event, per callback prefix, in the generated table's
+/// order (`event_handlers::handlers`), resolved once.
+struct EventTable {
+    /// PS sorts these left to right instead of `speedSort` (no draws).
+    left_to_right: bool,
+    /// `eachEvent` events only have unprefixed `on<Event>` handlers.
+    prefixed: bool,
+    poke: [Vec<PokeEntry>; 5],
+    /// Union of the `bit`s in `poke[i]`.
+    poke_mask: [u128; 5],
+    /// `on` / `onFoe` / `onAny` side condition handlers.
+    side: [Vec<GlobalEntry>; 3],
+    /// `on` weather / terrain / pseudo-weather handlers.
+    field: Vec<GlobalEntry>,
+    /// Callback names, for `PE_DEBUG_EVENTS`.
+    poke_names: [&'static str; 5],
+    side_names: [&'static str; 3],
+}
+
+struct Tables {
+    /// Bit of each pokemon effect (kind, PS id) that has a handler in some
+    /// event table. Effects without one never join a sort.
+    fx: std::collections::HashMap<(u8, &'static str), u8>,
+    /// Bit of each ability (indexed by `Abilities as usize`), or `NO_BIT`.
+    ability_bit: Vec<u8>,
+    events: Vec<EventTable>,
+}
+
+const NO_BIT: u8 = u8::MAX;
+
+/// Events whose handlers PS sorts left to right instead of `speedSort`
+/// (no draws). PS sim/battle.ts runEvent.
+const LEFT_TO_RIGHT: [&str; 4] = ["Invulnerability", "TryHit", "DamagingHit", "EntryHazard"];
+
+/// Events run through `eachEvent`: only `on<Event>` handlers, no prefixed ones.
+/// PS sim/battle.ts findEventHandlers (`prefixedHandlers`).
+const UNPREFIXED: [&str; 5] = ["BeforeTurn", "Update", "Weather", "WeatherChange", "TerrainChange"];
+
+static TABLES: std::sync::LazyLock<Tables> = std::sync::LazyLock::new(build_tables);
+
+fn leak(s: String) -> &'static str {
+    Box::leak(s.into_boxed_str())
+}
+
+fn build_tables() -> Tables {
+    use crate::engine::abilities::Abilities;
+    use std::str::FromStr;
+    let mut fx: std::collections::HashMap<(u8, &'static str), u8> = std::collections::HashMap::new();
+    let mut ability_bit: Vec<u8> = Vec::new();
+    let mut events = Vec::new();
+    for ev in Event::ALL {
+        let name = ev.name();
+        let poke_names = POKE_PREFIXES.map(|p| leak(format!("{}{}", p, name)));
+        let side_names = [poke_names[ON], poke_names[FOE], poke_names[ANY]];
+        let mut poke: [Vec<PokeEntry>; 5] = Default::default();
+        let mut poke_mask = [0u128; 5];
+        for (pi, cb) in poke_names.iter().enumerate() {
+            for h in handlers(cb) {
+                if matches!(h.kind, HandlerKind::Side | HandlerKind::Field | HandlerKind::Weather) {
+                    continue;
+                }
+                let next = fx.len();
+                let bit = *fx.entry((h.kind as u8, h.id)).or_insert_with(|| {
+                    assert!(next < 128, "more than 128 pokemon effects have event handlers");
+                    next as u8
+                });
+                if h.kind == HandlerKind::Ability {
+                    let ab = Abilities::from_str(h.id).unwrap();
+                    if ab.to_string().to_lowercase() == h.id {
+                        let i = ab as usize;
+                        if ability_bit.len() <= i {
+                            ability_bit.resize(i + 1, NO_BIT);
+                        }
+                        ability_bit[i] = bit;
+                    }
+                }
+                poke_mask[pi] |= 1u128 << bit;
+                poke[pi].push(PokeEntry {
+                    bit,
+                    id: h.id,
+                    order: if h.order == 0 { NO_ORDER } else { h.order },
+                    priority: h.priority,
+                    sub_order: h.sub_order,
+                    raw_speed: pi == ALLY && ev == Event::TryHitSide && h.id == "magicbounce",
+                });
+            }
+        }
+        let global = |cb: &str, ids: &[&str], kinds: &[HandlerKind]| -> Vec<GlobalEntry> {
+            handlers(cb)
+                .iter()
+                .filter(|h| kinds.contains(&h.kind))
+                .filter_map(|h| {
+                    let idx = ids.iter().position(|&id| id == h.id)?;
+                    Some(GlobalEntry {
+                        idx: idx as u8,
+                        id: h.id,
+                        order: if h.order == 0 { NO_ORDER } else { h.order },
+                        priority: h.priority,
+                        sub_order: h.sub_order,
+                    })
+                })
+                .collect()
+        };
+        let side = side_names.map(|cb| global(cb, &SIDE_IDS, &[HandlerKind::Side]));
+        let field = global(poke_names[ON], &FIELD_IDS, &[HandlerKind::Field, HandlerKind::Weather]);
+        events.push(EventTable {
+            left_to_right: LEFT_TO_RIGHT.contains(&name),
+            prefixed: !UNPREFIXED.contains(&name),
+            poke,
+            poke_mask,
+            side,
+            field,
+            poke_names,
+            side_names,
+        });
+    }
+    Tables { fx, ability_bit, events }
+}
+
+/// The effects of the pokemon in a slot that have a handler somewhere, as
+/// bits, in `visit_pokemon_effects` order.
+#[derive(Clone, Copy)]
+struct SlotEffects {
+    bits: [u8; 16],
+    n: u8,
+    mask: u128,
+}
+
+fn slot_effects(t: &Tables, state: &DoublesState, side: Side, slot: usize) -> SlotEffects {
+    let mut e = SlotEffects { bits: [0; 16], n: 0, mask: 0 };
+    visit_pokemon_effects(state, side, slot, |fx| {
+        let bit = match fx {
+            Effect::Id(id, kind) => t.fx.get(&(kind as u8, id)).copied().unwrap_or(NO_BIT),
+            Effect::Ability(ab) => t.ability_bit.get(ab as usize).copied().unwrap_or(NO_BIT),
+        };
+        if bit != NO_BIT {
+            assert!((e.n as usize) < e.bits.len(), "too many pokemon effects with handlers");
+            e.bits[e.n as usize] = bit;
+            e.n += 1;
+            e.mask |= 1u128 << bit;
+        }
+    });
+    e
 }
 
 /// One collected handler: PS `comparePriority` keys.
@@ -205,53 +492,57 @@ struct Key {
     sub_order: i32,
 }
 
-fn push_pokemon(
-    state: &DoublesState,
-    out: &mut Vec<Key>,
-    side: Side,
-    slot: usize,
-    callback: &str,
-    debug: &mut Vec<String>,
-) {
-    let hs = handlers(callback);
-    if hs.is_empty() {
-        return;
+/// Collects the handlers of one `run_event_ties` call. Each slot's effects
+/// are read once and reused by every prefix.
+struct Collector<'a> {
+    t: &'a Tables,
+    ev: &'a EventTable,
+    state: &'a DoublesState,
+    slots: [Option<SlotEffects>; 4],
+    hs: Vec<Key>,
+    debug: Option<Vec<String>>,
+}
+
+impl Collector<'_> {
+    fn push_pokemon(&mut self, side: Side, slot: usize, prefix: usize) {
+        if self.ev.poke_mask[prefix] == 0 {
+            return;
+        }
+        let si = side as usize * 2 + slot;
+        let (t, state) = (self.t, self.state);
+        let fx = *self.slots[si].get_or_insert_with(|| slot_effects(t, state, side, slot));
+        if fx.mask & self.ev.poke_mask[prefix] == 0 {
+            return;
+        }
+        let speed = cached_speed(self.state, side, slot);
+        for &bit in &fx.bits[..fx.n as usize] {
+            for h in self.ev.poke[prefix].iter().filter(|h| h.bit == bit) {
+                let speed = if h.raw_speed {
+                    self.state.side(side).slot_pokemon(slot).map(|p| p.speed as i32).unwrap_or(speed)
+                } else {
+                    speed
+                };
+                self.hs.push(Key { order: h.order, priority: h.priority, speed, sub_order: h.sub_order });
+                if let Some(d) = &mut self.debug {
+                    d.push(format!("{} {} ({:?}{})", self.ev.poke_names[prefix], h.id, side, slot));
+                }
+            }
+        }
     }
-    let speed = cached_speed(state, side, slot);
-    for (id, kind) in pokemon_effects(state, side, slot) {
-        for h in hs.iter().filter(|h| h.kind == kind && h.id == id) {
-            // PS resolvePriority: Magic Bounce's `onAllyTryHitSide` uses
-            // `getStat('spe', true, true)` (no boosts, no modifiers).
-            let speed = if callback == "onAllyTryHitSide" && h.id == "magicbounce" {
-                state.side(side).slot_pokemon(slot).map(|p| p.speed as i32).unwrap_or(speed)
-            } else {
-                speed
-            };
-            out.push(Key {
-                order: if h.order == 0 { NO_ORDER } else { h.order },
-                priority: h.priority,
-                speed,
-                sub_order: h.sub_order,
-            });
-            if super::debug::flags().events {
-                debug.push(format!("{} {} ({:?}{})", callback, h.id, side, slot));
+
+    fn push_global(&mut self, entries: &[GlobalEntry], active: u32, callback: &str) {
+        for h in entries.iter().filter(|h| active & (1 << h.idx) != 0) {
+            self.hs.push(Key { order: h.order, priority: h.priority, speed: 0, sub_order: h.sub_order });
+            if let Some(d) = &mut self.debug {
+                d.push(format!("{} {}", callback, h.id));
             }
         }
     }
 }
 
-fn push_global(out: &mut Vec<Key>, ids: &[&str], kinds: &[HandlerKind], callback: &str, debug: &mut Vec<String>) {
-    for h in handlers(callback).iter().filter(|h| kinds.contains(&h.kind) && ids.contains(&h.id)) {
-        out.push(Key {
-            order: if h.order == 0 { NO_ORDER } else { h.order },
-            priority: h.priority,
-            speed: 0,
-            sub_order: h.sub_order,
-        });
-        if super::debug::flags().events {
-            debug.push(format!("{} {}", callback, h.id));
-        }
-    }
+thread_local! {
+    /// Reused key buffer for `run_event_ties` (no allocation per call).
+    static KEYS: std::cell::RefCell<Vec<Key>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 fn alive(state: &DoublesState, side: Side, slot: usize) -> bool {
@@ -267,7 +558,7 @@ fn alive(state: &DoublesState, side: Side, slot: usize) -> bool {
 pub fn run_event_ties(
     state: &DoublesState,
     rng: &mut Gen5Rng,
-    event: &str,
+    event: Event,
     target: (Side, usize),
     source: Option<(Side, usize)>,
 ) {
@@ -281,66 +572,79 @@ pub fn run_event_ties(
 pub fn run_event_ties_on_effect(
     state: &DoublesState,
     rng: &mut Gen5Rng,
-    event: &str,
+    event: Event,
     target: (Side, usize),
     source: Option<(Side, usize)>,
     effect_priority: Option<i32>,
 ) {
-    if LEFT_TO_RIGHT.contains(&event) {
+    let t: &Tables = &TABLES;
+    let ev = &t.events[event as usize];
+    if ev.left_to_right {
         return;
     }
-    let prefixed = !UNPREFIXED.contains(&event);
-    let mut hs: Vec<Key> = Vec::new();
-    let mut dbg: Vec<String> = Vec::new();
+    let prefixed = ev.prefixed;
+    let mut c = Collector {
+        t,
+        ev,
+        state,
+        slots: [None; 4],
+        hs: KEYS.with(|k| std::mem::take(&mut *k.borrow_mut())),
+        debug: crate::doubles::debug::flags().events.then(Vec::new),
+    };
+    c.hs.clear();
     let (ts, tsl) = target;
     if let Some(priority) = effect_priority {
-        hs.push(Key { order: NO_ORDER, priority, speed: cached_speed(state, ts, tsl), sub_order: 0 });
-        if super::debug::flags().events {
-            dbg.push(format!("on{} (move)", event));
+        c.hs.push(Key { order: NO_ORDER, priority, speed: cached_speed(state, ts, tsl), sub_order: 0 });
+        if let Some(d) = &mut c.debug {
+            d.push(format!("on{} (move)", event.name()));
         }
     }
-    let on = format!("on{}", event);
     let target_active = state.side(ts).active[tsl].pokemon_index.is_some();
     let source_active = source.is_some_and(|(s, sl)| state.side(s).active[sl].pokemon_index.is_some());
     if target_active || source_active {
-        push_pokemon(state, &mut hs, ts, tsl, &on, &mut dbg);
+        c.push_pokemon(ts, tsl, ON);
         if prefixed {
-            let (ally, any) = (format!("onAlly{}", event), format!("onAny{}", event));
-            let foe = format!("onFoe{}", event);
             for sl in 0..2 {
                 if alive(state, ts, sl) {
-                    push_pokemon(state, &mut hs, ts, sl, &ally, &mut dbg);
-                    push_pokemon(state, &mut hs, ts, sl, &any, &mut dbg);
+                    c.push_pokemon(ts, sl, ALLY);
+                    c.push_pokemon(ts, sl, ANY);
                 }
             }
             for sl in 0..2 {
                 if alive(state, ts.other(), sl) {
-                    push_pokemon(state, &mut hs, ts.other(), sl, &foe, &mut dbg);
-                    push_pokemon(state, &mut hs, ts.other(), sl, &any, &mut dbg);
+                    c.push_pokemon(ts.other(), sl, FOE);
+                    c.push_pokemon(ts.other(), sl, ANY);
                 }
             }
         }
     }
     if let Some((ss, ssl)) = source.filter(|_| prefixed) {
-        push_pokemon(state, &mut hs, ss, ssl, &format!("onSource{}", event), &mut dbg);
+        c.push_pokemon(ss, ssl, SOURCE);
     }
     for sd in [Side::One, Side::Two] {
-        let ids = side_effects(state, sd);
+        let active = side_mask(state, sd);
+        if active == 0 {
+            continue;
+        }
         if sd == ts {
-            push_global(&mut hs, &ids, &[HandlerKind::Side], &on, &mut dbg);
+            c.push_global(&ev.side[SIDE_ON], active, ev.side_names[SIDE_ON]);
         } else if prefixed {
-            push_global(&mut hs, &ids, &[HandlerKind::Side], &format!("onFoe{}", event), &mut dbg);
+            c.push_global(&ev.side[SIDE_FOE], active, ev.side_names[SIDE_FOE]);
         }
         if prefixed {
-            push_global(&mut hs, &ids, &[HandlerKind::Side], &format!("onAny{}", event), &mut dbg);
+            c.push_global(&ev.side[SIDE_ANY], active, ev.side_names[SIDE_ANY]);
         }
     }
-    let field = field_effects(state);
-    push_global(&mut hs, &field, &[HandlerKind::Field, HandlerKind::Weather], &on, &mut dbg);
-    if crate::doubles::debug::flags().events && hs.len() > 1 {
-        eprintln!("EVENT {} target={:?}{} handlers: {}", event, ts, tsl, dbg.join(", "));
+    if !ev.field.is_empty() {
+        c.push_global(&ev.field, field_mask(state), ev.poke_names[ON]);
     }
-    speed_sort_keys(&mut hs, rng);
+    if let Some(d) = &c.debug {
+        if c.hs.len() > 1 {
+            eprintln!("EVENT {} target={:?}{} handlers: {}", event.name(), ts, tsl, d.join(", "));
+        }
+    }
+    speed_sort_keys(&mut c.hs, rng);
+    KEYS.with(|k| *k.borrow_mut() = c.hs);
 }
 
 /// PS `speedSort` (selection sort, shuffling each group of equal keys).
@@ -353,11 +657,17 @@ fn speed_sort_keys(hs: &mut [Key], rng: &mut Gen5Rng) {
             .then(a.sub_order.cmp(&b.sub_order))
     };
     let mut sorted = 0usize;
+    // Indices of the smallest keys found so far (reused across rounds).
+    let mut next: Vec<usize> = Vec::new();
     while sorted + 1 < hs.len() {
-        let mut next = vec![sorted];
+        next.clear();
+        next.push(sorted);
         for i in (sorted + 1)..hs.len() {
             match cmp(&hs[i], &hs[next[0]]) {
-                std::cmp::Ordering::Less => next = vec![i],
+                std::cmp::Ordering::Less => {
+                    next.clear();
+                    next.push(i);
+                }
                 std::cmp::Ordering::Equal => next.push(i),
                 std::cmp::Ordering::Greater => {}
             }

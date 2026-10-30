@@ -290,11 +290,23 @@ fn faint_pokemon(state: &mut DoublesState, side: Side, slot: usize) {
 /// `eachEvent` sorts). `clearVolatile` -> `setSpecies` then resets
 /// `pokemon.speed` to the raw stat, which later sorts read.
 fn resolve_faints(state: &mut DoublesState, rng: &mut Gen5Rng, pick: impl Fn(Side, usize) -> bool) {
-    let mut faints = std::mem::take(&mut state.unresolved_faints);
+    let faints = std::mem::take(&mut state.unresolved_faints);
     let mut resolved = Vec::new();
-    faints.retain(|&(side, slot, idx)| {
-        if !pick(side, slot) {
-            return true;
+    let keep: Vec<(Side, usize, PokemonIndex)> = faints.iter().copied().filter(|&(s, sl, _)| !pick(s, sl)).collect();
+    let picked: Vec<(Side, usize, PokemonIndex)> = faints.iter().copied().filter(|&(s, sl, _)| pick(s, sl)).collect();
+    for (k, &(side, slot, idx)) in picked.iter().enumerate() {
+        // PS `resolveFaints` -> `singleEvent('End', ability)`: a Cloud Nine / Air
+        // Lock holder's `onEnd` runs `eachEvent('WeatherChange')` while the holder
+        // and the faints still queued behind it count as actives (`getAllActive`).
+        // Only outside a move: a move's KO already drew this sort after its hit.
+        if !state.in_move
+            && matches!(state.side(side).team_member(idx).ability, Abilities::CLOUDNINE | Abilities::AIRLOCK)
+        {
+            let mut view: Vec<(Side, usize, PokemonIndex)> = picked[k..].to_vec();
+            view.extend(keep.iter().copied());
+            state.unresolved_faints = view;
+            each_event_update(state, rng);
+            state.unresolved_faints = Vec::new();
         }
         let s = state.side_mut(side);
         // PS `clearVolatile` -> `setSpecies(baseSpecies)` restores the base
@@ -304,9 +316,9 @@ fn resolve_faints(state: &mut DoublesState, rng: &mut Gen5Rng, pick: impl Fn(Sid
         }
         s.speed_cache[idx as usize] = s.team_member(idx).speed;
         resolved.push((side, idx));
-        false
-    });
-    state.unresolved_faints = faints;
+    }
+    // Still-queued faints of other slots remain unresolved.
+    state.unresolved_faints = keep;
     let batch = resolved.len();
     // PS `Faint` event: `onAllyFaint` of the fainted pokemon's active allies.
     for (side, idx) in resolved {
@@ -4454,7 +4466,14 @@ fn execute_action_inner(
               state.side(target_side).slot_boosts(target_slot).map(|b| b.eva).unwrap_or(0)
           };
           let mods = accuracy_ability_mods(state, side, idx, target_side, target_slot, choice);
-          if !roll_accuracy_boosted_labeled("multiaccuracy", choice.accuracy, ab, eb, mods, rng) {
+          // No Guard `onAnyAccuracy` (user or target) and Glaive Rush / Lock-On
+          // make the `Accuracy` event return true: no roll for the later hits
+          // either (PS champions scripts.ts hitStepMoveHitLoop -> runEvent('Accuracy')).
+          let no_guard_hit = state.side(side).team_member(idx).ability == Abilities::NOGUARD
+              || state.side(target_side).slot_pokemon(target_slot).map(|p| p.ability == Abilities::NOGUARD).unwrap_or(false)
+              || state.side(target_side).active[target_slot].glaive_rush
+              || lock_on_hits(state, side, slot, target_side, target_slot);
+          if !no_guard_hit && !roll_accuracy_boosted_labeled("multiaccuracy", choice.accuracy, ab, eb, mods, rng) {
               break;
           }
       }
@@ -5408,6 +5427,13 @@ fn execute_action_inner(
                         move_failed = true;
                     } else if let Some(tidx) = state.side(ts).active[tslot].pokemon_index {
                         let cost = (maxhp / 4).max(1);
+                        // PS substitute `onHit` directDamage: the cost is a damage
+                        // number for the holder, so `spreadMoveHit`'s EmergencyExit
+                        // (champions scripts.ts, `targetHPBeforeDamage` = hp + cost)
+                        // runs for the user too.
+                        if !ee_before.iter().any(|&(s2, l2, _)| s2 == ts && l2 == tslot) {
+                            ee_before.push((ts, tslot, hp + cost));
+                        }
                         state.side_mut(ts).team_member_mut(tidx).hp -= cost;
                         let a = &mut state.side_mut(ts).active[tslot];
                         a.substitute_health = maxhp / 4;
@@ -5888,7 +5914,17 @@ fn execute_action_inner(
                     if p.hp <= 0 {
                         continue;
                     }
-                    if p.ability == Abilities::SOUNDPROOF {
+                    // PS `runEvent('TryHit')` per pokemon: Good as Gold's
+                    // `onTryHit` returns null for a Status move from another pokemon
+                    // (Mold Breaker ignores it), which still counts as a result.
+                    let gag_blocks = (sd, sl) != (side, slot)
+                        && p.ability == Abilities::GOODASGOLD
+                        && !crate::engine::abilities::ignores_target_ability(
+                            state.side(side).team_member(idx),
+                            choice,
+                            &p.ability,
+                        );
+                    if p.ability == Abilities::SOUNDPROOF || gag_blocks {
                         result = true;
                     } else if state.side(sd).active[sl].perish == 0 {
                         state.side_mut(sd).active[sl].perish = 4;

@@ -10256,8 +10256,8 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
             move_id: Choices::LEECHSEED,
             accuracy: 90.0,
             move_type: PokemonType::GRASS,
+            // PS data/moves.ts leechseed flags: no `powder` (Overcoat does not block it).
             flags: Flags {
-                powder: true,
                 protect: true,
                 reflectable: true,
                 ..Default::default()

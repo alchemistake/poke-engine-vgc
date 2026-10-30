@@ -19,6 +19,10 @@ path = "src/main.rs"
 name = "benchmark"
 path = "data/benchmark.rs"
 
+[[bin]]
+name = "bench-doubles"
+path = "bench/bench_doubles.rs"
+
 [profile.release]
 debug = 1
 

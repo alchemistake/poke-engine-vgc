@@ -380,7 +380,14 @@ fn resolve_faints(state: &mut DoublesState, rng: &mut Gen5Rng, pick: impl Fn(Sid
 /// ability through `setAbility`, then its Start effects run. Abilities with
 /// the `noreceiver` flag (the same set as `notrace`) cannot be copied.
 fn ally_faint_copy(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, fainted_idx: PokemonIndex) {
-    let ability = real_ability(state, side, fainted_idx);
+    let mut ability = real_ability(state, side, fainted_idx);
+    // Receiver reads `target.getAbility()`, which ignores Gastro Acid's
+    // suppression; the engine blanks a Gastro Acid'd ability to NONE, so take
+    // the stored one back (PS data/abilities.ts receiver, data/moves.ts gastroacid).
+    // TODO(PS parity): an ability changed (Skill Swap, ...) before Gastro Acid.
+    if ability == Abilities::NONE {
+        ability = state.side(side).team_member(fainted_idx).base_ability;
+    }
     if has_notrace(ability) || ability == Abilities::NOABILITY {
         return;
     }
@@ -12570,8 +12577,17 @@ fn end_of_turn(
                 // PS moody.onResidual: +2 to a random stat below +6, -1 to a
                 // different random stat above -6 (`sample` each; no accuracy /
                 // evasion).
-                let Some(idx) = state.side(side).active[slot].pokemon_index else { continue };
-                if state.side(side).team_member(idx).hp <= 0 {
+                // A holder that Perish Song fainted earlier in this residual is
+                // not `fainted` yet (an `end` callback skips `resolveFaints`), so
+                // Moody still runs and samples; `boost` then does nothing on 0 HP.
+                // PS sim/battle.ts fieldEvent / boost, data/abilities.ts moody.
+                let pending = state
+                    .unresolved_faints
+                    .iter()
+                    .find(|&&(s_, sl_, _)| s_ == side && sl_ == slot)
+                    .map(|&(_, _, i)| i);
+                let Some(idx) = state.side(side).active[slot].pokemon_index.or(pending) else { continue };
+                if state.side(side).team_member(idx).hp <= 0 && pending != Some(idx) {
                     continue;
                 }
                 let tb = state.side(side).team_boosts[idx as usize].clone();
@@ -12600,7 +12616,9 @@ fn end_of_turn(
                         }
                     }
                 }
-                apply_boosts(state, side, idx, &b, false);
+                if state.side(side).team_member(idx).hp > 0 {
+                    apply_boosts(state, side, idx, &b, false);
+                }
             }
             ResidualKind::HealBlock(side, slot) => {
                 // `fieldEvent`: duration--; at 0 the volatile ends (`onEnd`).

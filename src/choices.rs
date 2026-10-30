@@ -22360,8 +22360,6 @@ pub fn undo_physical_special_split(moves: &mut HashMap<Choices, Choice>) {
 
 #[cfg(feature = "champions")]
 fn apply_champions_modifiers(moves: &mut HashMap<Choices, Choice>) {
-    // data/mods/champions/moves.ts milkdrink: `inherit` only sets the target (pp stays 5).
-    moves.get_mut(&Choices::MILKDRINK).unwrap().pp = 5;
     moves.get_mut(&Choices::ANCHORSHOT).unwrap().base_power = 90.0;
     moves.get_mut(&Choices::APPLEACID).unwrap().base_power = 90.0;
     moves.get_mut(&Choices::ASTRALBARRAGE).unwrap().base_power = 110.0;

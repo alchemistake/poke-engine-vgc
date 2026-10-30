@@ -2302,7 +2302,13 @@ fn execute_action_inner(
         let d = illusion_disguise(state.side(side), idx);
         state.side_mut(side).active[slot].illusion_target = Some(d);
     }
-    let mut push_order = || {
+    // The action is logged once: a spread move that bounces (Magic Bounce) logs
+    // its own entry before the holder's copy runs, then keeps going.
+    let outer_logged = std::cell::Cell::new(false);
+    let push_order = |move_order: &mut Vec<String>| {
+        if outer_logged.replace(true) {
+            return;
+        }
         if std::env::var("PE_DEBUG_DMG").is_ok() {
             eprintln!("PUSHORDER {} {}", name, action.choice.move_id);
         }
@@ -2345,8 +2351,19 @@ fn execute_action_inner(
     } else {
         None
     };
+    // A Magic Bounce copy of a spread move (allAdjacent) is `useMove` with its
+    // target given: PS `getMoveTargets` never asks for a random target, so no draw.
+    let bounce_spread_copy = state.side(side).active[slot].bounced
+        && matches!(
+            crate::doubles::move_targets::ps_move_target(&action.choice.move_id.to_string().to_lowercase()),
+            "allAdjacent" | "allAdjacentFoes"
+        );
     let resolved = match tracked {
         Some(t) => Some(t),
+        None if bounce_spread_copy && action.target_loc != 0 => {
+            let loc = action.target_loc;
+            Some(if loc > 0 { (side.other(), (loc - 1) as usize) } else { (side, (-loc - 1) as usize) })
+        }
         // `getMoveTargets`: `priorityEvent('RedirectTarget')` after the target is chosen.
         None => ps_get_target(state, rng, action).map(|t| redirect_target(state, action, t)),
     };
@@ -2747,7 +2764,7 @@ fn execute_action_inner(
         // (`randomFoe() || foe.active[0]`). PS data/moves.ts fly.onTryMove.
         if !has_target && matches!(choice.charge_setup, ChargeSetup::None) {
             modify_move_field_tie(state, rng);
-            push_order();
+            push_order(move_order);
             return;
         }
     }
@@ -2848,7 +2865,7 @@ fn execute_action_inner(
             Some((m, turns_left)) if m == choice.move_id && turns_left > 0 => {
                 // Still charging (Geomancy's second charge turn).
                 state.side_mut(side).active[slot].charging = Some((m, turns_left - 1));
-                push_order();
+                push_order(move_order);
                 return;
             }
             Some((_, _)) => {
@@ -2877,7 +2894,7 @@ fn execute_action_inner(
                     Some((ts, tsl)) if ts != side && action.target_loc == 0 => tsl,
                     _ => action.target,
                 };
-                push_order();
+                push_order(move_order);
                 return;
             }
             None => {
@@ -2923,7 +2940,7 @@ fn execute_action_inner(
                 each_event_update(state, rng);
                 each_event_update(state, rng);
             }
-            push_order();
+            push_order(move_order);
             return;
         }
         // Snore / Sleep Talk `onTry`: fails unless the user is asleep (or has Comatose).
@@ -2932,7 +2949,7 @@ fn execute_action_inner(
                 && state.side(side).team_member(idx).ability != Abilities::COMATOSE =>
         {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-            push_order();
+            push_order(move_order);
             return;
         }
         // Double Shock / Burn Up `onTryMove`: fail unless the user still has
@@ -2945,13 +2962,13 @@ fn execute_action_inner(
             } =>
         {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-            push_order();
+            push_order(move_order);
             return;
         }
         // Healing Wish / Lunar Dance `onTryHit`: fail when nobody can switch in
         // (`!canSwitch(source.side)`). PS data/moves.ts healingwish.
         Choices::HEALINGWISH | Choices::LUNARDANCE if possible_switches(state, side).is_empty() => {
-            push_order();
+            push_order(move_order);
             return;
         }
         // Sucker Punch / Thunderclap `onTry`: fails unless the target still has
@@ -2974,7 +2991,7 @@ fn execute_action_inner(
             // PS `onTry` failure (`-fail`): `moveThisTurnResult = false`, which
             // Stomping Tantrum / Temper Flare read next turn (`moveLastTurnResult`).
             state.side_mut(action.side).active[action.slot].move_result_this_turn = Some(false);
-            push_order();
+            push_order(move_order);
             return;
         }
         // Last Resort `onTry`: every other move slot must have been used.
@@ -3000,12 +3017,12 @@ fn execute_action_inner(
                 !(count >= 2 && has && ok)
             } =>
         {
-            push_order();
+            push_order(move_order);
             return;
         }
         Choices::SPITUP | Choices::SWALLOW if state.side(side).active[slot].stockpile == 0 => {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-            push_order();
+            push_order(move_order);
             return;
         }
         Choices::SWALLOW => {
@@ -3021,7 +3038,7 @@ fn execute_action_inner(
             end_stockpile(state, side, slot);
             each_event_update(state, rng);
             each_event_update(state, rng);
-            push_order();
+            push_order(move_order);
             return;
         }
         _ => {}
@@ -3033,7 +3050,7 @@ fn execute_action_inner(
     // explosion / mindblown / mistyexplosion / selfdestruct (`cant`). No draw.
     if damp_blocks_explosion(state, side, idx, choice) {
         state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-        push_order();
+        push_order(move_order);
         return;
     }
 
@@ -3042,7 +3059,7 @@ fn execute_action_inner(
     if choice.requires_terrain
         && state.terrain.terrain_type == crate::engine::state::Terrain::NONE
     {
-        push_order();
+        push_order(move_order);
         return;
     }
 
@@ -3055,7 +3072,7 @@ fn execute_action_inner(
             Some((c, _)) => {
                 if !rng.label("volatile duration").random_chance(1, c.max(1) as u32) {
                     state.side_mut(side).active[slot].ally_switch = None;
-                    push_order();
+                    push_order(move_order);
                     return;
                 }
                 state.side_mut(side).active[slot].ally_switch = Some((if c < 729 { c * 3 } else { c }, 2));
@@ -3066,7 +3083,7 @@ fn execute_action_inner(
     // Quick Guard `onTry`: `!!this.queue.willAct()` (PS data/moves.ts quickguard).
     if matches!(choice.move_id, Choices::QUICKGUARD | Choices::WIDEGUARD) && !will_act {
         state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-        push_order();
+        push_order(move_order);
         return;
     }
 
@@ -3097,7 +3114,7 @@ fn execute_action_inner(
         }
         if !ok {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-            push_order();
+            push_order(move_order);
             return;
         }
     }
@@ -3112,7 +3129,7 @@ fn execute_action_inner(
         let redirect_fainted = matches!(rec, Some((Some((ts, tsl)), _)) if !slot_alive(state, ts, tsl));
         if !matches!(rec, Some((Some(_), _))) || redirect_fainted {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-            push_order();
+            push_order(move_order);
             return;
         }
     }
@@ -3134,7 +3151,7 @@ fn execute_action_inner(
         }
         if !matches!(last, Some((_, _, _, t)) if t == state.turn) {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-            push_order();
+            push_order(move_order);
             return;
         }
     }
@@ -3148,7 +3165,7 @@ fn execute_action_inner(
             || matches!(p.ability, Abilities::COMATOSE | Abilities::INSOMNIA | Abilities::VITALSPIRIT)
         {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-            push_order();
+            push_order(move_order);
             return;
         }
     }
@@ -3162,7 +3179,7 @@ fn execute_action_inner(
         && state.side(side).team_member(idx).item == crate::engine::items::Items::NONE
     {
         state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-        push_order();
+        push_order(move_order);
         return;
     }
 
@@ -3220,7 +3237,7 @@ fn execute_action_inner(
         } else {
             state.side_mut(target_side).future_move[target_slot] = Some((choice.move_id, side, idx, 0));
         }
-        push_order();
+        push_order(move_order);
         return;
     }
 
@@ -3235,7 +3252,7 @@ fn execute_action_inner(
             .unwrap_or(false);
         if !ok {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-            push_order();
+            push_order(move_order);
             return;
         }
     }
@@ -3243,7 +3260,18 @@ fn execute_action_inner(
     // No Retreat `onTry`: fails if the volatile is already up (no draw).
     if choice.move_id == Choices::NORETREAT && state.side(side).active[slot].no_retreat {
         state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-        push_order();
+        push_order(move_order);
+        return;
+    }
+
+    // Stuff Cheeks `onTry`: fails unless the user holds a berry (PS
+    // data/moves.ts stuffcheeks: `source.getItem().isBerry`). No draw.
+    // TODO(PS parity): the +2 Defense and the berry being eaten (`onHit`).
+    if choice.move_id == Choices::STUFFCHEEKS
+        && !state.side(side).team_member(idx).item.to_string().ends_with("BERRY")
+    {
+        state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+        push_order(move_order);
         return;
     }
 
@@ -3251,7 +3279,7 @@ fn execute_action_inner(
     // TODO(PS parity): `ateBerry` once berries are modeled.
     if choice.move_id == Choices::BELCH {
         state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-        push_order();
+        push_order(move_order);
         return;
     }
 
@@ -3350,6 +3378,35 @@ fn execute_action_inner(
                     continue;
                 }
             }
+            // Magic Bounce `onTryHit` on a spread move (PS `hitStepTryHitEvent`,
+            // data/abilities.ts magicbounce): a reflectable move that reaches the
+            // holder is used back by the holder on its user, before this move's
+            // accuracy rolls. The holder drops out of this move's targets. The
+            // copy does not bounce again (its user's `bounced` flag, PS hasBounced).
+            // TODO(PS parity): semi-invulnerable holder (handled above for the
+            // charge turn only).
+            if choice.flags.reflectable
+                && (ts, tsl) != (side, slot)
+                && !state.side(side).active[slot].bounced
+                && d.ability == Abilities::MAGICBOUNCE
+                && !crate::engine::abilities::ignores_target_ability(state.side(side).team_member(idx), choice, &d.ability)
+            {
+                if let Some(bidx) = state.side(ts).active[tsl].pokemon_index {
+                    push_order(move_order);
+                    let mut sub = action.clone();
+                    sub.side = ts;
+                    sub.slot = tsl;
+                    sub.pokemon_index = bidx;
+                    sub.target = slot;
+                    sub.target_loc = slot as i8 + 1;
+                    state.side_mut(ts).active[tsl].external_call = true;
+                    state.side_mut(ts).active[tsl].bounced = true;
+                    execute_action_inner(state, rng, &sub, move_order, will_act, queue);
+                    state.side_mut(ts).active[tsl].external_call = false;
+                    state.side_mut(ts).active[tsl].bounced = false;
+                }
+                continue;
+            }
             // PS sim/pokemon.ts runImmunity (trySpreadMoveHit): a Ground move
             // needs a grounded target (Magnet Rise, Levitate, ...). No draw.
             if choice.move_type == PokemonType::GROUND
@@ -3412,7 +3469,7 @@ fn execute_action_inner(
             spread_list.push((ts, tsl));
         }
         if spread_list.is_empty() {
-            push_order();
+            push_order(move_order);
             return;
         }
         target_side = spread_list[0].0;
@@ -3442,7 +3499,7 @@ fn execute_action_inner(
     if (is_ally && !is_self || ally_or_self_picked_ally) && !is_field && choice.move_id != Choices::HELPINGHAND {
         if ally_semi_invulnerable(state, side, ally_slot) {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-            push_order();
+            push_order(move_order);
             return;
         }
     }
@@ -3452,7 +3509,7 @@ fn execute_action_inner(
         // volatile: no semi-invulnerability (the residual handler lingers).
         if semi_invulnerable_blocks(state, side, idx, choice.move_id, target_side, target_slot) {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-            push_order();
+            push_order(move_order);
             return;
         }
     }
@@ -3469,7 +3526,7 @@ fn execute_action_inner(
         && state.side(target_side).slot_pokemon(target_slot).is_some_and(|d| (slot_grounded(d, &state.side(target_side).active[target_slot]) || state.gravity.active))
     {
         state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-        push_order();
+        push_order(move_order);
         return;
     }
 
@@ -3493,7 +3550,7 @@ fn execute_action_inner(
         })
     {
         state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-        push_order();
+        push_order(move_order);
         return;
     }
 
@@ -3507,7 +3564,7 @@ fn execute_action_inner(
         && state.side(target_side).side_conditions.quick_guard > 0
     {
         state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-        push_order();
+        push_order(move_order);
         return;
     }
 
@@ -3545,7 +3602,7 @@ fn execute_action_inner(
                 }
             }
         }
-        push_order();
+        push_order(move_order);
         return;
     }
 
@@ -3573,7 +3630,7 @@ fn execute_action_inner(
             })
     {
         if let Some(bidx) = state.side(target_side).active[target_slot].pokemon_index {
-            push_order();
+            push_order(move_order);
             let mut sub = action.clone();
             sub.side = target_side;
             sub.slot = target_slot;
@@ -3605,7 +3662,7 @@ fn execute_action_inner(
         })
     {
         state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-        push_order();
+        push_order(move_order);
         return;
     }
 
@@ -3614,7 +3671,7 @@ fn execute_action_inner(
     if !is_self && !is_field && (side, slot) != (target_side, target_slot) && !is_spread {
         if try_absorb(state, target_side, target_slot, choice.move_type) {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-            push_order();
+            push_order(move_order);
             return;
         }
     }
@@ -3632,7 +3689,7 @@ fn execute_action_inner(
             .is_some_and(|d| crate::doubles::damage::type_mod(&choice.move_type, d).is_none())
     {
         state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-        push_order();
+        push_order(move_order);
         return;
     }
 
@@ -3675,7 +3732,7 @@ fn execute_action_inner(
             .unwrap_or(false);
         if immune && !is_spread {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-            push_order();
+            push_order(move_order);
             return;
         }
     }
@@ -3689,7 +3746,7 @@ fn execute_action_inner(
         && state.side(side).active[slot].pokemon_index == Some(idx)
     {
         state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-        push_order();
+        push_order(move_order);
         return;
     }
 
@@ -3704,7 +3761,7 @@ fn execute_action_inner(
             || queue.iter().any(|q| q.side == side && Some(q.pokemon_index) == ally_idx);
         if !ally_ok {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-            push_order();
+            push_order(move_order);
             return;
         }
         let immune = state
@@ -3722,7 +3779,7 @@ fn execute_action_inner(
             .unwrap_or(false);
         if immune {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-            push_order();
+            push_order(move_order);
             return;
         }
     }
@@ -3746,7 +3803,7 @@ fn execute_action_inner(
             .unwrap_or(false);
         if immune {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-            push_order();
+            push_order(move_order);
             return;
         }
     }
@@ -3763,7 +3820,7 @@ fn execute_action_inner(
             .unwrap_or(true)
     {
         state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-        push_order();
+        push_order(move_order);
         return;
     }
 
@@ -3805,7 +3862,7 @@ fn execute_action_inner(
                 .is_none()
             {
                 state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-                push_order();
+                push_order(move_order);
                 return;
             }
         }
@@ -3828,7 +3885,7 @@ fn execute_action_inner(
             .unwrap_or(false)
     {
         state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-        push_order();
+        push_order(move_order);
         return;
     }
 
@@ -3838,7 +3895,7 @@ fn execute_action_inner(
         let target_hp = state.side(target_side).slot_pokemon(target_slot).map(|p| p.hp).unwrap_or(0);
         if user_hp >= target_hp {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-            push_order();
+            push_order(move_order);
             return;
         }
     }
@@ -3851,7 +3908,7 @@ fn execute_action_inner(
         // fails in `onStart` ("Pokemon hasn't moved yet"), so only Struggle stops here.
         if matches!(last, Some(Choices::STRUGGLE)) {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-            push_order();
+            push_order(move_order);
             return;
         }
     }
@@ -3867,7 +3924,7 @@ fn execute_action_inner(
             .unwrap_or(false);
         if bad {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-            push_order();
+            push_order(move_order);
             return;
         }
     }
@@ -3884,7 +3941,7 @@ fn execute_action_inner(
             .unwrap_or(false);
         if sticky {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-            push_order();
+            push_order(move_order);
             return;
         }
     }
@@ -3900,7 +3957,7 @@ fn execute_action_inner(
             .unwrap_or(false);
         if immune {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-            push_order();
+            push_order(move_order);
             return;
         }
     }
@@ -3915,7 +3972,7 @@ fn execute_action_inner(
             .unwrap_or(false);
         if grass {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-            push_order();
+            push_order(move_order);
             return;
         }
     }
@@ -3926,7 +3983,7 @@ fn execute_action_inner(
         && state.side(side).active[slot].active_move_actions > 1
     {
         state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-        push_order();
+        push_order(move_order);
         return;
     }
 
@@ -3947,7 +4004,7 @@ fn execute_action_inner(
         );
         if !opposite || oblivious {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-            push_order();
+            push_order(move_order);
             return;
         }
     }
@@ -3981,7 +4038,7 @@ fn execute_action_inner(
             .unwrap_or(false);
         if ghost {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-            push_order();
+            push_order(move_order);
             return;
         }
     }
@@ -4039,7 +4096,7 @@ fn execute_action_inner(
             if matches!(choice.move_id, Choices::EXPLOSION | Choices::MISTYEXPLOSION | Choices::SELFDESTRUCT) {
                 selfdestruct_user_faint(state, rng, side, slot);
             }
-            push_order();
+            push_order(move_order);
             return;
         }
         target_side = spread_list[0].0;
@@ -4078,7 +4135,7 @@ fn execute_action_inner(
             if matches!(choice.move_id, Choices::EXPLOSION | Choices::MISTYEXPLOSION | Choices::SELFDESTRUCT) {
                 selfdestruct_user_faint(state, rng, side, slot);
             }
-            push_order();
+            push_order(move_order);
             return;
         }
     }
@@ -4135,7 +4192,7 @@ fn execute_action_inner(
         })
     {
         state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-        push_order();
+        push_order(move_order);
         return;
     }
     if choice.ohko
@@ -4157,7 +4214,7 @@ fn execute_action_inner(
         let sheer = choice.move_id == Choices::SHEERCOLD;
         if alevel < dlevel || (sheer && ice(dtypes)) {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-            push_order();
+            push_order(move_order);
             return;
         }
         let mut acc = if sheer && !ice(atypes) { 20 } else { 30 };
@@ -4166,7 +4223,7 @@ fn execute_action_inner(
             || state.side(target_side).slot_pokemon(target_slot).is_some_and(|d| d.ability == Abilities::NOGUARD);
         if !no_guard && !rng.label("accuracy").random_chance(acc.max(0) as u32, 100) {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-            push_order();
+            push_order(move_order);
             return;
         }
     }
@@ -4204,7 +4261,7 @@ fn execute_action_inner(
         // `eachEvent('Update')` (once in the loop, once after it).
         each_event_update(state, rng);
         each_event_update(state, rng);
-        push_order();
+        push_order(move_order);
         return;
     }
 
@@ -4219,7 +4276,7 @@ fn execute_action_inner(
             if ts == side && tsl != slot && state.side(ts).active[tsl].substitute_health > 0 {
                 each_event_update(state, rng);
                 each_event_update(state, rng);
-                push_order();
+                push_order(move_order);
                 return;
             }
         }
@@ -7310,7 +7367,7 @@ fn execute_action_inner(
         state.side_mut(side).active[slot].baton_passing = baton;
     }
 
-    push_order();
+    push_order(move_order);
     move_order.extend(extra_order);
     move_order.extend(copy_order);
 }

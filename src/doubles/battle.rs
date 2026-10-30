@@ -528,26 +528,33 @@ fn ignores_evasion(ability: Abilities, mv: Choices) -> bool {
         )
 }
 
+/// A queue change planned by a move (Encore `onStart`): the queue indices are
+/// relative to the queue the move saw (`actions[i..]`). The PRNG draws were
+/// taken when it was planned; the battle loop applies the removal and insert.
+#[derive(Debug, Clone)]
+pub(crate) struct QueuePlan {
+    remove: usize,
+    insert: usize,
+    action: Action,
+}
+
 /// PS `queue.changeAction` (Encore): replace the pending move of the pokemon
-/// in `(side, slot)` with `mv` unless it already queues `mv`.
+/// in `(side, slot)` with `mv` unless it already queues `mv`. Plans the
+/// change against `queue` (draws now, as PS does inside the move).
 /// PS sim/battle-queue.ts changeAction / insertChoice / resolveAction.
-fn apply_queue_change(
+fn plan_queue_change(
     state: &mut DoublesState,
     rng: &mut Gen5Rng,
-    actions: &mut Vec<Action>,
-    from: usize,
+    queue: &[Action],
     side: Side,
     slot: usize,
     mv: Choices,
-) {
-    let Some(idx) = state.side(side).active[slot].pokemon_index else { return };
-    let Some(j) = (from..actions.len()).find(|&j| actions[j].side == side && actions[j].pokemon_index == idx) else {
-        return;
-    };
-    if actions[j].choice.move_id == mv {
-        return;
+) -> Option<QueuePlan> {
+    let idx = state.side(side).active[slot].pokemon_index?;
+    let j = queue.iter().position(|a| a.side == side && a.pokemon_index == idx)?;
+    if queue[j].choice.move_id == mv {
+        return None;
     }
-    actions.remove(j);
     let p = state.side(side).team_member(idx);
     let mi = [&p.moves.m0, &p.moves.m1, &p.moves.m2, &p.moves.m3]
         .iter()
@@ -587,8 +594,9 @@ fn apply_queue_change(
         a.target = tsl;
     }
     let _ = ps_get_target(state, rng, &a);
-    // `insertChoice`: first / last index among the queue by comparePriority.
-    let rest = &actions[from..];
+    // `insertChoice`: first / last index among the queue (the target's own
+    // action already cancelled) by comparePriority.
+    let rest: Vec<&Action> = queue.iter().enumerate().filter(|&(k, _)| k != j).map(|(_, x)| x).collect();
     let mut first: Option<usize> = None;
     let mut last: Option<usize> = None;
     for (k, cur) in rest.iter().enumerate() {
@@ -602,14 +610,20 @@ fn apply_queue_change(
             break;
         }
     }
-    match first {
-        None => actions.push(a),
+    let insert = match first {
+        None => rest.len(),
         Some(f) => {
             let l = last.unwrap_or(rest.len());
-            let k = if f == l { f } else { f + rng.label("speed tie (queue insert)").random((l - f) as u32 + 1) as usize };
-            actions.insert(from + k, a);
+            if f == l { f } else { f + rng.label("speed tie (queue insert)").random((l - f) as u32 + 1) as usize }
         }
-    }
+    };
+    Some(QueuePlan { remove: j, insert, action: a })
+}
+
+/// Applies a planned queue change to `actions[from..]`.
+fn apply_queue_plan(actions: &mut Vec<Action>, from: usize, plan: QueuePlan) {
+    actions.remove(from + plan.remove);
+    actions.insert(from + plan.insert, plan.action);
 }
 
 /// Abilities' `ModifyAccuracy` chain pieces: (priority 0, priority -1), each a
@@ -1022,8 +1036,8 @@ pub fn run_battle_fuzz(
             // Encore `onStart` -> `queue.changeAction(target, {choice: 'move', moveid})`:
             // cancel the target's queued move and insert the encored one
             // (`resolveAction` draws a random target; `insertChoice` shuffles ties).
-            if let Some((es, esl, em)) = state.queue_change.take() {
-                apply_queue_change(state, rng, &mut actions, i, es, esl, em);
+            if let Some(plan) = state.queue_change.take() {
+                apply_queue_plan(&mut actions, i, plan);
             }
             // Gravity: `queue.cancelMove(pokemon)` for pokemon whose Fly / Bounce ended.
             for (cs, csl) in std::mem::take(&mut state.queue_cancel) {
@@ -2231,6 +2245,18 @@ fn execute_action_inner(
         }
     }
 
+    // Expanding Force `onModifyMove` (PS data/moves.ts expandingforce): in Psychic
+    // Terrain a grounded user hits all adjacent foes. PS useMoveInner then calls
+    // `getRandomTarget` once per `baseTarget !== move.target` check: two foe draws.
+    if expanding_force_spreads(state, side, slot, choice) {
+        for _ in 0..2 {
+            let foes: Vec<usize> = (0..2).filter(|&sl| state.side(side.other()).slot_pokemon(sl).is_some_and(|p| p.hp > 0)).collect();
+            if !foes.is_empty() {
+                let _ = rng.label("retarget").random(foes.len() as u32);
+            }
+        }
+    }
+
     // Two-turn charge moves (Dig, Meteor Beam, ...): mirrors PS
     // `onTryMove` + `addVolatile('twoturnmove')` (data/moves.ts). The first
     // use(s) only charge: no accuracy roll, no damage, no secondary, but the
@@ -2635,7 +2661,11 @@ fn execute_action_inner(
     // the (alive) allies first, then the foes. Each target is filtered like
     // the single-target pre-hit checks (no draws), then rolls its own accuracy.
     // TODO(PS parity): invulnerability exceptions (Earthquake vs Dig, ...).
-    let move_ty = crate::doubles::move_targets::ps_move_target(&choice.move_id.to_string().to_lowercase());
+    let move_ty = if expanding_force_spreads(state, side, slot, choice) {
+        "allAdjacentFoes"
+    } else {
+        crate::doubles::move_targets::ps_move_target(&choice.move_id.to_string().to_lowercase())
+    };
     // PS `smartTarget` (Dragon Darts, multihit 2): `getSmartTargets` pairs the
     // chosen foe with its adjacent ally, chosen first. Both are accuracy-rolled
     // up front; hit N then hits `targets[N - 1]` only (`hitStepMoveHitLoop`).
@@ -4725,7 +4755,7 @@ fn execute_action_inner(
                 state.side_mut(target_side).active[target_slot].encore =
                     Some((m, if will_move { 3 } else { 4 }));
                 if will_move {
-                    state.queue_change = Some((target_side, target_slot, m));
+                    state.queue_change = plan_queue_change(state, rng, queue, target_side, target_slot, m);
                 }
             }
         }
@@ -6370,6 +6400,16 @@ fn ability_priority_boost(p: &crate::state::Pokemon, choice: &Choice) -> i8 {
         Abilities::GALEWINGS => (choice.move_type == PokemonType::FLYING && p.hp == p.maxhp) as i8,
         _ => 0,
     }
+}
+
+/// Expanding Force in Psychic Terrain from a grounded user: `onModifyMove` makes
+/// it an `allAdjacentFoes` move (PS data/moves.ts expandingforce).
+fn expanding_force_spreads(state: &DoublesState, side: Side, slot: usize, choice: &Choice) -> bool {
+    choice.move_id == Choices::EXPANDINGFORCE
+        && state.terrain.terrain_type == crate::engine::state::Terrain::PSYCHICTERRAIN
+        && state.side(side).slot_pokemon(slot).is_some_and(|p| {
+            slot_grounded(p, &state.side(side).active[slot]) || state.gravity.active
+        })
 }
 
 fn grassy_glide_boost(state: &DoublesState, p: &crate::state::Pokemon, choice: &Choice) -> i8 {
@@ -8541,10 +8581,6 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
                 _ => {}
             }
             if !alive {
-                // `stall` slot condition (saved with the fainted occupant).
-                if s.fainted_in_slot[slot].map(|st| st.1.is_some()).unwrap_or(false) {
-                    push(NO_ORDER, speed, 2, ResidualKind::Stall(side, slot));
-                }
                 // Abilities (subOrder 7 unless set).
                 if matches!(p.ability, Abilities::HEALER | Abilities::SHEDSKIN | Abilities::HYDRATION) {
                     push(5, speed, 3, ResidualKind::CureStatus(side, slot));

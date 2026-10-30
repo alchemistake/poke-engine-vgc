@@ -514,10 +514,9 @@ pub struct DoublesState {
     /// wiped out at once, PS gives the win to the side of the last one
     /// (`checkWin(faintData)`, sim/battle.ts).
     pub faint_log: Vec<Side>,
-    /// Encore `onStart` (champions): the target's queued move must become
-    /// this move (`queue.changeAction`), applied by the battle loop:
-    /// (side, slot, move).
-    pub queue_change: Option<(Side, usize, crate::choices::Choices)>,
+    /// Encore `onStart` (champions): the target's queued move becomes this move
+    /// (`queue.changeAction`), planned during the move and applied by the battle loop.
+    pub queue_change: Option<crate::doubles::battle::QueuePlan>,
     /// Round `onTry` ran this action: the battle loop prioritizes the next
     /// queued Round with BP doubled (`queue.prioritizeAction`).
     pub queue_round: bool,

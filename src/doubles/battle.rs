@@ -4756,7 +4756,15 @@ fn execute_action_inner(
             if state.side(target_side).active[target_slot].substitute_health <= 0 {
                 if let Some(tidx) = state.side(target_side).active[target_slot].pokemon_index {
                     let before = state.side(target_side).team_boosts[tidx as usize].eva;
-                    apply_boosts(state, target_side, tidx, &StatBoosts { evasion: -1, ..Default::default() }, true);
+                    // Mirror Armor `onTryBoost` bounces the drop onto the user
+                    // (the move's `this.boost` goes through TryBoost).
+                    let drop = StatBoosts { evasion: -1, ..Default::default() };
+                    let drop = if target_side != side {
+                        mirror_armor_bounce(state, side, slot, target_side, tidx, &drop)
+                    } else {
+                        drop
+                    };
+                    apply_boosts(state, target_side, tidx, &drop, true);
                     success = state.side(target_side).team_boosts[tidx as usize].eva != before;
                 }
             }

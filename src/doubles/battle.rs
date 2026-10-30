@@ -2100,7 +2100,8 @@ fn redirect_target(state: &DoublesState, action: &Action, target: (Side, usize))
             continue;
         }
         let powder_ok = a.follow_me == 1
-            || !crate::engine::mechanics::powder_immune(state.side(action.side).team_member(action.pokemon_index));
+            || !(crate::engine::mechanics::powder_immune(state.side(action.side).team_member(action.pokemon_index))
+                || state.side(action.side).active[action.slot].added_type == PokemonType::GRASS);
         if powder_ok {
             return (foe, sl);
         }
@@ -4342,7 +4343,8 @@ fn execute_action_inner(
             // a Grass / Overcoat target is skipped before the accuracy roll.
             if choice.flags.powder
                 && (ts, tsl) != (side, slot)
-                && crate::engine::mechanics::powder_immune(&d)
+                && (crate::engine::mechanics::powder_immune(&d)
+                    || state.side(ts).active[tsl].added_type == PokemonType::GRASS)
             {
                 continue;
             }
@@ -4919,7 +4921,10 @@ fn execute_action_inner(
             .side(target_side)
             .slot_pokemon(target_slot)
             .map(|p| crate::engine::mechanics::powder_immune(p))
-            .unwrap_or(false);
+            .unwrap_or(false)
+            // `hasType('Grass')` includes Forest's Curse's `addedType` (kept in
+            // the slot for a dual-typed target). PS sim/pokemon.ts hasType.
+            || state.side(target_side).active[target_slot].added_type == PokemonType::GRASS;
         if immune {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
             push_order(move_order);
@@ -10675,7 +10680,7 @@ fn contact_abilities(
         }
         Some(ContactAbility::EffectSpore) => {
             let attacker = state.side(side).team_member(idx);
-            if !powder_immune(attacker) {
+            if !(powder_immune(attacker) || state.side(side).active[slot].added_type == PokemonType::GRASS) {
                 let r = rng.label("ability").random(100);
                 let st = if r < 11 {
                     Some(PokemonStatus::SLEEP)
@@ -13104,6 +13109,15 @@ fn no_usable_moves(state: &DoublesState, side: Side, slot: usize, idx: PokemonIn
             || a.disabled.is_some_and(|(d, _)| d == m.id)
             || imprison_blocks(state, side, m.id)
             || (a.taunt > 0 && m.choice.category == MoveCategory::Status)
+            // PS data/mods/champions/moves.ts fakeout / firstimpression
+            // `onDisableMove`: disabled once `activeMoveActions` is non-zero.
+            || (matches!(m.id, Choices::FAKEOUT | Choices::FIRSTIMPRESSION) && a.active_move_actions > 0)
+            // PS data/moves.ts gravity / healblock / throatchop / torment
+            // `condition.onDisableMove`.
+            || (state.gravity.active && has_gravity_flag(m.id))
+            || (a.heal_block > 0 && m.choice.flags.heal)
+            || (a.throat_chop > 0 && m.choice.flags.sound)
+            || (a.torment && a.last_move.is_some_and(|l| l == m.id && l != Choices::STRUGGLE))
     })
 }
 

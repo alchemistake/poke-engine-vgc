@@ -175,6 +175,10 @@ pub struct ActiveSlot {
     pub ingrain: bool,
     /// `healblock` volatile: remaining duration (0 = none).
     pub heal_block: u8,
+    /// Trace `seek` (PS data/abilities.ts trace.effectState.seek): set by Trace's
+    /// `onStart` (switch-in, Role Play / Skill Swap), cleared when a foe with No
+    /// Ability is seen then; while set, every Update event retries the copy.
+    pub trace_seek: bool,
     /// `syrupbomb` volatile: (source side, source team index, duration).
     pub syrup_bomb: Option<(Side, PokemonIndex, u8)>,
     /// `octolock` volatile: the binder (side, team index). No duration; it
@@ -338,6 +342,7 @@ impl ActiveSlot {
             minimize: false,
             ingrain: false,
             heal_block: 0,
+            trace_seek: false,
             syrup_bomb: None,
             octolock: None,
             trapped: false,

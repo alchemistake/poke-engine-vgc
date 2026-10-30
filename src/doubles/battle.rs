@@ -5696,6 +5696,10 @@ fn execute_action_inner(
         // Mega Launcher); fails at full HP.
         if choice.move_id == Choices::HEALPULSE && ti == 0 {
             let mega = state.side(side).team_member(idx).ability == Abilities::MEGALAUNCHER;
+            // Heal Block (PS data/moves.ts healblock.onTryHeal) returns
+            // false for any heal but Pollen Puff's: `battle.heal` fails
+            // (`-fail|heal`) before the target is healed.
+            let blocked = state.side(target_side).active[target_slot].heal_block > 0;
             if let Some(tidx) = state.side(target_side).active[target_slot].pokemon_index {
                 let pm = state.side_mut(target_side).team_member_mut(tidx);
                 let amount = if mega {
@@ -5703,7 +5707,10 @@ fn execute_action_inner(
                 } else {
                     (pm.maxhp + 1) / 2
                 };
-                let full = pm.hp >= pm.maxhp;
+                // Heal Block (PS data/moves.ts healblock.onTryHeal) returns
+                // false for any heal but Pollen Puff's: `battle.heal` fails
+                // (`-fail|heal`) before the target is healed.
+                let full = pm.hp >= pm.maxhp || blocked;
                 if !full {
                     pm.hp = (pm.hp + amount).min(pm.maxhp);
                 }
@@ -5891,7 +5898,15 @@ fn execute_action_inner(
                 let atk = multiply_boost(tb.atk, tp.attack).max(1);
                 let ooze = tp.ability == Abilities::LIQUIDOOZE;
                 let tidx = state.side(target_side).active[target_slot].pokemon_index.unwrap();
-                apply_boosts(state, target_side, tidx, &StatBoosts { attack: -1, ..Default::default() }, true);
+                // Mirror Armor bounces the drop back onto the user (`boost`
+                // from another pokemon; PS data/abilities.ts mirrorarmor).
+                let drop = StatBoosts { attack: -1, ..Default::default() };
+                let drop = if target_side != side {
+                    mirror_armor_bounce(state, side, slot, target_side, tidx, &drop)
+                } else {
+                    drop
+                };
+                apply_boosts(state, target_side, tidx, &drop, true);
                 if ooze {
                     // Liquid Ooze `onSourceTryHeal` (`strengthsap` is on its list): the
                     // heal event still runs and the user takes the amount as damage,
@@ -7743,11 +7758,19 @@ fn base_power_with_modifiers(
     } else {
         bp
     };
+    // A doubling `basePowerCallback` (Payback, Assurance, Stomping Tantrum,
+    // Temper Flare) returns the doubled base, which the `onBasePower`
+    // modifiers then act on (PS sim/battle-actions.ts getDamage order).
+    let (bp, dynamic) = if bp_doubled {
+        (bp * 2.0, if dynamic > 0.0 { dynamic * 2.0 } else { dynamic })
+    } else {
+        (bp, dynamic)
+    };
     // (onBasePowerPriority, 4096-based modifier); PS runs higher priority
     // first. Values from data/abilities.ts / data/moves.ts `onBasePower`.
     // Technician sees the base power after `basePowerCallback` (a doubled
     // Assurance / Payback is 120, not 60).
-    let tech_bp = if bp_doubled { bp * 2.0 } else { bp };
+    let tech_bp = bp;
     let mut mods: Vec<(i32, i64)> = Vec::new();
     let f = &choice.flags;
     let physical = choice.category == MoveCategory::Physical;
@@ -7869,7 +7892,14 @@ fn base_power_with_modifiers(
         hh /= 1.5;
     }
     if mods.is_empty() {
-        return if choice.move_id == Choices::RAGEFIST || fixed_bp > 0.0 { bp } else { dynamic };
+        return if choice.move_id == Choices::RAGEFIST || fixed_bp > 0.0 {
+            bp
+        } else if bp_doubled && dynamic <= 0.0 {
+            // No callback value: the doubled choice base power.
+            choice.base_power * 2.0
+        } else {
+            dynamic
+        };
     }
     mods.sort_by_key(|&(prio, _)| -prio);
     let mut chain: i64 = 4096;
@@ -8768,7 +8798,9 @@ fn compute_hit_damage(
                         .unwrap_or(false),
                 side_total_fainted(state, side),
                 att_slot.hit_number as u32,
-                att_slot.bp_double,
+                att_slot.bp_double
+                    || (matches!(choice.move_id, Choices::STOMPINGTANTRUM | Choices::TEMPERFLARE)
+                        && att_slot.move_result_last_turn == Some(false)),
                 att_slot.bp_fixed,
                 // PS `rivalry.onBasePower`: both genders must be set (`M` / `F`).
                 {
@@ -8789,27 +8821,10 @@ fn compute_hit_damage(
             ),
         };
         let mut ctx = ctx;
-        if att_slot.bp_double {
-            ctx.base_power_override = if ctx.base_power_override > 0.0 {
-                ctx.base_power_override
-            } else {
-                choice.base_power
-            } * 2.0;
-        }
         // Lash Out `onBasePower`: chainModify(2) if the user's stats were
         // lowered this turn (PS data/moves.ts lashout).
         // TODO(PS parity): chained with the other base-power modifiers.
         if choice.move_id == Choices::LASHOUT && att_slot.stats_lowered_this_turn {
-            ctx.base_power_override = if ctx.base_power_override > 0.0 {
-                ctx.base_power_override
-            } else {
-                choice.base_power
-            } * 2.0;
-        }
-        if matches!(choice.move_id, Choices::STOMPINGTANTRUM | Choices::TEMPERFLARE)
-            && att_slot.move_result_last_turn == Some(false)
-        {
-            // PS `basePowerCallback`: doubled after a failed move.
             ctx.base_power_override = if ctx.base_power_override > 0.0 {
                 ctx.base_power_override
             } else {
@@ -9218,7 +9233,24 @@ fn cursed_body(
     let aroma_veil = (0..2).any(|sl| {
         state.side(side).slot_pokemon(sl).is_some_and(|p| p.hp > 0 && p.ability == Abilities::AROMAVEIL)
     });
-    if hit && !aroma_veil {
+    // Disable `condition.onStart` (PS data/moves.ts disable): the attacker's
+    // move with no PP left is "Move out of PP" and the volatile does not start.
+    // The move's PP is already spent when this runs.
+    let out_of_pp = match slot_index_or_unresolved(state, side, slot) {
+        Some(ai) => {
+            let p = state.side(side).team_member(ai);
+            [
+                crate::state::PokemonMoveIndex::M0,
+                crate::state::PokemonMoveIndex::M1,
+                crate::state::PokemonMoveIndex::M2,
+                crate::state::PokemonMoveIndex::M3,
+            ]
+            .iter()
+            .any(|mi| p.moves[mi].id == choice.move_id && p.moves[mi].pp == 0)
+        }
+        None => false,
+    };
+    if hit && !aroma_veil && !out_of_pp {
         state.side_mut(side).active[slot].disabled = Some((choice.move_id, 4));
     }
 }
@@ -9768,26 +9800,18 @@ fn apply_on_switch_abilities(
     // flag or No Ability are excluded. Must happen before the copied
     // ability's own on-switch effects run.
     if ability == Abilities::TRACE {
-        // `onStart`: a foe with No Ability stops Trace (`seek = false`).
-        // TODO(PS parity): `onUpdate` keeps seeking while no foe is valid
-        // (e.g. Trace activates later when a valid foe switches in).
+        // `onStart`: a foe with No Ability stops Trace (`seek = false`), then
+        // `singleEvent('Update')` runs `onUpdate` once. A Trace with no valid
+        // foe keeps seeking: `each_event_update` retries on every Update.
         let foe = side.other();
-        let foes: Vec<PokemonIndex> = (0..2).filter_map(|f| state.side(foe).active[f].pokemon_index).collect();
-        let blocked = foes
+        let blocked = foe_active_indices(state, foe)
             .iter()
             .any(|&fidx| state.side(foe).team_member(fidx).ability == Abilities::NOABILITY);
-        let targets: Vec<PokemonIndex> = foes
-            .into_iter()
-            .filter(|&fidx| !has_notrace(state.side(foe).team_member(fidx).ability))
-            .collect();
-        if !blocked && !targets.is_empty() {
-            let pick = targets[rng.label("trace").random(targets.len() as u32) as usize];
-            let copied = state.side(foe).team_member(pick).ability;
-            if let Some(idx) = state.side(side).active[slot].pokemon_index {
-                state.side_mut(side).team_member_mut(idx).ability = copied;
-                reset_protean_effect(state, side, idx);
+        state.side_mut(side).active[slot].trace_seek = !blocked;
+        if !blocked {
+            if let Some(copied) = trace_copy(state, side, slot, rng) {
+                ability = copied;
             }
-            ability = copied;
         }
     }
     // Forewarn `onStart` (PS data/abilities.ts forewarn): `sample` of the
@@ -10793,8 +10817,57 @@ fn selfdestruct_user_faint(state: &mut DoublesState, rng: &mut Gen5Rng, side: Si
 
 /// PS `eachEvent('Update')` (sim/battle.ts): speed-sorts all actives, which
 /// draws on speed ties. Called after every action and every hit.
-fn each_event_update(state: &DoublesState, rng: &mut Gen5Rng) {
-    let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+fn each_event_update(state: &mut DoublesState, rng: &mut Gen5Rng) {
+    let order = sorted_actives(state, rng, "speed tie (eachEvent)");
+    for (s, sl) in order {
+        // Trace `onUpdate` (PS data/abilities.ts trace): every Update event
+        // while the holder still has Trace and seeks draws a random valid foe.
+        if state.side(s).active[sl].trace_seek {
+            let holder_ok = match state.side(s).slot_pokemon(sl) {
+                Some(p) => p.ability == Abilities::TRACE && p.hp > 0,
+                None => false,
+            };
+            if holder_ok {
+                if trace_copy(state, s, sl, rng).is_some() {
+                    // PS `setAbility` runs the new ability's `Start` event.
+                    let _ = apply_on_switch_abilities(state, s, sl, rng);
+                }
+            }
+        }
+    }
+}
+
+/// Active foe team indices that are alive (PS `side.foes()` / `adjacentFoes`).
+fn foe_active_indices(state: &DoublesState, foe: Side) -> Vec<PokemonIndex> {
+    (0..2)
+        .filter_map(|f| state.side(foe).active[f].pokemon_index)
+        .filter(|&fidx| state.side(foe).team_member(fidx).hp > 0)
+        .collect()
+}
+
+/// Trace's `onUpdate` for the holder in `side`'s `active[slot]`: `sample` over
+/// the alive adjacent foes that are not `notrace` and not No Ability (one draw
+/// even for a single candidate), then copies that foe's ability. Returns the
+/// copied ability, or None when there is no candidate (no draw).
+fn trace_copy(state: &mut DoublesState, side: Side, slot: usize, rng: &mut Gen5Rng) -> Option<Abilities> {
+    let foe = side.other();
+    let targets: Vec<PokemonIndex> = foe_active_indices(state, foe)
+        .into_iter()
+        .filter(|&fidx| {
+            let a = state.side(foe).team_member(fidx).ability;
+            !has_notrace(a) && a != Abilities::NOABILITY
+        })
+        .collect();
+    if targets.is_empty() {
+        return None;
+    }
+    let pick = targets[rng.label("trace").random(targets.len() as u32) as usize];
+    let copied = state.side(foe).team_member(pick).ability;
+    if let Some(idx) = state.side(side).active[slot].pokemon_index {
+        state.side_mut(side).team_member_mut(idx).ability = copied;
+        reset_protean_effect(state, side, idx);
+    }
+    Some(copied)
 }
 
 /// PS `eachEvent` / `runSwitch`: the actives speed-sorted (speed only), ties

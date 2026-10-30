@@ -416,7 +416,11 @@ fn ally_faint_copy(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, fain
         }
         state.side_mut(side).team_member_mut(hidx).ability = ability;
         ability_update_cures(state, side, slot);
-        let _ = apply_on_switch_abilities(state, side, slot, rng);
+        // The Start event's `eachEvent('WeatherChange' / 'TerrainChange')` (Cloud
+        // Nine, Drought, ...) is a sort of all actives, as for a switch-in.
+        if apply_on_switch_abilities(state, side, slot, rng) {
+            let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+        }
     }
 }
 
@@ -1062,7 +1066,9 @@ pub fn run_battle_fuzz(
     for (side, slot) in lead_order {
         if apply_on_switch_abilities(state, side, slot, rng) {
             // Terrain just set (e.g. Grassy Surge): `eachEvent("TerrainChange")`.
-            let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+            // Labelled switch-in like PS (`runSwitch` is on its stack); no
+            // pokemon has fainted yet, so the sort is the same.
+            let _ = sorted_actives(state, rng, "speed tie (switch-in)");
         }
         // Forecast `onWeatherChange` (PS data/abilities.ts forecast): a lead's
         // Drought / Drizzle changes Castform's forme during the send-out.
@@ -1571,7 +1577,67 @@ pub fn run_battle_fuzz(
                 }
             }
             let queue_start = i;
+            // PS runAction tail: `runPursuitActivation` (gen >= 5: `eachEvent('Update')`)
+            // for every live switching pokemon, sides then slots, before the switch
+            // request; Baton Pass / Shed Tail set `skipPursuit`. Then commitChoices
+            // `queue.sort()`s the new switch actions (speed order, ties shuffled)
+            // and they run one by one. PS sim/battle.ts runAction / commitChoices,
+            // sim/battle-actions.ts runPursuitActivation.
+            let mut fs_slots: Vec<(Side, usize)> = Vec::new();
             for (side, slot) in [(Side::One, 0usize), (Side::One, 1), (Side::Two, 0), (Side::Two, 1)] {
+                if !state.side(side).active[slot].force_switch {
+                    continue;
+                }
+                fs_slots.push((side, slot));
+                let a = &state.side(side).active[slot];
+                if a.reviving || a.baton_passing || a.shed_tailing {
+                    continue;
+                }
+                let key = if side == Side::One { "a" } else { "b" };
+                let answered = turn.switches.iter().enumerate().any(|(k, sw)| {
+                    !used_switches[k] && sw.pivot && sw.side == key && sw.slot == slot && sw.position.is_some()
+                });
+                if answered && state.side(side).slot_pokemon(slot).is_some_and(|p| p.hp > 0) {
+                    each_event_update(state, rng);
+                }
+            }
+            if fs_slots.len() >= 2 {
+                update_speed(state);
+                let hs: Vec<ResidualHandler> = fs_slots
+                    .iter()
+                    .enumerate()
+                    .map(|(k, &(sd, sl))| {
+                        let speed = state.side(sd).active[sl]
+                            .pokemon_index
+                            .map(|w| state.side(sd).speed_cache[w as usize] as i32)
+                            .unwrap_or(0);
+                        ResidualHandler { order: 0, priority: 0, speed, sub_order: 0, kind: ResidualKind::Status(sd, k) }
+                    })
+                    .collect();
+                let old = fs_slots.clone();
+                fs_slots = sort_residual_handlers(hs, rng, "speed tie (move order)")
+                    .into_iter()
+                    .filter_map(|h| match h.kind {
+                        ResidualKind::Status(_, k) => Some(old[k]),
+                        _ => None,
+                    })
+                    .collect();
+            }
+            // Two or more `instaswitch` actions: each `switchIn` queues its
+            // `runSwitch` behind the next instaswitch, so they all switch in
+            // first and one `runSwitch` batch follows (as at the end of a turn).
+            // PS sim/battle-actions.ts switchIn / runSwitch, sim/battle.ts runAction.
+            let switching = fs_slots.iter().filter(|&&(sd, sl)| {
+                let a = &state.side(sd).active[sl];
+                let key = if sd == Side::One { "a" } else { "b" };
+                !a.reviving && turn.switches.iter().enumerate().any(|(k, sw)| {
+                    !used_switches[k] && sw.pivot && sw.side == key && sw.slot == sl && sw.position.is_some()
+                })
+            }).count();
+            let batch = switching >= 2;
+            let mut batch_in: Vec<(Side, usize)> = Vec::new();
+            let mut run_switch_speeds: Vec<i16> = Vec::new();
+            for (side, slot) in fs_slots {
                 if !state.side(side).active[slot].force_switch {
                     continue;
                 }
@@ -1635,9 +1701,7 @@ pub fn run_battle_fuzz(
                         // Baton Pass / Shed Tail set `skipPursuit` in `self.onHit`
                         // (PS data/moves.ts), so they skip it.
                         // TODO(PS parity): Shed Tail (not in the engine yet).
-                        if !state.side(side).active[slot].baton_passing && !state.side(side).active[slot].shed_tailing {
-                            each_event_update(state, rng);
-                        }
+                        // (Its `runPursuitActivation` sort ran above, for all switchers.)
                         // The switch answer (`commitChoices` -> `updateSpeed`),
                         // the `instaswitch` action, then the `runSwitch` action.
                         update_speed(state);
@@ -1671,7 +1735,11 @@ pub fn run_battle_fuzz(
                         // queued actions (`queue.cancelAction(oldActive)`).
                         let old_pi = state.side(side).active[slot].pokemon_index;
                         switch_out_end_event(state, rng, side, slot);
-                        switch_in(state, side, slot, position);
+                        if batch {
+                            switch_in_inner(state, side, slot, position);
+                        } else {
+                            switch_in(state, side, slot, position);
+                        }
                         // PS `insertChoice` -> `pokemon.updateSpeed()` for the incoming
                         // pokemon: its `speed` is fresh for `runSwitch`'s speedSort.
                         update_speed(state);
@@ -1745,6 +1813,25 @@ pub fn run_battle_fuzz(
                                 a.confusion = confusion;
                                 a.substitute_health = sub;
                             }
+                            // `copyVolatileFrom` runs inside `switchIn`, before the
+                            // `runSwitch` insertChoice's `updateSpeed`: the passed
+                            // Speed boosts are in the cached speed. PS
+                            // sim/battle-actions.ts switchIn, sim/battle-queue.ts insertChoice.
+                            update_speed(state);
+                        }
+                        if batch {
+                            // `insertChoice(runSwitch)`: a tie with an already queued
+                            // `runSwitch` draws its place.
+                            update_speed(state);
+                            if let Some(sp) = effective_speed(state, side, slot) {
+                                let ties = run_switch_speeds.iter().filter(|&&x| x == sp).count();
+                                if ties > 0 {
+                                    let _ = rng.label("speed tie (queue insert)").random(ties as u32 + 1);
+                                }
+                                run_switch_speeds.push(sp);
+                            }
+                            batch_in.push((side, slot));
+                            continue;
                         }
                         // PS `switchIn`: `copyVolatileFrom` runs before
                         // `queue.insertChoice({choice: 'runSwitch'})` -> `updateSpeed`,
@@ -1767,6 +1854,36 @@ pub fn run_battle_fuzz(
                         update_forecast(state);
                     }
                 }
+            }
+            if !batch_in.is_empty() {
+                // The batched `runSwitch` (see above): the last instaswitch's
+                // `eachEvent('Update')`, the switch-in sort, each incoming pokemon's
+                // hazards and Start in that order, then the runSwitch's eachEvent.
+                each_event_update(state, rng);
+                let order = sorted_actives(state, rng, "speed tie (switch-in)");
+                for (sd, sl) in order {
+                    if batch_in.contains(&(sd, sl)) {
+                        entry_hazards(state, sd, sl);
+                        apply_sticky_web(state, sd, sl);
+                        refresh_mimicry_slot(state, sd, sl);
+                    }
+                }
+                // Opportunist `onAnySwitchIn` (as `switch_in` does).
+                for sd in [Side::One, Side::Two] {
+                    for sl in 0..2 {
+                        flush_opportunist(state, sd, sl);
+                    }
+                }
+                for &(sd, sl) in &batch_in {
+                    if !state.side(sd).slot_pokemon(sl).is_some_and(|p| p.hp > 0) {
+                        continue;
+                    }
+                    if apply_on_switch_abilities(state, sd, sl, rng) {
+                        let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+                    }
+                }
+                each_event_update(state, rng);
+                update_forecast(state);
             }
             // PS re-sorts only when the next action is a move (an instructed
             // `beforeTurnMove` re-sorts after it runs).
@@ -2465,6 +2582,9 @@ thread_local! {
     /// computes its damage (set only then): the last target of the previous
     /// per-target loop, not the substitute holder. Unaware reads it.
     static SUB_ACTIVE_TARGET: std::cell::Cell<Option<(Side, usize)>> = const { std::cell::Cell::new(None) };
+    /// The running move stopped in its BeforeMove handlers (PS runMove
+    /// `!willTryMove`), so `runEvent('MoveAborted')` follows.
+    static BEFORE_MOVE_ABORTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// PS `runMove` -> `runEvent('AfterMove', pokemon)`: the handlers are the
@@ -2556,7 +2676,17 @@ fn execute_action_body(
     let mold_breaker = mold_breaker_suppress(state, action);
     AFTER_MOVE_TIE_DRAWN.with(|c| c.set(false));
     NO_TARGET_FAIL.with(|c| c.set(false));
+    BEFORE_MOVE_ABORTED.with(|c| c.set(false));
     execute_action_inner(state, rng, action, move_order, will_act, queue);
+    // PS runMove: a failed BeforeMove runs `runEvent('MoveAborted')` (charge,
+    // twoturnmove, destinybond handlers: a sort). PS sim/battle-actions.ts runMove.
+    // TODO(PS parity): Destiny Bond is cleared before the move here, so its
+    // handler is not in this sort.
+    if BEFORE_MOVE_ABORTED.with(|c| c.replace(false)) {
+        if let Some(sl) = (0..2).find(|&sl| state.side(action.side).active[sl].pokemon_index == Some(action.pokemon_index)) {
+            crate::doubles::events::run_event_ties(state, rng, "MoveAborted", (action.side, sl), None);
+        }
+    }
     if mold_breaker {
         mold_breaker_restore(state);
     }
@@ -2876,12 +3006,13 @@ fn execute_action_inner(
 
     // `useMove` (external) skips the BeforeMove step entirely.
     if !external {
-    // PS `runEvent('BeforeMove', pokemon, target, move)` speed-sorts every
-    // holder's BeforeMove handlers before any callback runs (e.g. Heal Block +
-    // Throat Chop on the user, or two foes' Imprison), whether or not the move
-    // is blocked. TODO(PS parity): the `|cant|` message names the handler
-    // that ran first (order not modelled).
+    // PS `runEvent('BeforeMove', pokemon, target)` speed-sorts every holder's
+    // BeforeMove handlers before any callback runs (Heal Block + Throat Chop on
+    // the user, two foes' Imprison, ...), whether or not the move is blocked.
+    // PS sim/battle-actions.ts runMove. TODO(PS parity): the `|cant|` message
+    // names the handler that ran first (order not modelled).
     crate::doubles::events::run_event_ties(state, rng, "BeforeMove", (side, slot), resolved);
+    BEFORE_MOVE_ABORTED.with(|c| c.set(true));
     // A pokemon that must recharge (Hyper Beam / Solar Beam) cannot act.
     // No PRNG draw (PS `mustrecharge.onBeforeMove` returns false).
     if state.side(side).active[slot].recharging {
@@ -3038,6 +3169,7 @@ fn execute_action_inner(
         return;
     }
 
+    BEFORE_MOVE_ABORTED.with(|c| c.set(false));
     // Focus Punch `beforeMoveCallback` (after the BeforeMove checks): it
     // fails with `|cant|` if the user was hit by a damaging move this turn.
     if action.choice.move_id == Choices::FOCUSPUNCH && state.side(side).active[slot].lost_focus {
@@ -3494,6 +3626,12 @@ fn execute_action_inner(
                     | ChargeSetup::OnlySnow { turns } => turns,
                     ChargeSetup::None => 0,
                 };
+                // `attacker.addVolatile('twoturnmove')`, whose `onStart` runs
+                // `attacker.addVolatile(move.id)`: two TryAddVolatile sorts.
+                // PS data/moves.ts (dig, solarbeam, ...) onTryMove,
+                // data/conditions.ts twoturnmove.onStart.
+                try_add_volatile_ties(state, rng, side, slot);
+                try_add_volatile_ties(state, rng, side, slot);
                 state.side_mut(side).active[slot].charging =
                     Some((choice.move_id, turns.saturating_sub(1)));
                 // `twoturnmove.onStart` runs `runEvent('PrepareHit')` on the charge
@@ -3522,6 +3660,18 @@ fn execute_action_inner(
     // queues the next Round with BP doubled after this action.
     if choice.move_id == Choices::ROUND {
         state.queue_round = true;
+    }
+
+    // PS `runEvent('TryMove', pokemon, target)` (useMoveInner): after the move's
+    // own `onTryMove` singleEvent (Double Shock / Burn Up fail there, and the
+    // runEvent is skipped), before every `onTry` / `onTryHit` below.
+    let try_move_fails = matches!(choice.move_id, Choices::DOUBLESHOCK | Choices::BURNUP) && {
+        let t = state.side(side).team_member(idx).types;
+        let need = if choice.move_id == Choices::DOUBLESHOCK { PokemonType::ELECTRIC } else { PokemonType::FIRE };
+        t.0 != need && t.1 != need
+    };
+    if !try_move_fails {
+        crate::doubles::events::run_event_ties(state, rng, "TryMove", (side, slot), Some((target_side, target_slot)));
     }
 
     // Stockpile family (PS `onTry` / `stockpile` condition). No PRNG draws.
@@ -3669,8 +3819,6 @@ fn execute_action_inner(
         _ => {}
     }
 
-    // PS `runEvent('TryMove', pokemon, target)` (useMoveInner, before any `onTry`).
-    crate::doubles::events::run_event_ties(state, rng, "TryMove", (side, slot), Some((target_side, target_slot)));
     // Damp `onAnyTryMove` (data/abilities.ts damp): an active Damp holder fails
     // explosion / mindblown / mistyexplosion / selfdestruct (`cant`). No draw.
     if damp_blocks_explosion(state, side, idx, choice) {
@@ -4521,6 +4669,21 @@ fn execute_action_inner(
         return;
     }
 
+    // Yawn `onTryHit`: a target with a status fails in `hitStepTryHitEvent`,
+    // before the hit loop (no hit-loop `eachEvent` sorts). PS data/moves.ts yawn.
+    if choice.move_id == Choices::YAWN
+        && !is_self
+        && !is_field
+        && state
+            .side(target_side)
+            .slot_pokemon(target_slot)
+            .is_some_and(|d| d.hp > 0 && d.status != PokemonStatus::NONE)
+    {
+        state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+        push_order(move_order);
+        return;
+    }
+
     if matches!(choice.category, MoveCategory::Physical | MoveCategory::Special)
         && (effective_power > 0.0
             || choice.ohko
@@ -4853,7 +5016,6 @@ fn execute_action_inner(
     // Protect, type immunity, TryImmunity and accuracy): `breaksProtect` moves
     // remove the target's protection volatiles (and its `stall` counter). A
     // Protect that blocks the move has already returned above.
-    // remove the target's protection volatiles (and its `stall` counter).
     // The target's side also loses its guards (PS `target.side.removeSideCondition`
     // for craftyshield, matblock, quickguard, wideguard; gen >= 6 for allies too).
     if matches!(
@@ -5080,6 +5242,7 @@ fn execute_action_inner(
     // `eachEvent('WeatherChange')` — a speed sort. Set when such a holder
     // faints this move; consumed after the per-hit eachEvent.
     let mut weather_suppress_fainted = false;
+    let mut weather_suppress_holder: Option<(Side, usize)> = None;
     // Targets that took a hit this move (PS `targetsCopy` of `afterMoveSecondaryEvent`).
     let mut after_hit_targets: Vec<(Side, usize)> = Vec::new();
     // Targets that got the `sparklingaria` volatile (PS data/moves.ts sparklingaria).
@@ -5091,6 +5254,10 @@ fn execute_action_inner(
     // A spread boost-only status move: a target that changed nothing is only a
     // per-target failure. The move fails when no target changed (see HITEND below).
     let mut spread_boost_noop = false;
+    // A spread Status move blocked by a target's Substitute: that target's
+    // `damage` is null (TryPrimaryHit), not false, so the hit loop does not
+    // count as failed. PS sim/battle-actions.ts spreadMoveHit / hitStepMoveHitLoop.
+    let mut spread_sub_null = false;
     // Spread status move whose volatile (confusion) failed on some targets: PS
     // `spreadMoveHit` returns `false` per target, and the move fails only when
     // every target gave `false`. Consumed after the hit loop's targets.
@@ -5566,6 +5733,7 @@ fn execute_action_inner(
                         Some(Abilities::CLOUDNINE) | Some(Abilities::AIRLOCK)
                     ) {
                         weather_suppress_fainted = true;
+                        weather_suppress_holder.get_or_insert((target_side, target_slot));
                     }
                 // Target fainted. `onSourceAfterFaint` (Moxie, Chilling / Grim
                 // Neigh) is queued for the batch's `resolve_faints`, which boosts
@@ -5654,6 +5822,13 @@ fn execute_action_inner(
 
         }
 
+        // `selfDrops` -> `moveHit(source, source, move.self)`: a recharge move's
+        // `self.volatileStatus: 'mustrecharge'` is `addVolatile`d here, so its
+        // TryAddVolatile handlers are sorted now (the flag itself is set after
+        // the move). PS sim/battle-actions.ts selfDrops, sim/pokemon.ts addVolatile.
+        if ti == 0 && choice.flags.recharge && !state.side(side).active[slot].recharging {
+            try_add_volatile_ties(state, rng, side, slot);
+        }
         // Self boosts (Swords Dance, ...). PS `selfDrops` consumes the
         // `random(100)` roll even when there is no chance gate.
         if let (true, Some(b)) = (ti == 0, &choice.self_boosts) {
@@ -6496,11 +6671,19 @@ fn execute_action_inner(
                         && !crate::engine::mechanics::no_entrain(src_ability)
                         && !crate::engine::mechanics::cant_suppress(src_ability) =>
                 {
+                    // `setAbility`: the old ability's End first (Cloud Nine / Air
+                    // Lock `onEnd` -> `eachEvent('WeatherChange')`). PS sim/pokemon.ts setAbility.
+                    if matches!(tm.ability, Abilities::CLOUDNINE | Abilities::AIRLOCK) {
+                        let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+                    }
                     state.side_mut(ts).team_member_mut(ti).ability = src_ability;
                     reset_protean_effect(state, ts, ti);
                     ability_update_cures(state, ts, tsl);
-                    // The new ability's Start event (Intimidate, Drought, ...).
-                    let _ = apply_on_switch_abilities(state, ts, tsl, rng);
+                    // The new ability's Start event (Intimidate, Drought, ...); its
+                    // weather / terrain / Cloud Nine `eachEvent` is a sort.
+                    if apply_on_switch_abilities(state, ts, tsl, rng) {
+                        let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+                    }
                 }
                 _ => move_failed = true,
             }
@@ -6771,11 +6954,20 @@ fn execute_action_inner(
                     // (`suppressingAbility`) and the suppression lasts until the
                     // user switches out, so the copy is not applied here.
                     if state.side(side).team_member(u).ability != Abilities::NONE {
+                        // `setAbility`: `singleEvent('End', oldAbility)` first; a Cloud
+                        // Nine / Air Lock `onEnd` runs `eachEvent('WeatherChange')`.
+                        // PS sim/pokemon.ts setAbility, data/abilities.ts cloudnine.
+                        if matches!(real_ability(state, side, u), Abilities::CLOUDNINE | Abilities::AIRLOCK) {
+                            let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+                        }
                         state.side_mut(side).team_member_mut(u).ability = ta;
                         reset_protean_effect(state, side, u);
                         // PS `setAbility` runs the new ability's Start event
-                        // (Sand Stream, Drought, ...), as Skill Swap does.
-                        let _ = apply_on_switch_abilities(state, side, slot, rng);
+                        // (Sand Stream, Drought, ...), as Skill Swap does: its
+                        // `eachEvent('WeatherChange')` & co. is a sort of all actives.
+                        if apply_on_switch_abilities(state, side, slot, rng) {
+                            let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+                        }
                     }
                 }
                 _ => move_failed = true,
@@ -7519,6 +7711,18 @@ fn execute_action_inner(
             }
         }
 
+        // Healing Wish / Lunar Dance `slotCondition`: `addSlotCondition` returns
+        // false while the slot still holds an unused one, so the hit does nothing
+        // (`damage` false: no hit-loop `eachEvent`); the user still faints
+        // (`selfdestruct: 'ifHit'` is checked before). PS sim/battle-actions.ts
+        // runMoveEffects, sim/side.ts addSlotCondition.
+        if matches!(choice.move_id, Choices::HEALINGWISH | Choices::LUNARDANCE)
+            && ti == 0
+            && state.side(side).healing_wish_slot[slot]
+        {
+            move_failed = true;
+        }
+
         // Lock-On `onTryHit` (fails while the user already has it) and `onHit`
         // (`source.addVolatile('lockon', target)`, duration 2). No draws.
         if choice.move_id == Choices::LOCKON && ti == 0 && !move_failed {
@@ -8247,7 +8451,30 @@ fn execute_action_inner(
         // right after the hit that KO'd the holder. PS data/abilities.ts.
         if weather_suppress_fainted {
             weather_suppress_fainted = false;
+            // PS runs it from `faintMessages` (the holder's ability `End`), in
+            // `faintQueue` order: the faints queued before the holder are already
+            // processed (fainted, out of `getAllActive`), among them the user of a
+            // `selfdestruct: 'always'` move (queued in useMoveInner, before the hit).
+            // PS sim/battle.ts faintMessages, sim/battle-actions.ts useMoveInner.
+            let saved = state.unresolved_faints.clone();
+            if let Some(pos) = weather_suppress_holder
+                .and_then(|h| saved.iter().position(|&(fs, fsl, _)| (fs, fsl) == h))
+            {
+                state.unresolved_faints = saved[pos..].to_vec();
+            }
+            let user_queued_first = matches!(
+                choice.move_id,
+                Choices::EXPLOSION | Choices::SELFDESTRUCT | Choices::MISTYEXPLOSION
+            );
+            let user_hp = state.side(side).team_member(idx).hp;
+            if user_queued_first {
+                state.side_mut(side).team_member_mut(idx).hp = 0;
+            }
             each_event_update(state, rng);
+            if user_queued_first {
+                state.side_mut(side).team_member_mut(idx).hp = user_hp;
+            }
+            state.unresolved_faints = saved;
         }
         // PS `hitStepMoveHitLoop` (after the per-hit eachEvent): `if (!pokemon.hp &&
         // targets.length === 1) break;`. A user KO'd by the hit (Rough Skin, Rocky Helmet,
@@ -12184,6 +12411,8 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
                         | Choices::SHADOWFORCE
                         | Choices::SKYDROP
                 ) {
+                    // Gone with an aborted charge: `twoturnmove.onEnd` removes the
+                    // move's volatile. PS data/conditions.ts twoturnmove.
                     push(NO_ORDER, speed, 2, ResidualKind::Marker); // the move's own condition
                 }
             }
@@ -12425,8 +12654,11 @@ fn each_event_update(state: &mut DoublesState, rng: &mut Gen5Rng) {
             };
             if holder_ok {
                 if trace_copy(state, s, sl, rng).is_some() {
-                    // PS `setAbility` runs the new ability's `Start` event.
-                    let _ = apply_on_switch_abilities(state, s, sl, rng);
+                    // PS `setAbility` runs the new ability's `Start` event (its
+                    // weather / terrain / Cloud Nine `eachEvent` is a sort).
+                    if apply_on_switch_abilities(state, s, sl, rng) {
+                        let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+                    }
                 }
             }
         }
@@ -12531,6 +12763,9 @@ fn sorted_actives(state: &DoublesState, rng: &mut Gen5Rng, label: &'static str) 
             kind: ResidualKind::Status(s, sl),
         });
     }
+    if std::env::var("PE_DEBUG_ACTIVES").is_ok() {
+        eprintln!("ACTIVES {} {:?}", label, hs.iter().map(|h| (h.kind.clone(), h.speed)).collect::<Vec<_>>());
+    }
     sort_residual_handlers(hs, rng, label)
         .into_iter()
         .filter_map(|h| match h.kind {
@@ -12551,11 +12786,49 @@ fn end_turn_disable_moves(state: &DoublesState, rng: &mut Gen5Rng) {
         let Some(idx) = state.side(s).active[sl].pokemon_index else { continue };
         run_event_ties(state, rng, "DisableMove", (s, sl), None);
         run_event_ties(state, rng, "TrapPokemon", (s, sl), None);
+        // Every TrapPokemon handler that calls `pokemon.tryTrap()` runs
+        // `runStatusImmunity('trapped')` -> `runEvent('Immunity')` (a sort; Dig /
+        // Dive + Magnet Rise tie). Ghost types stop at `getImmunity`, no event.
+        // PS sim/pokemon.ts tryTrap / runStatusImmunity.
+        if !state.side(s).team_member(idx).has_type(&PokemonType::GHOST) {
+            for _ in 0..try_trap_calls(state, s, sl) {
+                run_event_ties(state, rng, "Immunity", (s, sl), None);
+            }
+        }
         // `getImmunity('trapped')`: Ghost types are immune.
         if state.side(s).team_member(idx).has_type(&PokemonType::GHOST) {
             run_event_ties(state, rng, "MaybeTrapPokemon", (s, sl), None);
         }
     }
+}
+
+/// How many of a pokemon's end-of-turn TrapPokemon handlers call `tryTrap`:
+/// the `trapped` volatile, `partiallytrapped` / Octolock while the binder is
+/// active, Ingrain, Fairy Lock, and the foes' Arena Trap (grounded target),
+/// Magnet Pull (Steel target) and Shadow Tag (target without it).
+/// PS data/conditions.ts trapped / partiallytrapped, data/moves.ts ingrain /
+/// fairylock / octolock, data/abilities.ts arenatrap / magnetpull / shadowtag.
+fn try_trap_calls(state: &DoublesState, s: Side, sl: usize) -> usize {
+    let a = &state.side(s).active[sl];
+    let Some(idx) = a.pokemon_index else { return 0 };
+    let p = state.side(s).team_member(idx);
+    let is_active = |bs: Side, bi: PokemonIndex| (0..2).any(|k| state.side(bs).active[k].pokemon_index == Some(bi));
+    let mut n = 0;
+    n += a.trapped as usize;
+    n += a.partial_trap.as_ref().is_some_and(|t| is_active(t.source_side, t.source_idx)) as usize;
+    n += a.octolock.is_some_and(|(bs, bi)| is_active(bs, bi)) as usize;
+    n += a.ingrain as usize;
+    n += state.fairy_lock.active as usize;
+    for k in 0..2 {
+        let Some(f) = state.side(s.other()).slot_pokemon(k).filter(|f| f.hp > 0) else { continue };
+        n += match f.ability {
+            Abilities::ARENATRAP => slot_grounded(p, a, state.gravity.active) as usize,
+            Abilities::MAGNETPULL => p.has_type(&PokemonType::STEEL) as usize,
+            Abilities::SHADOWTAG => (p.ability != Abilities::SHADOWTAG) as usize,
+            _ => 0,
+        };
+    }
+    n
 }
 
 /// PS `pokemon.getMoves()` is empty (every known move has no PP, is disabled,
@@ -13521,7 +13794,20 @@ fn end_of_turn(
     // The `instaswitch` actions are speed-sorted (by the switching pokemon's
     // speed; exact ties shuffle: PS `queue.sort`), which also fixes the order
     // the replacements enter.
-    // (Repeated slots are consecutive replacement rounds, not one queue.)
+    // Repeated slots are consecutive replacement rounds (a replacement that
+    // fainted to entry hazards is replaced again): each round is its own
+    // `instaswitch` queue + `runSwitch`, with its own eachEvent / switch-in
+    // sorts (PS sim/battle.ts runAction, one request per round). The round
+    // loop below keeps the block's original indentation.
+    let mut rounds: Vec<Vec<(Side, usize, usize)>> = Vec::new();
+    for &e in &pending_vec {
+        match rounds.last_mut() {
+            Some(r) if !r.iter().any(|&(s2, l2, _)| (s2, l2) == (e.0, e.1)) => r.push(e),
+            _ => rounds.push(vec![e]),
+        }
+    }
+    for round in rounds {
+    let mut pending_vec = round;
     let distinct = pending_vec
         .iter()
         .enumerate()
@@ -13647,6 +13933,7 @@ fn end_of_turn(
     if !pending_switches.is_empty() {
         each_event_update(state, rng);
     }
+    } // replacement rounds
 
     // PS `endTurn`: `runEvent('DisableMove', pokemon)` for every active. The
     // handler list (the pokemon's own `onDisableMove` volatiles / ability,

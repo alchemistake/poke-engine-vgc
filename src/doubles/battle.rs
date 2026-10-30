@@ -4558,8 +4558,8 @@ fn execute_action_inner(
                     }
                 }
                 PokemonVolatileStatus::YAWN => {
-                    // PS yawn `onTryHit`: fails on any status or sleep
-                    // immunity; `addVolatile` fails if already yawning.
+                    // PS yawn `onTryHit`: fails on any status; `addVolatile`
+                    // fails if already yawning (see `yawn_volatile_blocked`).
                     let has_status = state
                         .side(ts)
                         .slot_pokemon(tslot)
@@ -4567,7 +4567,7 @@ fn execute_action_inner(
                         .unwrap_or(true);
                     if has_status
                         || state.side(ts).active[tslot].yawn > 0
-                        || status_immune(state, ts, tslot, PokemonStatus::SLEEP, ts != side, side, slot)
+                        || yawn_volatile_blocked(state, ts, tslot, side, slot)
                     {
                         move_failed = true;
                     } else {
@@ -7027,6 +7027,24 @@ fn status_immune_ex(
             .unwrap_or(Abilities::NONE),
     };
     crate::engine::mechanics::immune_to_status(target, &status, &ctx)
+}
+
+/// Whether Yawn's volatile cannot be added to `ts`/`tslot`. PS yawn `onTryHit`
+/// is `target.status || !target.runStatusImmunity('slp')`: `runStatusImmunity`
+/// only consults the `Immunity` event, so Uproar, Misty / Electric Terrain and
+/// Safeguard do not stop it (they stop the sleep later, at the residual).
+/// `addVolatile('yawn')` then fails for Insomnia (`onTryAddVolatile`), for a
+/// Sweet Veil holder or ally (`onAllyTryAddVolatile`), and for a foe's Substitute.
+/// PS data/moves.ts yawn, data/abilities.ts insomnia / sweetveil.
+fn yawn_volatile_blocked(state: &DoublesState, ts: Side, tslot: usize, src_side: Side, src_slot: usize) -> bool {
+    let Some(target) = state.side(ts).slot_pokemon(tslot) else { return true };
+    if target.ability == Abilities::INSOMNIA {
+        return true;
+    }
+    if (0..2).any(|sl| state.side(ts).slot_pokemon(sl).is_some_and(|p| p.hp > 0 && p.ability == Abilities::SWEETVEIL)) {
+        return true;
+    }
+    (ts, tslot) != (src_side, src_slot) && state.side(ts).active[tslot].substitute_health > 0
 }
 
 /// One target's damage for a hit (fixed / OHKO / `calculate_damage`), without

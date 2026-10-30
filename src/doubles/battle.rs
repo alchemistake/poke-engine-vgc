@@ -5124,6 +5124,20 @@ fn execute_action_inner(
                         {
                             continue;
                         }
+                        // Good as Gold `onTryHit` (status move, target != source): the
+                        // ally is immune (`-immune [from] ability: Good as Gold`), no boost.
+                        // PS data/abilities.ts goodasgold, sim/battle-actions.ts tryMoveHit.
+                        if sl != slot
+                            && choice.category == MoveCategory::Status
+                            && state.side(side).slot_pokemon(sl).is_some_and(|p| p.ability == Abilities::GOODASGOLD)
+                            && !crate::engine::abilities::ignores_target_ability(
+                                state.side(side).team_member(idx),
+                                choice,
+                                &Abilities::GOODASGOLD,
+                            )
+                        {
+                            continue;
+                        }
                         // A semi-invulnerable ally misses (PS `hitStepInvulnerabilityEvent`
                         // for each target): no boost for it.
                         if sl != slot && ally_semi_invulnerable(state, side, sl) {

@@ -4945,6 +4945,10 @@ fn execute_action_inner(
     // A spread boost-only status move: a target that changed nothing is only a
     // per-target failure. The move fails when no target changed (see HITEND below).
     let mut spread_boost_noop = false;
+    // A spread Status move blocked by a target's Substitute: that target's
+    // `damage` is null (TryPrimaryHit), not false, so the hit loop does not
+    // count as failed. PS sim/battle-actions.ts spreadMoveHit / hitStepMoveHitLoop.
+    let mut spread_sub_null = false;
     // Spread status move whose volatile (confusion) failed on some targets: PS
     // `spreadMoveHit` returns `false` per target, and the move fails only when
     // every target gave `false`. Consumed after the hit loop's targets.
@@ -5072,6 +5076,7 @@ fn execute_action_inner(
             && !bypasses_substitute(choice)
             && state.side(side).team_member(idx).ability != Abilities::INFILTRATOR
         {
+            spread_sub_null = true;
             continue;
         }
         // The target as it was when the hit started (a KO clears the slot).
@@ -7400,7 +7405,11 @@ fn execute_action_inner(
                     move_failed = true;
                 }
             } else {
-                if !apply_side_condition(state, cs, sc.condition) {
+                // Stone Axe / Ceaseless Edge add their hazard in `onAfterHit`, whose
+                // result is ignored: a hazard already up does not fail the hit.
+                if !apply_side_condition(state, cs, sc.condition)
+                    && !matches!(choice.move_id, Choices::STONEAXE | Choices::CEASELESSEDGE)
+                {
                     move_failed = true;
                 }
                 // quickguard / wideguard `onHitSide`: `source.addVolatile('stall')`.
@@ -7995,11 +8004,11 @@ fn execute_action_inner(
         // (sim/battle-actions.ts useMoveInner).
         // Spread boost-only status move where no target changed (PS
         // `hitStepMoveHitLoop`: every `damage[i]` false -> `return`, no eachEvent).
-        if spread_boost_noop && !drop_landed {
+        if spread_boost_noop && !drop_landed && !spread_sub_null {
             move_failed = true;
         }
         // PS `spreadMoveHit`: a spread volatile that failed on every target fails the move.
-        if spread_volatile_fail && !spread_volatile_ok {
+        if spread_volatile_fail && !spread_volatile_ok && !spread_sub_null {
             move_failed = true;
         }
         // PS useMoveInner: `all` / `foeSide` / `allySide` / `allyTeam` moves run

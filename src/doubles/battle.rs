@@ -6228,8 +6228,9 @@ fn execute_action_inner(
             if !no_recoil {
                 let recoil = ((total_damage as f32) * frac).round().max(1.0) as i16;
                 apply_damage(state, side, slot, recoil);
-                // Ordinary recoil KOs are resolved before the closing `eachEvent`.
-                state.unresolved_faints.retain(|&(fs, fsl, _)| (fs, fsl) != (side, slot));
+                if !real_hit {
+                    state.unresolved_faints.retain(|&(fs, fsl, _)| (fs, fsl) != (side, slot));
+                }
             }
         }
     }

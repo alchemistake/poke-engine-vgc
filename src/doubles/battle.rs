@@ -76,10 +76,7 @@ fn shuffle<T>(items: &mut [T], start: usize, end: usize, rng: &mut Gen5Rng, labe
 /// `compare(a, b) > 0` means *a comes after b*. For moves this reduces to
 /// (b.priority - a.priority) || (b.speed - a.speed).
 fn speed_sort(actions: &mut [Action], rng: &mut Gen5Rng) {
-    if actions.len() < 2 {
-        return;
-    }
-    let compare = |a: &Action, b: &Action| -> i32 {
+    speed_sort_by(actions, rng, |a: &Action, b: &Action| -> i32 {
         if a.prioritized != b.prioritized {
             return if a.prioritized { -1 } else { 1 };
         }
@@ -92,12 +89,20 @@ fn speed_sort(actions: &mut [Action], rng: &mut Gen5Rng) {
             return df;
         }
         (b.speed - a.speed) as i32
-    };
+    });
+}
+
+/// PS `speedSort` (selection sort; each group of ties is shuffled), generic over
+/// the items. `compare(a, b) > 0` means `a` comes after `b`.
+fn speed_sort_by<T>(items: &mut [T], rng: &mut Gen5Rng, compare: impl Fn(&T, &T) -> i32) {
+    if items.len() < 2 {
+        return;
+    }
     let mut sorted = 0usize;
-    while sorted + 1 < actions.len() {
+    while sorted + 1 < items.len() {
         let mut next_indexes = vec![sorted];
-        for i in (sorted + 1)..actions.len() {
-            let delta = compare(&actions[next_indexes[0]], &actions[i]);
+        for i in (sorted + 1)..items.len() {
+            let delta = compare(&items[next_indexes[0]], &items[i]);
             if delta < 0 {
                 continue;
             } else if delta > 0 {
@@ -108,14 +113,74 @@ fn speed_sort(actions: &mut [Action], rng: &mut Gen5Rng) {
         }
         for (i, &index) in next_indexes.iter().enumerate() {
             if index != sorted + i {
-                actions.swap(sorted + i, index);
+                items.swap(sorted + i, index);
             }
         }
         if next_indexes.len() > 1 {
-            shuffle(actions, sorted, sorted + next_indexes.len(), rng, "speed tie (move order)");
+            shuffle(items, sorted, sorted + next_indexes.len(), rng, "speed tie (move order)");
         }
         sorted += next_indexes.len();
     }
+}
+
+/// One entry of the turn's queue at `commitChoices`: a move, or one of the
+/// actions PS's `resolveAction` queues ahead of it.
+#[derive(Clone, Copy)]
+struct QueueSlot {
+    /// Index into the turn's actions; `None` for a pseudo-action.
+    action: Option<usize>,
+    /// PS `action.order`: 3 prioritized, 5 `beforeTurnMove`, 107
+    /// `priorityChargeMove`, 200 a move.
+    order: i32,
+    priority: i32,
+    fractional: i32,
+    speed: i32,
+}
+
+/// PS `comparePriority` for queued actions (order, priority, speed).
+fn queue_slot_compare(a: &QueueSlot, b: &QueueSlot) -> i32 {
+    if a.order != b.order {
+        return a.order - b.order;
+    }
+    let dp = b.priority - a.priority;
+    if dp != 0 {
+        return dp;
+    }
+    let df = b.fractional - a.fractional;
+    if df != 0 {
+        return df;
+    }
+    b.speed - a.speed
+}
+
+/// The `commitChoices` queue sort (PS `battle.ts` `commitChoices` -> `queue.sort`).
+/// PS `resolveAction` queues a `beforeTurnMove` (Counter / Mirror Coat, order
+/// 5) and a `priorityChargeMove` (Focus Punch / Beak Blast, order 107) ahead of
+/// the move. They sort with the moves, so their swaps in the selection sort
+/// reorder the speed-tied moves before the tie shuffle runs.
+fn commit_queue_sort(actions: &mut Vec<Action>, state: &DoublesState, rng: &mut Gen5Rng) {
+    let mut slots: Vec<QueueSlot> = Vec::with_capacity(actions.len() * 2);
+    for (i, a) in actions.iter().enumerate() {
+        let live = !state.side(a.side).active[a.slot].recharging;
+        let pseudo_order = match a.choice.move_id {
+            Choices::COUNTER | Choices::MIRRORCOAT if live => Some(5),
+            Choices::FOCUSPUNCH | Choices::BEAKBLAST if live => Some(107),
+            _ => None,
+        };
+        if let Some(order) = pseudo_order {
+            slots.push(QueueSlot { action: None, order, priority: 0, fractional: 0, speed: a.speed as i32 });
+        }
+        slots.push(QueueSlot {
+            action: Some(i),
+            order: if a.prioritized { 3 } else { 200 },
+            priority: a.priority as i32,
+            fractional: a.fractional as i32,
+            speed: a.speed as i32,
+        });
+    }
+    speed_sort_by(&mut slots, rng, queue_slot_compare);
+    let sorted: Vec<Action> = slots.iter().filter_map(|s| s.action).map(|i| actions[i].clone()).collect();
+    *actions = sorted;
 }
 
 fn side_tag(side: Side) -> &'static str {
@@ -1133,7 +1198,7 @@ pub fn run_battle_fuzz(
                 }
             }
         }
-        speed_sort(&mut actions, rng);
+        commit_queue_sort(&mut actions, state, rng);
         // `beforeTurn` action: `eachEvent('BeforeTurn')`, then the action's
         // closing `eachEvent('Update')`; each is a speed sort of the actives.
         each_event_update(state, rng);
@@ -1323,7 +1388,9 @@ pub fn run_battle_fuzz(
                             let a = &state.side(side).active[slot];
                             // `partiallytrapped` and `octolock` have no `noCopy`: they pass too.
                             // `perishsong` has no `noCopy` (PS data/moves.ts perishsong): its countdown passes too.
-                            Some((a.cursed, a.focus_energy, a.leech_seed, a.ingrain, a.aqua_ring, a.heal_block, a.partial_trap.clone(), a.octolock, a.perish))
+                            // `powertrick` has no `noCopy`: its `onCopy` swaps the
+                            // replacement's Attack and Defense (PS data/moves.ts).
+                            Some((a.cursed, a.focus_energy, a.leech_seed, a.ingrain, a.aqua_ring, a.heal_block, a.partial_trap.clone(), a.octolock, a.perish, a.power_trick))
                         } else {
                             None
                         };
@@ -1357,7 +1424,7 @@ pub fn run_battle_fuzz(
                                 }
                             }
                         }
-                        if let Some((cursed, fe, ls, ing, aq, hb, pt, oc, pr)) = baton_extra {
+                        if let Some((cursed, fe, ls, ing, aq, hb, pt, oc, pr, power_trick)) = baton_extra {
                             let a = &mut state.side_mut(side).active[slot];
                             a.cursed = cursed;
                             a.focus_energy = fe;
@@ -1368,6 +1435,13 @@ pub fn run_battle_fuzz(
                             a.partial_trap = pt;
                             a.octolock = oc;
                             a.perish = pr;
+                            if power_trick {
+                                a.power_trick = true;
+                                if let Some(ni) = a.pokemon_index {
+                                    let pm = state.side_mut(side).team_member_mut(ni);
+                                    std::mem::swap(&mut pm.attack, &mut pm.defense);
+                                }
+                            }
                         }
                         if let Some((boosts, confusion, sub)) = passed {
                             if let Some(new_idx) = state.side(side).active[slot].pokemon_index {
@@ -2047,11 +2121,15 @@ fn execute_action_body(
     // lockedmove `onAfterMove` (any move the holder used, including one that
     // missed or was blocked early): removed when duration is 1; `onEnd` then
     // confuses the user unless trueDuration > 1. PS data/conditions.ts.
-    if move_order.len() > order_len && state.side(action.side).slot_pokemon(action.slot).is_some() {
-        if let Some((1, t)) = state.side(action.side).active[action.slot].locked_move {
-            state.side_mut(action.side).active[action.slot].locked_move = None;
+    // The user is found by pokemon: Ally Switch in this move may have moved it.
+    let holder = (0..2)
+        .find(|&sl| state.side(action.side).active[sl].pokemon_index == Some(action.pokemon_index))
+        .unwrap_or(action.slot);
+    if move_order.len() > order_len && state.side(action.side).slot_pokemon(holder).is_some() {
+        if let Some((1, t)) = state.side(action.side).active[holder].locked_move {
+            state.side_mut(action.side).active[holder].locked_move = None;
             if t <= 1 {
-                try_confuse(state, rng, action.side, action.slot);
+                try_confuse(state, rng, action.side, holder);
             }
         }
     }
@@ -5332,6 +5410,10 @@ fn execute_action_inner(
         // 4 PP (`deductPP(move, 4)`, `ppData.used` set). No last move, or no PP
         // left, fails silently. No draw.
         if choice.move_id == Choices::SPITE && ti == 0 && !move_failed {
+            // PS `onHit` returns false (the move fails: `hitStepMoveHitLoop`
+            // returns on its first hit, no `eachEvent`) when there is no last
+            // move or `deductPP` returns 0 (no PP left, move not in the moveset).
+            let mut spite_ok = false;
             let tgt = &state.side(target_side).active[target_slot];
             if let (Some(lm), Some(tidx)) = (tgt.last_move, tgt.pokemon_index) {
                 let ts = state.side_mut(target_side);
@@ -5355,9 +5437,13 @@ fn execute_action_inner(
                     let mv = &mut p.moves[&mi];
                     if mv.pp > 0 {
                         mv.pp = (mv.pp - 4).max(0);
+                        spite_ok = true;
                     }
                     ts.moves_used[tidx as usize][k] = true;
                 }
+            }
+            if !spite_ok {
+                move_failed = true;
             }
         }
         // Defog `onHit`: -1 evasion (unless behind a Substitute), clear the
@@ -6993,10 +7079,13 @@ fn execute_action_inner(
     // lockedmove `onAfterMove` (PS runMove, after useMove's hit loop): removed
     // when duration is 1; `onEnd` then confuses the user unless trueDuration > 1.
     // PS data/conditions.ts lockedmove.
-    if let Some((1, t)) = state.side(side).active[slot].locked_move {
-        state.side_mut(side).active[slot].locked_move = None;
+    // PS runs `onAfterMove` on the pokemon, not the slot: an Ally Switch in
+    // this move may have moved the user to the other slot.
+    let holder = (0..2).find(|&sl| state.side(side).active[sl].pokemon_index == Some(idx)).unwrap_or(slot);
+    if let Some((1, t)) = state.side(side).active[holder].locked_move {
+        state.side_mut(side).active[holder].locked_move = None;
         if t <= 1 {
-            try_confuse(state, rng, side, slot);
+            try_confuse(state, rng, side, holder);
         }
     }
 
@@ -11102,8 +11191,9 @@ fn end_of_turn(
                     let p = s.team_member(idx);
                     // PS `pokemon.isSemiInvulnerable()` (fly / bounce / dive / dig /
                     // phantomforce / shadowforce / skydrop volatiles).
+                    // A charge that was aborted this turn (full paralysis) is gone.
                     let semi_invulnerable = matches!(
-                        s.active[slot].charging,
+                        s.active[slot].charging.filter(|_| !s.active[slot].charge_aborted),
                         Some((
                             Choices::FLY
                             | Choices::BOUNCE

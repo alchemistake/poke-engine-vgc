@@ -99,6 +99,22 @@ pub fn type_mod_with_added(
 }
 
 pub fn type_mod(attacking_type: &PokemonType, defender: &Pokemon) -> Option<i32> {
+    // Gravity grounds Flying types: a Ground move ignores their Flying typing
+    // (the chart's Ground -> Flying 0 is not applied). PS gravity onFieldStart
+    // (isGrounded) and the chart entry for the grounded Flying type.
+    if *attacking_type == PokemonType::GROUND
+        && GRAVITY.with(|g| g.get())
+        && (defender.types.0 == PokemonType::FLYING || defender.types.1 == PokemonType::FLYING)
+    {
+        let mut d = defender.clone();
+        if d.types.0 == PokemonType::FLYING {
+            d.types.0 = PokemonType::TYPELESS;
+        }
+        if d.types.1 == PokemonType::FLYING {
+            d.types.1 = PokemonType::TYPELESS;
+        }
+        return type_mod(attacking_type, &d);
+    }
     let mult = crate::engine::damage_calc::type_effectiveness_modifier(attacking_type, defender);
     if mult == 0.0 {
         return None;

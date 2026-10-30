@@ -5040,7 +5040,11 @@ fn execute_action_inner(
             move_failed = true;
         }
         // Substitute `onTryPrimaryHit` for a spread Status move: this target
-        // is skipped (the accuracy roll was already drawn).
+        // is skipped (the accuracy roll was already drawn). It returns `null`,
+        // not `false`, so the hit still "did something" for the hit loop's
+        // `moveDamage.some(val => val !== false)` and its `eachEvent('Update')`
+        // (PS data/moves.ts substitute.onTryPrimaryHit, sim/battle-actions.ts
+        // hitStepMoveHitLoop).
         if is_spread
             && choice.category == MoveCategory::Status
             && (hts, htsl) != (side, slot)
@@ -5048,6 +5052,8 @@ fn execute_action_inner(
             && !bypasses_substitute(choice)
             && state.side(side).team_member(idx).ability != Abilities::INFILTRATOR
         {
+            spread_volatile_ok = true;
+            drop_landed = true;
             continue;
         }
         // The target as it was when the hit started (a KO clears the slot).

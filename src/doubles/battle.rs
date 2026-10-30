@@ -2313,12 +2313,23 @@ fn execute_action_inner(
             }
             _ => {
                 target_slot = action.target.min(1);
-                if !slot_alive(state, target_side, target_slot) {
+                // An allAdjacent move (Earthquake) with no living foe still hits
+                // the living ally: PS `getMoveTargets` lists the adjacent allies.
+                // PS data/moves.ts earthquake (target allAdjacent).
+                let all_adjacent_ally = crate::doubles::move_targets::ps_move_target(
+                    &choice.move_id.to_string().to_lowercase(),
+                ) == "allAdjacent"
+                    && slot_alive(state, side, 1 - slot);
+                if !slot_alive(state, target_side, target_slot) && !all_adjacent_ally {
                     has_target = false;
                 }
             }
         }
-        if !has_target {
+        // A charge move still starts its charge with no living target: PS
+        // `onTryMove` (`-prepare`, `addVolatile('twoturnmove')`) runs before the
+        // target checks, and `getRandomTarget` keeps the fainted foe
+        // (`randomFoe() || foe.active[0]`). PS data/moves.ts fly.onTryMove.
+        if !has_target && matches!(choice.charge_setup, ChargeSetup::None) {
             push_order();
             return;
         }
@@ -4205,6 +4216,15 @@ fn execute_action_inner(
                 // slot order.
                 for sl in 0..2 {
                     if slot_alive(state, side, sl) {
+                        // Soundproof `onTryHit` on a sound move: the ally is
+                        // immune (`-immune [from] ability: Soundproof`), no boost.
+                        // PS sim/battle-actions.ts tryMoveHit, data/abilities.ts soundproof.
+                        if sl != slot
+                            && choice.flags.sound
+                            && state.side(side).slot_pokemon(sl).is_some_and(|p| p.ability == Abilities::SOUNDPROOF)
+                        {
+                            continue;
+                        }
                         if let Some(tidx) = state.side(side).active[sl].pokemon_index {
                             apply_boosts(state, side, tidx, &b.boosts, false);
                         }
@@ -4266,7 +4286,14 @@ fn execute_action_inner(
             }
         }
         if let Some(h) = choice.heal.as_ref().filter(|_| !matches!(choice.move_id, Choices::LIFEDEW | Choices::STEELBEAM)) {
-            let (ts, tslot) = if h.target == MoveTarget::User || is_self {
+            // Milk Drink (champions `target: adjacentAllyOrSelf`): heals the
+            // chosen target, the user or its ally. PS data/mods/champions/moves.ts.
+            let (ts, tslot) = if choice.move_id == Choices::MILKDRINK {
+                match resolved {
+                    Some((rs, rl)) if rs == side => (rs, rl),
+                    _ => (side, slot),
+                }
+            } else if h.target == MoveTarget::User || is_self {
                 (side, slot)
             } else if h.target == MoveTarget::Ally {
                 (side, ally_slot)
@@ -7398,11 +7425,13 @@ fn compute_hit_damage(
             };
             // Sandstorm: Rock-types x1.5 Sp. Def; Snow: Ice-types x1.5 Def
             // (`onModifySpD` / `onModifyDef` of the weather condition).
+            // PS `effectiveWeather()`: none while Cloud Nine / Air Lock suppress it.
             let has = |t| defender.types.0 == t || defender.types.1 == t;
-            if state.weather.weather_type == Weather::SAND && !names_def && has(PokemonType::ROCK) {
+            let effective_weather = if weather_suppressed(state) { Weather::NONE } else { state.weather.weather_type };
+            if effective_weather == Weather::SAND && !names_def && has(PokemonType::ROCK) {
                 m = (m * 6144 + 2048) >> 12;
             }
-            if state.weather.weather_type == Weather::SNOW && names_def && has(PokemonType::ICE) {
+            if effective_weather == Weather::SNOW && names_def && has(PokemonType::ICE) {
                 m = (m * 6144 + 2048) >> 12;
             }
             m

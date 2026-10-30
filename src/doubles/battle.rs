@@ -13910,7 +13910,9 @@ fn end_of_turn(
                     entry_hazards(state, side, slot);
                     apply_sticky_web(state, side, slot);
                     refresh_mimicry_slot(state, side, slot);
-                    if apply_on_switch_abilities(state, side, slot, rng) {
+                    // `fieldEvent` runs `resolveFaints` after each handler: a
+                    // replacement KO'd by the hazards skips its ability's Start.
+                    if switched_in_alive(state, side, slot) && apply_on_switch_abilities(state, side, slot, rng) {
                         let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
                     }
                 }

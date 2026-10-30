@@ -2093,7 +2093,7 @@ fn redirect_target(state: &DoublesState, action: &Action, target: (Side, usize))
         Choices::MIRRORCOAT => a.mirror_coat_vol,
         _ => None,
     };
-    let ty = crate::doubles::move_targets::ps_move_target(&action.choice.move_id.to_string().to_lowercase());
+    let ty = move_target(action.choice.move_id);
     if !matches!(ty, "normal" | "randomNormal" | "adjacentFoe" | "any" | "scripted") {
         if let Some((Some(t), _)) = rec {
             return t;
@@ -2170,7 +2170,6 @@ fn ps_get_target_inner(
     }
     // A recharging pokemon's locked action is the `recharge` pseudo-move,
     // which has no target type.
-    let move_id = action.choice.move_id.to_string().to_lowercase();
     let user_types = state.side(side).team_member(action.pokemon_index).types;
     // PS `source.hasType('Ghost')`: the current types, including an added type.
     let user_ghost = user_types.0 == PokemonType::GHOST
@@ -2182,7 +2181,7 @@ fn ps_get_target_inner(
         // curse.onModifyMove: `move.target = move.nonGhostTarget` ('self').
         "self"
     } else {
-        crate::doubles::move_targets::ps_move_target(&move_id)
+        move_target(action.choice.move_id)
     };
     let alive = |sd: Side, sl: usize| state.side(sd).slot_pokemon(sl).map(|p| p.hp > 0).unwrap_or(false);
     let foe = side.other();
@@ -2312,6 +2311,22 @@ fn friend_guard_tie_groups(state: &DoublesState) -> [u8; 4] {
 }
 
 /// The cached PS `pokemon.speed` of a slot's occupant.
+/// PS move target type (`ps_move_target`) per move, indexed by `Choices`
+/// (built once; the generated table matches on move id strings).
+static MOVE_TARGETS: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
+    (0..=u16::MAX)
+        .map(Choices::from)
+        .enumerate()
+        .take_while(|&(i, m)| m as usize == i)
+        .map(|(_, m)| crate::doubles::move_targets::ps_move_target(&m.to_string().to_lowercase()))
+        .collect()
+});
+
+/// PS `move.target` of a move ("normal", "allAdjacentFoes", ...; "" if none).
+pub(crate) fn move_target(m: Choices) -> &'static str {
+    MOVE_TARGETS[m as usize]
+}
+
 pub(crate) fn cached_speed(state: &DoublesState, side: Side, slot: usize) -> i32 {
     let s = state.side(side);
     s.active[slot].pokemon_index.map(|i| s.speed_cache[i as usize] as i32).unwrap_or(0)
@@ -2634,7 +2649,7 @@ fn pressure_deduct_pp(state: &mut DoublesState, action: &Action) {
 /// the number of foes that pay one PP. Evaluated before the hit.
 fn pressure_extra_count(state: &DoublesState, action: &Action) -> i8 {
     let foe = action.side.other();
-    let ty = crate::doubles::move_targets::ps_move_target(&action.choice.move_id.to_string().to_lowercase());
+    let ty = move_target(action.choice.move_id);
     let all_foes = matches!(
         action.choice.move_id,
         Choices::IMPRISON | Choices::SPIKES | Choices::STEALTHROCK | Choices::TOXICSPIKES
@@ -3064,7 +3079,7 @@ fn execute_action_inner(
     // target given: PS `getMoveTargets` never asks for a random target, so no draw.
     let bounce_spread_copy = state.side(side).active[slot].bounced
         && matches!(
-            crate::doubles::move_targets::ps_move_target(&action.choice.move_id.to_string().to_lowercase()),
+            move_target(action.choice.move_id),
             "allAdjacent" | "allAdjacentFoes"
         );
     // A called Metal Burst / Comeuppance (Copycat, ...) is `useMove` with no
@@ -3524,9 +3539,7 @@ fn execute_action_inner(
                 // An allAdjacent move (Earthquake) with no living foe still hits
                 // the living ally: PS `getMoveTargets` lists the adjacent allies.
                 // PS data/moves.ts earthquake (target allAdjacent).
-                let all_adjacent_ally = crate::doubles::move_targets::ps_move_target(
-                    &choice.move_id.to_string().to_lowercase(),
-                ) == "allAdjacent"
+                let all_adjacent_ally = move_target(choice.move_id) == "allAdjacent"
                     && switched_in_alive(state, side, 1 - slot);
                 // A `futuremove` (Future Sight) keeps its fainted target: it
                 // targets the slot (PS sim/pokemon.ts getMoveTargets).
@@ -4165,7 +4178,7 @@ fn execute_action_inner(
     let move_ty = if expanding_force_spreads(state, side, slot, choice) {
         "allAdjacentFoes"
     } else {
-        crate::doubles::move_targets::ps_move_target(&choice.move_id.to_string().to_lowercase())
+        move_target(choice.move_id)
     };
     // PS `smartTarget` (Dragon Darts, multihit 2): `getSmartTargets` pairs the
     // chosen foe with its adjacent ally, chosen first. Both are accuracy-rolled
@@ -4411,7 +4424,7 @@ fn execute_action_inner(
     // `adjacentAllyOrSelf` moves (Acupressure, Milk Drink) that picked the ally
     // are ally-targeted too (PS `hitStepInvulnerabilityEvent` for the ally).
     let ally_or_self_picked_ally = is_self
-        && crate::doubles::move_targets::ps_move_target(&choice.move_id.to_string().to_lowercase())
+        && move_target(choice.move_id)
             == "adjacentAllyOrSelf"
         && matches!(resolved, Some((rs, rl)) if rs == side && rl != slot);
     if (is_ally && !is_self || ally_or_self_picked_ally) && !is_field && choice.move_id != Choices::HELPINGHAND {
@@ -5292,7 +5305,7 @@ fn execute_action_inner(
     // Substitute fails them in `TryPrimaryHit` (status moves have no damage:
     // `getDamage` is falsy), unless the move bypasses it or the user is an
     // Infiltrator. The user itself is not blocked.
-    if crate::doubles::move_targets::ps_move_target(&choice.move_id.to_string().to_lowercase()) == "adjacentAllyOrSelf"
+    if move_target(choice.move_id) == "adjacentAllyOrSelf"
         && choice.category == MoveCategory::Status
         && !bypasses_substitute(choice)
         && state.side(side).team_member(idx).ability != Abilities::INFILTRATOR
@@ -7954,7 +7967,7 @@ fn execute_action_inner(
         // PS `tryMoveHit` -> `runEvent('TryHitSide', target)` for allySide /
         // foeSide moves: the Pokemon target is the user (allySide) or the chosen
         // foe (foeSide). Its Magic Bounce holders tie and shuffle before any effect.
-        let ps_target = crate::doubles::move_targets::ps_move_target(&choice.move_id.to_string().to_lowercase());
+        let ps_target = move_target(choice.move_id);
         if ps_target == "allySide" || ps_target == "foeSide" {
             let (ps, pslot) = if ps_target == "allySide" { (side, slot) } else { (target_side, target_slot) };
             crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::TryHitSide, (ps, pslot), Some((side, slot)));

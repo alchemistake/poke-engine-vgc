@@ -995,31 +995,73 @@ pub fn compute_stats(
     (hp, atk, def, spa, spd, spe)
 }
 
+/// Species data resolved from a team member's species name.
+#[derive(Clone, Copy)]
+struct SpeciesInfo {
+    id: PokemonName,
+    base_stats: (i16, i16, i16, i16, i16, i16),
+    types: (u8, u8),
+    weight_kg: f32,
+}
+
+thread_local! {
+    /// Name lookups are string matches over every species / move; a battle
+    /// is built from few distinct names, so resolve each name once.
+    static SPECIES_CACHE: std::cell::RefCell<std::collections::HashMap<String, SpeciesInfo>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+    static MOVE_CACHE: std::cell::RefCell<std::collections::HashMap<String, (Choices, Choice)>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Forme names (e.g. "Furfrou-Debutante") may not be in the table or the
+/// PokemonName enum; fall back to the base species (before the "-").
+fn species_lookup(species: &str) -> SpeciesInfo {
+    if let Some(sp) = SPECIES_CACHE.with(|c| c.borrow().get(species).copied()) {
+        return sp;
+    }
+    let base = species.split('-').next().unwrap_or(species);
+    let id = PokemonName::from_str(&to_id(species).to_uppercase())
+        .or_else(|_| PokemonName::from_str(&to_id(base).to_uppercase()))
+        .unwrap_or_else(|_| panic!("unknown species {}", species));
+    let data = crate::doubles::species_types::species_data(&to_id(species))
+        .or_else(|| crate::doubles::species_types::species_data(&to_id(base)))
+        .unwrap_or_else(|| panic!("no species data for {}", species));
+    let weight_kg = crate::doubles::species_weights::species_weight_kg(&to_id(species))
+        .or_else(|| crate::doubles::species_weights::species_weight_kg(&to_id(base)))
+        .unwrap_or(1.0);
+    let sp = SpeciesInfo { id, base_stats: data.base_stats, types: data.types, weight_kg };
+    SPECIES_CACHE.with(|c| c.borrow_mut().insert(species.to_string(), sp));
+    sp
+}
+
+fn move_lookup(mv: &str) -> (Choices, Choice) {
+    if let Some(r) = MOVE_CACHE.with(|c| c.borrow().get(mv).cloned()) {
+        return r;
+    }
+    let choices = Choices::from_str(&to_id(mv).to_uppercase()).unwrap_or_else(|_| panic!("unknown move {mv}"));
+    let r = (choices, MOVES.get(&choices).cloned().unwrap());
+    MOVE_CACHE.with(|c| c.borrow_mut().insert(mv.to_string(), r.clone()));
+    r
+}
+
 fn build_pokemon(m: &TeamMember) -> Pokemon {
     // Forme names (e.g. "Furfrou-Debutante") may not be in the table or the
     // PokemonName enum; fall back to the base species (before the "-").
-    let base = m.species.split('-').next().unwrap_or(&m.species);
-    let id = PokemonName::from_str(&to_id(&m.species).to_uppercase())
-        .or_else(|_| PokemonName::from_str(&to_id(base).to_uppercase()))
-        .unwrap_or_else(|_| panic!("unknown species {}", m.species));
-    let data = crate::doubles::species_types::species_data(&to_id(&m.species))
-        .or_else(|| crate::doubles::species_types::species_data(&to_id(base)))
-        .unwrap_or_else(|| panic!("no species data for {}", m.species));
-    let base = data.base_stats;
-    let (t0, t1) = data.types;
+    let sp = species_lookup(&m.species);
+    let id = sp.id;
+    let base = sp.base_stats;
+    let (t0, t1) = sp.types;
     let types = (
         PokemonType::from(t0),
         PokemonType::from(t1),
     );
     let nature = parse_nature(&m.nature);
+    let ability = parse_ability(&m.ability);
     let (hp, atk, def, spa, spd, spe) =
         compute_stats(base, &m.evs, m.level, nature.clone());
     let mut moves = vec![MoveSlot::default(); 4];
     for (i, mv) in m.moves.iter().enumerate().take(4) {
-        let id = to_id(mv);
-        let choices = Choices::from_str(&id.to_uppercase())
-            .unwrap_or_else(|_| panic!("unknown move {mv}"));
-        let choice: Choice = MOVES.get(&choices).cloned().unwrap();
+        let (choices, choice) = move_lookup(mv);
         // PS `baseMoveSlots` pp: `calculatePP(move, 3)`, champions
         // scripts.ts `(move.pp / 5 + 1) * 4` (stored as `Choice.pp`).
         moves[i] = MoveSlot {
@@ -1035,8 +1077,8 @@ fn build_pokemon(m: &TeamMember) -> Pokemon {
         base_types: types,
         hp,
         maxhp: hp,
-        ability: parse_ability(&m.ability),
-        base_ability: parse_ability(&m.ability),
+        ability: ability,
+        base_ability: ability,
         item: parse_item(&m.item),
         nature,
         evs: (
@@ -1055,12 +1097,7 @@ fn build_pokemon(m: &TeamMember) -> Pokemon {
         status: PokemonStatus::NONE,
         rest_turns: 0,
         sleep_turns: 0,
-        weight_kg: crate::doubles::species_weights::species_weight_kg(&to_id(&m.species))
-            .or_else(|| {
-                let base_species = m.species.split('-').next().unwrap_or(&m.species);
-                crate::doubles::species_weights::species_weight_kg(&to_id(base_species))
-            })
-            .unwrap_or(1.0),
+        weight_kg: sp.weight_kg,
         mega_evolved: false,
         terastallized: false,
         tera_type: PokemonType::NORMAL,

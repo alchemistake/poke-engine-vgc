@@ -2290,6 +2290,56 @@ fn execute_action_inner(
         }
     }
 
+    // Shell Side Arm `onModifyMove` (PS data/moves.ts shellsidearm): the user's
+    // Atk vs SpA and the target's Def vs SpD, all with boosts but no ability or
+    // item modifiers (`getStat(stat, false, true)`). Physical wins when strictly
+    // higher; a tie draws `randomChance(1, 2)`. Runs after the target is chosen
+    // and before any other move step, as in PS `useMoveInner`.
+    let shell_side_arm_choice;
+    let choice = if choice.move_id == Choices::SHELLSIDEARM
+        && !is_self
+        && !is_ally
+        && !is_field
+        && state.side(target_side).slot_pokemon(target_slot).is_some()
+    {
+        let a = state.side(side).team_member(idx);
+        let ab = state.side(side).team_boosts[idx as usize].clone();
+        let d = state.side(target_side).slot_pokemon(target_slot).unwrap();
+        let db = state.side(target_side).slot_boosts(target_slot).cloned().unwrap_or_default();
+        let wonder = state.wonder_room.active;
+        let atk = crate::engine::mechanics::boost_stat(ab.atk, a.attack).max(1) as i64;
+        let spa = crate::engine::mechanics::boost_stat(ab.spa, a.special_attack).max(1) as i64;
+        // Wonder Room swaps the defensive stat name (and its boost) for the value.
+        let def = if wonder {
+            crate::engine::mechanics::boost_stat(db.spd, d.special_defense)
+        } else {
+            crate::engine::mechanics::boost_stat(db.def, d.defense)
+        }
+        .max(1) as i64;
+        let spd = if wonder {
+            crate::engine::mechanics::boost_stat(db.def, d.defense)
+        } else {
+            crate::engine::mechanics::boost_stat(db.spd, d.special_defense)
+        }
+        .max(1) as i64;
+        let s1 = (2 * a.level as i64) / 5 + 2;
+        let physical = (s1 * 90 * atk) / def / 50;
+        let special = (s1 * 90 * spa) / spd / 50;
+        if physical > special || (physical == special && rng.random_chance(1, 2)) {
+            shell_side_arm_choice = {
+                let mut c = choice.clone();
+                c.category = MoveCategory::Physical;
+                c.flags.contact = true;
+                c
+            };
+            &shell_side_arm_choice
+        } else {
+            choice
+        }
+    } else {
+        choice
+    };
+
     // Two-turn charge moves (Dig, Meteor Beam, ...): mirrors PS
     // `onTryMove` + `addVolatile('twoturnmove')` (data/moves.ts). The first
     // use(s) only charge: no accuracy roll, no damage, no secondary, but the

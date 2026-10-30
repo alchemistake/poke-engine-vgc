@@ -1005,11 +1005,12 @@ pub fn run_battle_fuzz(
                 state.side(action.side).species_names[action.pokemon_index as usize],
                 action.choice.move_id
             );
-            // Round `onTry`: the first other queued Round is moved to the front
-            // of the queue with `sourceEffect: 'round'` (BP doubled).
+            execute_action(state, rng, &action, &mut move_order, &actions[i..]);
+            // Round `onTry` (flagged in execute_action_inner, only when the user
+            // got past BeforeMove): the first other queued Round is moved to the
+            // front of the queue with `sourceEffect: 'round'` (BP doubled).
             // PS data/moves.ts round, sim/battle-queue.ts prioritizeAction.
-            // TODO(PS parity): only when the user reaches `onTry` (not asleep etc).
-            if action.choice.move_id == Choices::ROUND {
+            if std::mem::take(&mut state.queue_round) {
                 // `i` is already past the running action (PS `queue.list`).
                 if let Some(j) = (i..actions.len()).find(|&j| actions[j].choice.move_id == Choices::ROUND) {
                     let mut a = actions.remove(j);
@@ -1018,7 +1019,6 @@ pub fn run_battle_fuzz(
                     actions.insert(i, a);
                 }
             }
-            execute_action(state, rng, &action, &mut move_order, &actions[i..]);
             // Encore `onStart` -> `queue.changeAction(target, {choice: 'move', moveid})`:
             // cancel the target's queued move and insert the encored one
             // (`resolveAction` draws a random target; `insertChoice` shuffles ties).
@@ -2286,6 +2286,12 @@ fn execute_action_inner(
             }
             None => {}
         }
+    }
+
+    // Round `onTry` (PS data/moves.ts round): never fails; the battle loop
+    // queues the next Round with BP doubled after this action.
+    if choice.move_id == Choices::ROUND {
+        state.queue_round = true;
     }
 
     // Stockpile family (PS `onTry` / `stockpile` condition). No PRNG draws.
@@ -4372,7 +4378,11 @@ fn execute_action_inner(
                     // data/moves.ts healblock.condition: duration 5 (2 from
                     // Psychic Noise, 7 with Persistent); no refresh while active.
                     if state.side(ts).active[tslot].heal_block > 0 {
-                        move_failed = true;
+                        // `onRestart`: Psychic Noise returns early (no fail).
+                        // PS data/moves.ts healblock.condition.onRestart.
+                        if choice.move_id != Choices::PSYCHICNOISE {
+                            move_failed = true;
+                        }
                     } else {
                         let persistent = state.side(side).team_member(idx).ability == Abilities::PERSISTENT;
                         state.side_mut(ts).active[tslot].heal_block = if choice.move_id == Choices::PSYCHICNOISE {
@@ -5904,7 +5914,14 @@ fn execute_action_inner(
         );
         // `mindBlownRecoil` / `chloroblastRecoil`: round(maxhp / 2) after the hits
         // (PS sim/battle-actions.ts recoilDamage).
-        if matches!(choice.move_id, Choices::STEELBEAM | Choices::MINDBLOWN | Choices::CHLOROBLAST) && !no_recoil {
+        // `mindBlownRecoil` damages with the move's condition as effect (not
+        // 'recoil'), so Rock Head does not block it; Magic Guard does.
+        let magic_guard = state.side(side).team_member(idx).ability == Abilities::MAGICGUARD;
+        let blocked = match choice.move_id {
+            Choices::STEELBEAM | Choices::MINDBLOWN => magic_guard,
+            _ => no_recoil,
+        };
+        if matches!(choice.move_id, Choices::STEELBEAM | Choices::MINDBLOWN | Choices::CHLOROBLAST) && !blocked {
             let maxhp = state.side(side).team_member(idx).maxhp;
             apply_damage(state, side, slot, ((maxhp as f32 / 2.0).round() as i16).max(1));
         }

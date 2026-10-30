@@ -317,11 +317,15 @@ fn resolve_faints(state: &mut DoublesState, rng: &mut Gen5Rng, pick: impl Fn(Sid
     // with `length` = the batch size (PS sim/battle.ts resolveFaints,
     // data/abilities.ts moxie / chillingneigh / grimneigh).
     if batch > 0 {
-        if let Some((side, slot, idx, ab)) = state.pending_after_faint.take() {
+        if let Some((side, slot, idx, _)) = state.pending_after_faint.take() {
             if state.battle_is_over() == 0.0
                 && state.side(side).active[slot].pokemon_index == Some(idx)
                 && state.side(side).slot_pokemon(slot).map(|p| p.hp > 0).unwrap_or(false)
             {
+                // PS `runEvent('SourceAfterFaint')` reads the attacker's ability
+                // when the faint is resolved: a Skill Swap / Wandering Spirit
+                // during the same hit has already changed it.
+                let ab = state.side(side).team_member(idx).ability;
                 let n = batch as i8;
                 let b = match ab {
                     Abilities::MOXIE | Abilities::CHILLINGNEIGH => StatBoosts { attack: n, ..Default::default() },
@@ -1333,6 +1337,9 @@ pub fn run_battle_fuzz(
             // target's last move runs next, with its last target location.
             if let Some((ts, tsl, tidx, mv, loc)) = state.queue_instruct.take() {
                 if let Some(a) = instruct_action(state, ts, tsl, tidx, mv, loc) {
+                    // PS `queue.resolveAction` (instruct.onHit) -> `getActionSpeed` ->
+                    // `getTarget`: the instructed copy resolves its target at once.
+                    let _ = ps_get_target(state, rng, &a);
                     actions.insert(i, a);
                 }
             }
@@ -1601,6 +1608,9 @@ fn redirect_target(state: &DoublesState, action: &Action, target: (Side, usize))
         PokemonType::WATER => Abilities::STORMDRAIN,
         _ => return target,
     };
+    // PS `priorityEvent` runs the holders in `compareRedirectOrder` (priority,
+    // then speed, descending) and takes the first one that returns a target.
+    let mut holders: Vec<(i32, Side, usize)> = Vec::new();
     for (s, sl) in [(Side::One, 0usize), (Side::One, 1), (Side::Two, 0), (Side::Two, 1)] {
         if (s, sl) == (action.side, action.slot) {
             continue;
@@ -1611,9 +1621,15 @@ fn redirect_target(state: &DoublesState, action: &Action, target: (Side, usize))
                 if ty == "adjacentFoe" && s == action.side {
                     continue;
                 }
-                return (s, sl);
+                holders.push((cached_speed(state, s, sl), s, sl));
             }
         }
+    }
+    // Stable sort: equal speeds keep the side/slot order above.
+    // TODO(PS parity): equal-speed holders are ordered by `effectOrder` in PS.
+    holders.sort_by(|a, b| b.0.cmp(&a.0));
+    if let Some(&(_, s, sl)) = holders.first() {
+        return (s, sl);
     }
     target
 }
@@ -9778,6 +9794,12 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
         if let Some(sp) = s.saved_speed[idx as usize].take() {
             s.team_member_mut(idx).speed = sp;
         }
+        // PS `clearVolatile` -> `setSpecies`: `pokemon.speed = storedStats.spe`
+        // (the raw stat). A drag-in never calls `updateSpeed` before its
+        // `runSwitch` sort (sim/battle.ts dragIn path), so this raw speed is
+        // what the switch-in speed sort reads.
+        let raw_speed = s.team_member(idx).speed;
+        s.speed_cache[idx as usize] = raw_speed as _;
         s.active[slot].pokemon_index = Some(idx);
         // PS `clearVolatile` (switch-in): `newlySwitched = true`.
         s.active[slot].newly_switched = true;
@@ -10734,12 +10756,17 @@ fn end_of_turn(
                 // `onFieldResidual` -> `eachEvent('Weather')` then
                 // `eachEvent('Update')`: two speed sorts of the actives.
                 // PS `isWeather` is false while Cloud Nine / Air Lock is active
-                // (`field.suppressingWeather()`): no weather event runs.
-                // PS `eachEvent` speed-sorts even when every handler is
-                // suppressed (`runEvent` skips them), so the two sorts still draw.
+                // (`field.suppressingWeather()`). Sandstorm, Hail and Snowscape
+                // `onFieldResidual` only call `eachEvent('Weather')` (and so its
+                // `Update`) when `this.field.isWeather(...)`: no sort at all.
+                // Rain, Sun, Primordial Sea, Desolate Land and Delta Stream call
+                // it unconditionally, so both sorts still draw with every handler
+                // suppressed (PS data/conditions.ts `onFieldResidual`).
                 if weather_suppressed(state) {
-                    let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
-                    let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+                    if !matches!(state.weather.weather_type, Weather::SAND | Weather::HAIL | Weather::SNOW) {
+                        let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+                        let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+                    }
                     continue;
                 }
                 let order = sorted_actives(state, rng, "speed tie (eachEvent)");

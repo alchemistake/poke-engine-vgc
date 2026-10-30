@@ -694,6 +694,26 @@ fn champions_move_category(_move_id: Choices) -> Option<MoveCategory> {
 /// own Unaware (`unaware` `onAnyModifyBoost`, data/abilities.ts: the target's
 /// evasion is zeroed when `activePokemon` holds it) also reads the target's
 /// evasion as 0 in `hitStepAccuracy`.
+/// The user's ability for `ignores_evasion`: Unaware works through
+/// `onAnyModifyBoost`, which PS collects only from foes / allies with HP
+/// (`side.allies()` / `foes()` drop `!hp`), so a user already fainted by
+/// `selfdestruct: 'always'` (Explosion, Misty Explosion) loses it.
+fn evasion_ability(state: &DoublesState, side: Side, idx: PokemonIndex, mv: Choices) -> Abilities {
+    let p = state.side(side).team_member(idx);
+    if p.ability == Abilities::UNAWARE && (p.hp <= 0 || is_selfdestruct_always(mv)) {
+        Abilities::NONE
+    } else {
+        p.ability
+    }
+}
+
+/// PS `move.selfdestruct === 'always'`: `useMoveInner` faints the user before
+/// the accuracy and damage steps (data/moves.ts explosion, selfdestruct,
+/// mistyexplosion).
+fn is_selfdestruct_always(mv: Choices) -> bool {
+    matches!(mv, Choices::EXPLOSION | Choices::MISTYEXPLOSION | Choices::SELFDESTRUCT)
+}
+
 fn ignores_evasion(ability: Abilities, mv: Choices) -> bool {
     matches!(ability, Abilities::KEENEYE | Abilities::ILLUMINATE | Abilities::MINDSEYE | Abilities::UNAWARE)
         || matches!(
@@ -1254,7 +1274,9 @@ pub fn run_battle_fuzz(
                 }
             }
             // A recharging pokemon's action is `recharge`, not the chosen move.
-            if a.choice.move_id == Choices::FOCUSPUNCH && !state.side(a.side).active[a.slot].recharging {
+            // Beak Blast's `priorityChargeMove` resolves the same way (PS
+            // data/moves.ts beakblast.priorityChargeCallback), in its action's turn.
+            if matches!(a.choice.move_id, Choices::FOCUSPUNCH | Choices::BEAKBLAST) && !state.side(a.side).active[a.slot].recharging {
                 let mut charge = a.clone();
                 charge.target_loc = 0;
                 let _ = ps_get_target(state, rng, &charge);
@@ -1287,22 +1309,6 @@ pub fn run_battle_fuzz(
             }
             a.original_target = action_original_target(state, a);
             let _ = ps_get_target(state, rng, a);
-        }
-        // Beak Blast (PS data/moves.ts beakblast.priorityChargeCallback): its
-        // `priorityChargeMove` action has no target location, so `resolveAction`
-        // draws a random foe. The burn on contact is in the hit loop below.
-        let beak_blasters: Vec<(Side, usize, PokemonIndex)> = actions
-            .iter()
-            .filter(|a| a.choice.move_id == Choices::BEAKBLAST && !state.side(a.side).active[a.slot].recharging)
-            .map(|a| (a.side, a.slot, a.pokemon_index))
-            .collect();
-        for &(bs, bsl, bidx) in &beak_blasters {
-            if state.side(bs).active[bsl].pokemon_index == Some(bidx) {
-                let foes = (0..2).filter(|&sl| state.side(bs.other()).slot_pokemon(sl).is_some_and(|p| p.hp > 0)).count();
-                if foes > 0 {
-                    let _ = rng.label("retarget").random(foes as u32);
-                }
-            }
         }
         commit_queue_sort(&mut actions, state, rng);
         // `beforeTurn` action: `eachEvent('BeforeTurn')`, then the action's
@@ -4558,7 +4564,7 @@ fn execute_action_inner(
             // No Guard (`onAnyAccuracy`) no longer applies.
             let user_no_guard = state.side(side).team_member(idx).ability == Abilities::NOGUARD
                 && !matches!(choice.move_id, Choices::EXPLOSION | Choices::MISTYEXPLOSION | Choices::SELFDESTRUCT);
-            let ignore_eva = ignores_evasion(state.side(side).team_member(idx).ability, choice.move_id);
+            let ignore_eva = ignores_evasion(evasion_ability(state, side, idx, choice.move_id), choice.move_id);
             let st = &*state;
             spread_list.retain(|&(ts, tsl)| {
                 accuracy_event_ties(st, rng, side, slot, ts, tsl);
@@ -4627,7 +4633,7 @@ fn execute_action_inner(
         } else {
             state.side(side).slot_boosts(slot).map(|b| b.acc).unwrap_or(0)
         };
-        let eb = if ignores_evasion(state.side(side).team_member(idx).ability, choice.move_id) {
+        let eb = if ignores_evasion(evasion_ability(state, side, idx, choice.move_id), choice.move_id) {
             0
         } else {
             state.side(target_side).slot_boosts(target_slot).map(|b| b.eva).unwrap_or(0)
@@ -4947,7 +4953,7 @@ fn execute_action_inner(
           } else {
               state.side(side).slot_boosts(slot).map(|b| b.acc).unwrap_or(0)
           };
-          let eb = if ignores_evasion(state.side(side).team_member(idx).ability, choice.move_id) {
+          let eb = if ignores_evasion(evasion_ability(state, side, idx, choice.move_id), choice.move_id) {
               0
           } else {
               state.side(target_side).slot_boosts(target_slot).map(|b| b.eva).unwrap_or(0)
@@ -6282,7 +6288,26 @@ fn execute_action_inner(
                 } else {
                     let half = state.side(side).team_member(idx).maxhp / 2;
                     apply_damage(state, side, slot, half.max(1));
-                    state.side_mut(target_side).active[target_slot].cursed = true;
+                    // Champions curse.onHit: aimed at the user or an ally (a
+                    // 'self' Curse chosen before the user became Ghost, e.g. by
+                    // Protean), `getRandomTarget(source, 'Curse')` picks a foe:
+                    // `randomFoe()` (a draw when any foe is up) or `foe.active[0]`.
+                    // PS data/mods/champions/moves.ts curse.onHit, sim/battle.ts getRandomTarget.
+                    let (cs, csl) = if target_side == side {
+                        let foes: Vec<usize> = (0..2)
+                            .filter(|&k| state.side(side.other()).slot_pokemon(k).is_some_and(|p| p.hp > 0))
+                            .collect();
+                        if foes.is_empty() {
+                            (side.other(), 0)
+                        } else {
+                            (side.other(), foes[rng.label("retarget").random(foes.len() as u32) as usize])
+                        }
+                    } else {
+                        (target_side, target_slot)
+                    };
+                    if state.side(cs).slot_pokemon(csl).is_some_and(|p| p.hp > 0) {
+                        state.side_mut(cs).active[csl].cursed = true;
+                    }
                 }
             }
         }
@@ -9468,7 +9493,14 @@ fn compute_hit_damage(
         } else {
             atk_boost_stat
         };
-        let def_boost_stat = if attacker.ability == Abilities::UNAWARE { 0 } else { def_boost_stat };
+        // Not from a user with no HP (selfdestruct 'always' fainted it first):
+        // PS `findEventHandlers` collects `onAny` handlers only from
+        // `foes()` / `alliesAndSelf()`, which skip `!hp` pokemon.
+        let def_boost_stat = if attacker.ability == Abilities::UNAWARE && attacker.hp > 0 && !is_selfdestruct_always(choice.move_id) {
+            0
+        } else {
+            def_boost_stat
+        };
         // PS `move.ignoreDefensive` (data/moves.ts chipaway, darkestlariat,
         // sacredsword): `getDamage` sets `defBoosts = 0` (any sign).
         let def_boost_stat = if matches!(

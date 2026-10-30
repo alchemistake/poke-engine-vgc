@@ -3847,10 +3847,13 @@ fn execute_action_inner(
     // Good as Gold `onTryHit`: immune to status / non-damaging moves (no draw).
     // Breakable (Mold Breaker / Terabreak / ...). Spread moves filter the
     // holder out of the target list instead (handled in the spread block).
-    if !is_self && !is_field && !is_spread && (side, slot) != (target_side, target_slot) {
+    // An `Ally` move (Dragon Cheer, ...) aims at the adjacent ally, not the foe
+    // default `target_side` (PS `target` is the chosen ally).
+    let (gag_side, gag_slot) = if is_ally { (side, ally_slot) } else { (target_side, target_slot) };
+    if !is_self && !is_field && !is_spread && (side, slot) != (gag_side, gag_slot) {
         let immune = state
-            .side(target_side)
-            .slot_pokemon(target_slot)
+            .side(gag_side)
+            .slot_pokemon(gag_slot)
             .map(|d| {
                 d.ability == Abilities::GOODASGOLD
                     && choice.category == MoveCategory::Status
@@ -4921,7 +4924,10 @@ fn execute_action_inner(
             let b = &b;
             // Multi-hit moves (Scale Shot) apply a user stat change once, after
             // the last hit (`selfBoost`).
-            let defer_user_boost = choice.multihit != 0 && is_attack && b.target == MoveTarget::User;
+            // Clanging Scales is PS `selfBoost` too: applied once after the whole move.
+            let defer_user_boost = (choice.multihit != 0 || choice.move_id == Choices::CLANGINGSCALES)
+                && is_attack
+                && b.target == MoveTarget::User;
             // Curse: a Ghost user pays HP instead of changing stats (`onTryHit`).
             let ghost_curse = choice.move_id == Choices::CURSE && {
                 let t = state.side(side).team_member(idx).types;
@@ -4966,10 +4972,9 @@ fn execute_action_inner(
                 }
             } else if ghost_curse {
                 // no stat change
-            } else if defer_user_boost || (choice.move_id == Choices::CLANGINGSCALES && ti > 0) {
-                // Multi-hit: applied after the loop. Clanging Scales (PS
-                // `selfBoost`, not `self`): one user drop per move, so only
-                // the first target's pass applies it.
+            } else if defer_user_boost {
+                // Multi-hit and Clanging Scales (PS `selfBoost`): applied after
+                // the hit loop's faints are resolved (see below).
             } else if let Some(tidx) = state.side(ts).active[tslot].pokemon_index {
                 let before = state.side(ts).team_boosts[tidx as usize].clone();
                 let boosts = if ts != side { mirror_armor_bounce(state, side, slot, ts, tidx, &b.boosts) } else { b.boosts.clone() };
@@ -5189,17 +5194,14 @@ fn execute_action_inner(
             if user_locked {
                 move_failed = true;
             } else {
-                // `target.getTypes(true)`: apparent types, volatile type
-                // change first, `???` filtered out.
-                let (t0, t1) = {
-                    let s = state.side(target_side);
-                    let tc = s.active[target_slot].type_change;
-                    let base = s
-                        .slot_pokemon(target_slot)
-                        .map(|p| p.types)
-                        .unwrap_or((PokemonType::TYPELESS, PokemonType::TYPELESS));
-                    tc.unwrap_or(base)
-                };
+                // `target.getTypes(true)`: the current types. Libero / Soak /
+                // Magic Powder write them to the team member and keep the
+                // original in `type_change` (restore data), so read the member.
+                let (t0, t1) = state
+                    .side(target_side)
+                    .slot_pokemon(target_slot)
+                    .map(|p| p.types)
+                    .unwrap_or((PokemonType::TYPELESS, PokemonType::TYPELESS));
                 if t0 == PokemonType::TYPELESS {
                     move_failed = true;
                 } else {
@@ -7223,7 +7225,7 @@ fn execute_action_inner(
     // hit loop's faints first (`hitStepMoveHitLoop` -> `resolveFaints`), then
     // `useMoveInner` runs `selfBoost`, whose `boost` fails once the foe side has
     // no Pokemon left (`foePokemonLeft`).
-    if choice.multihit != 0 && is_attack && hits_done > 0 {
+    if (choice.multihit != 0 || choice.move_id == Choices::CLANGINGSCALES) && is_attack && hits_done > 0 {
         if let Some(b) = choice.boost.as_ref().filter(|b| b.target == MoveTarget::User) {
             let foe_left = state
                 .side(side.other())
@@ -11811,6 +11813,9 @@ fn end_of_turn(
         } else {
             switch_in(state, *side, *slot, *position);
         }
+        // PS `runAction` -> `eachEvent('Update')` after the switch-in: the new
+        // holder's `onUpdate` cures (Insomnia wakes a sleeping replacement).
+        ability_update_cures(state, *side, *slot);
         update_speed(state);
         if let Some(sp) = effective_speed(state, *side, *slot) {
             let ties = run_switch_speeds.iter().filter(|&&x| x == sp).count();

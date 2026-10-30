@@ -64,7 +64,9 @@ pub fn immune_to_status(target: &Pokemon, status: &PokemonStatus, ctx: &StatusCo
         Abilities::SHIELDSDOWN => return target.hp > target.maxhp / 2,
         Abilities::PURIFYINGSALT => return true,
         Abilities::COMATOSE => return true,
-        Abilities::LEAFGUARD => return ctx.sun,
+        // PS data/abilities.ts leafguard.onSetStatus: only blocks in sun, otherwise
+        // falls through to the existing-status check below.
+        Abilities::LEAFGUARD if ctx.sun => return true,
         _ => {}
     }
 

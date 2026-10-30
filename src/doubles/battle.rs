@@ -2009,6 +2009,10 @@ thread_local! {
     /// as PS `getMoveTargets` returns it: Pressure's `pressureTargets`. `None`
     /// until `execute_action_inner` resolves it for this action.
     static PRESSURE_TARGET: std::cell::Cell<Option<Option<(Side, usize)>>> = const { std::cell::Cell::new(None) };
+    /// Pressure PP extra counted when the target was resolved (PS `pressureTargets`
+    /// are read before the hit, so a target that swaps its ability mid-move still
+    /// costs PP). -1 when not yet resolved.
+    static PRESSURE_EXTRA: std::cell::Cell<i8> = const { std::cell::Cell::new(-1) };
 }
 
 thread_local! {
@@ -2166,6 +2170,19 @@ fn mold_breaker_forget(side: Side, idx: PokemonIndex) {
 /// sim/pokemon.ts getMoveTargets; `mustpressure` moves count every foe,
 /// `foeSide` moves none).
 fn pressure_deduct_pp(state: &mut DoublesState, action: &Action) {
+    let pre = PRESSURE_EXTRA.with(|c| c.get());
+    let extra = if pre >= 0 { pre } else { pressure_extra_count(state, action) };
+    if extra == 0 {
+        return;
+    }
+    let s = state.side_mut(action.side);
+    let mv = &mut s.team_member_mut(action.pokemon_index).moves[&action.choice.move_index];
+    mv.pp = (mv.pp - extra).max(0);
+}
+
+/// PS `useMoveInner` `pressureTargets` (`DeductPP` from each Pressure foe):
+/// the number of foes that pay one PP. Evaluated before the hit.
+fn pressure_extra_count(state: &DoublesState, action: &Action) -> i8 {
     let foe = action.side.other();
     let ty = crate::doubles::move_targets::ps_move_target(&action.choice.move_id.to_string().to_lowercase());
     let all_foes = matches!(
@@ -2191,12 +2208,7 @@ fn pressure_deduct_pp(state: &mut DoublesState, action: &Action) {
         .filter(|&sl| sl < 2)
         .filter(|&sl| state.side(foe).slot_pokemon(sl).is_some_and(|p| p.hp > 0 && p.ability == Abilities::PRESSURE))
         .count() as i8;
-    if extra == 0 {
-        return;
-    }
-    let s = state.side_mut(action.side);
-    let mv = &mut s.team_member_mut(action.pokemon_index).moves[&action.choice.move_index];
-    mv.pp = (mv.pp - extra).max(0);
+    extra
 }
 
 thread_local! {
@@ -2265,6 +2277,7 @@ fn execute_action_body(
         }))
     });
     PRESSURE_TARGET.with(|c| c.set(None));
+    PRESSURE_EXTRA.with(|c| c.set(-1));
     // PS `runMove`: a locked move (lockedmove / twoturnmove firing turn / uproar)
     // runs with `sourceEffect` = the lock condition, so `useMoveInner`'s Pressure
     // block (`!sourceEffect || callerMoveForPressure`) is skipped. Externally
@@ -2527,6 +2540,8 @@ fn execute_action_inner(
         None => ps_get_target(state, rng, action).map(|t| redirect_target(state, action, t)),
     };
     PRESSURE_TARGET.with(|c| c.set(Some(resolved)));
+    let pre_extra = pressure_extra_count(state, action);
+    PRESSURE_EXTRA.with(|c| c.set(pre_extra));
     // PS `runMove` -> `moveUsed(move, targetLoc)` stores the action's own
     // targetLoc (before any redirect), not the pokemon it finally hit. Instruct,
     // Sleep Talk-style locks and Encore read it back.
@@ -2955,6 +2970,7 @@ fn execute_action_inner(
             // `moveThisTurnResult` is false (Stomping Tantrum's doubled BP reads it).
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
             modify_move_field_tie(state, rng);
+        modify_move_user_tie(state, rng, side, slot);
             push_order(move_order);
             return;
         }
@@ -2967,6 +2983,7 @@ fn execute_action_inner(
     // PS sim/battle.ts getTarget; sim/battle-actions.ts useMoveInner (`!target`).
     if is_ally && !is_self && !is_field && resolved.is_none() {
         modify_move_field_tie(state, rng);
+        modify_move_user_tie(state, rng, side, slot);
         push_order(move_order);
         return;
     }
@@ -3051,6 +3068,7 @@ fn execute_action_inner(
     // `runEvent('ModifyMove')` in `useMoveInner` (after the move's own
     // `singleEvent` handlers, before TryMove): Gravity and Wonder Room tie.
     modify_move_field_tie(state, rng);
+    modify_move_user_tie(state, rng, side, slot);
 
     // Two-turn charge moves (Dig, Meteor Beam, ...): mirrors PS
     // `onTryMove` + `addVolatile('twoturnmove')` (data/moves.ts). The first
@@ -3600,7 +3618,13 @@ fn execute_action_inner(
                 };
                 // No Guard on either side: `onAnyInvulnerability` returns 0, so the
                 // move hits (PS data/abilities.ts noguard).
-                let no_guard = state.side(side).team_member(idx).ability == Abilities::NOGUARD || d.ability == Abilities::NOGUARD;
+                // `selfdestruct: 'always'` faints the user before the hits, so the
+                // user's own No Guard no longer applies (PS: the fainted holder is
+                // not an active source; ps_trace seed 13015 turn 2, Golurk
+                // Self-Destruct misses its ally Scolipede with no draw).
+                let user_no_guard = state.side(side).team_member(idx).ability == Abilities::NOGUARD
+                    && !matches!(choice.move_id, Choices::EXPLOSION | Choices::MISTYEXPLOSION | Choices::SELFDESTRUCT);
+                let no_guard = user_no_guard || d.ability == Abilities::NOGUARD;
                 if matches!(
                     m,
                     Choices::DIG | Choices::DIVE | Choices::FLY | Choices::BOUNCE | Choices::PHANTOMFORCE | Choices::SHADOWFORCE | Choices::SKYDROP
@@ -5558,6 +5582,9 @@ fn execute_action_inner(
                 // PS `substitute.onTryPrimaryHit`: `bypasssub` moves (Sing, and the
                 // list in `bypasses_substitute`) skip the Substitute.
                 let sub_blocks = !bypasses_substitute(choice);
+                if !already {
+                    set_status_event_tie(state, rng, ts, tslot, st.status, ts != side, sub_blocks);
+                }
                 if already || status_immune_ex(state, ts, tslot, st.status, ts != side, side, slot, sub_blocks, true, false) {
                     move_failed = true;
                 } else {
@@ -7276,6 +7303,7 @@ fn execute_action_inner(
                     }
                     Effect::Status(st) => {
                         if let Some(tidx) = state.side(ts).active[tslot].pokemon_index {
+                            set_status_event_tie(state, rng, ts, tslot, *st, ts != side, true);
                             if !status_immune(state, ts, tslot, *st, ts != side, side, slot) {
                                 set_status(state, rng, ts, tidx, *st);
                                 if ts != side {
@@ -8705,6 +8733,85 @@ fn try_set_status(
     try_set_status_with(state, rng, ts, tslot, st, src_side, src_idx, true, true, false);
 }
 
+/// PS `setStatus` -> `runEvent('SetStatus')` (sim/pokemon.ts): the target's
+/// `onSetStatus` abilities and the `onAllySetStatus` abilities of its side
+/// (Flower Veil, Sweet Veil, Pastel Veil) are handlers of that event. Abilities
+/// are all priority 0 and subOrder 7, so holders of equal speed tie and each
+/// tie group draws one shuffle. Reached only when the status is not blocked by
+/// a type / `Immunity`-event check (Sun vs freeze, Magma Armor) and not blocked
+/// by a foe's Substitute. Misty / Electric Terrain, Safeguard and Uproar are
+/// SetStatus handlers too, but on other keys, so they do not tie here.
+/// TODO(PS parity): Uproar `onAnySetStatus` and foe-side handlers.
+fn set_status_event_tie(
+    state: &DoublesState,
+    rng: &mut Gen5Rng,
+    ts: Side,
+    tslot: usize,
+    st: PokemonStatus,
+    from_opponent: bool,
+    substitute_blocks: bool,
+) {
+    if st == PokemonStatus::NONE {
+        return;
+    }
+    let Some(target) = state.side(ts).slot_pokemon(tslot) else { return };
+    if substitute_blocks && from_opponent && state.side(ts).active[tslot].substitute_health > 0 {
+        return;
+    }
+    // Type and `Immunity`-event checks come before the SetStatus event.
+    let raw_ctx = crate::engine::mechanics::StatusContext {
+        sun: matches!(state.weather.weather_type, Weather::SUN | Weather::HARSHSUN) && !weather_suppressed(state),
+        misty_terrain: false,
+        electric_terrain: false,
+        safeguard: false,
+        substitute: false,
+        from_opponent: false,
+        sleep_clause: false,
+        source_ability: Abilities::NONE,
+    };
+    if crate::engine::mechanics::immune_to_status(target, &st, &raw_ctx) {
+        return;
+    }
+    let tidx_slot = tslot;
+    let mut hs: Vec<ResidualHandler> = Vec::new();
+    for sl in 0..2 {
+        let Some(p) = state.side(ts).slot_pokemon(sl) else { continue };
+        if p.hp <= 0 {
+            continue;
+        }
+        let speed = cached_speed(state, ts, sl);
+        let own_set_status = sl == tidx_slot
+            && matches!(
+                p.ability,
+                Abilities::COMATOSE
+                    | Abilities::IMMUNITY
+                    | Abilities::INSOMNIA
+                    | Abilities::LEAFGUARD
+                    | Abilities::LIMBER
+                    | Abilities::PASTELVEIL
+                    | Abilities::PURIFYINGSALT
+                    | Abilities::SHIELDSDOWN
+                    | Abilities::THERMALEXCHANGE
+                    | Abilities::VITALSPIRIT
+                    | Abilities::WATERBUBBLE
+                    | Abilities::WATERVEIL
+            );
+        let ally_set_status = matches!(p.ability, Abilities::FLOWERVEIL | Abilities::SWEETVEIL | Abilities::PASTELVEIL);
+        for _ in 0..(own_set_status as u8 + ally_set_status as u8) {
+            hs.push(ResidualHandler {
+                order: 0,
+                priority: 0,
+                speed,
+                sub_order: 7,
+                kind: ResidualKind::Marker,
+            });
+        }
+    }
+    if hs.len() > 1 {
+        let _ = sort_residual_handlers(hs, rng, "speed tie (move order)");
+    }
+}
+
 /// Yawn's `onEnd` -> `target.trySetStatus('slp', source)`: the setStatus effect
 /// is the Yawn condition, which Safeguard exempts (`effect.id === 'yawn'`), and
 /// Substitute only blocks move effects. Uproar, Sweet Veil and terrain still do.
@@ -8750,6 +8857,7 @@ fn try_set_status_with(
 ) {
     let Some(tidx) = state.side(ts).active[tslot].pokemon_index else { return };
     let src_slot = (0..2).find(|&sl| state.side(src_side).active[sl].pokemon_index == Some(src_idx));
+    set_status_event_tie(state, rng, ts, tslot, st, ts != src_side, substitute_blocks);
     if status_immune_ex(state, ts, tslot, st, ts != src_side, src_side, src_slot.unwrap_or(0), substitute_blocks, safeguard_blocks, effect_is_yawn) {
         return;
     }
@@ -8828,7 +8936,9 @@ fn status_immune_ex(
         .slot_pokemon(src_slot)
         .is_some_and(|p| p.ability == Abilities::INFILTRATOR);
     let ctx = crate::engine::mechanics::StatusContext {
-        sun: matches!(state.weather.weather_type, Weather::SUN | Weather::HARSHSUN),
+        // PS sunnyday `onImmunity('frz')` checks `effectiveWeather()`, which is
+        // empty while a Cloud Nine / Air Lock holder suppresses the weather.
+        sun: matches!(state.weather.weather_type, Weather::SUN | Weather::HARSHSUN) && !weather_suppressed(state),
         misty_terrain: state.terrain.terrain_type == crate::engine::state::Terrain::MISTYTERRAIN,
         electric_terrain: state.terrain.terrain_type == crate::engine::state::Terrain::ELECTRICTERRAIN,
         safeguard: safeguard_blocks && state.side(ts).side_conditions.safeguard > 0 && !(infiltrates && ts != src_side),
@@ -11336,6 +11446,16 @@ fn trace_copy(state: &mut DoublesState, side: Side, slot: usize, rng: &mut Gen5R
 /// is set by `runEvent` just before the callback); the `ModifyMove` callback
 /// runs for every move while Wonder Room is up, whether or not Gravity is. So
 /// the first event with both active may already tie.
+/// PS `runEvent('ModifyMove')` for the user: Heal Block and Throat Chop each
+/// hold an `onModifyMove` handler (priority 0, same holder and speed), so when
+/// both are up they tie and one shuffle draw happens for every move the user
+/// uses (data/moves.ts healblock / throatchop, sim/battle.ts runEvent).
+fn modify_move_user_tie(state: &DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize) {
+    if state.side(side).active[slot].heal_block > 0 && state.side(side).active[slot].throat_chop > 0 {
+        let _ = rng.label("speed tie (move order)").random(2);
+    }
+}
+
 fn modify_move_field_tie(state: &mut DoublesState, rng: &mut Gen5Rng) {
     if state.wonder_room.active {
         if state.gravity.active && state.wonder_room_seen {

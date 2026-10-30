@@ -2571,10 +2571,14 @@ fn execute_action_inner(
             if let Some(p) = s.active[slot].pokemon_index {
                 s.moves_used[p as usize][action.choice.move_index as usize] = true;
                 let mv = &mut s.team_member_mut(p).moves[&action.choice.move_index];
-                if mv.pp > 0 {
-                    mv.pp -= 1;
-                } else if action.choice.move_id != Choices::STRUGGLE {
-                    return;
+                // Struggle has no PP (PS `struggle` is not deducted): its
+                // `move_index` is the default slot 0, which must not lose PP.
+                if action.choice.move_id != Choices::STRUGGLE {
+                    if mv.pp > 0 {
+                        mv.pp -= 1;
+                    } else {
+                        return;
+                    }
                 }
             }
         }
@@ -3404,10 +3408,14 @@ fn execute_action_inner(
                     Choices::DIVE => matches!(choice.move_id, Choices::SURF | Choices::WHIRLPOOL),
                     _ => false,
                 };
+                // No Guard on either side: `onAnyInvulnerability` returns 0, so the
+                // move hits (PS data/abilities.ts noguard).
+                let no_guard = state.side(side).team_member(idx).ability == Abilities::NOGUARD || d.ability == Abilities::NOGUARD;
                 if matches!(
                     m,
                     Choices::DIG | Choices::DIVE | Choices::FLY | Choices::BOUNCE | Choices::PHANTOMFORCE | Choices::SHADOWFORCE | Choices::SKYDROP
                 ) && !hits_anyway
+                    && !no_guard
                 {
                     continue;
                 }
@@ -4988,9 +4996,16 @@ fn execute_action_inner(
                 &Abilities::GOODASGOLD,
             );
             for sl in [slot, ally_slot] {
+                // A semi-invulnerable ally misses (PS `hitStepInvulnerabilityEvent`
+                // prints `-miss` and skips it: no heal for it, no draw).
+                // PS data/conditions.ts dive / fly / dig `onInvulnerability`.
+                let ally_misses = sl != slot && semi_invulnerable_blocks(state, side, idx, choice.move_id, side, sl);
                 if let Some(tidx) = state.side(side).active[sl].pokemon_index {
                     let pm = state.side_mut(side).team_member_mut(tidx);
                     if sl != slot && pm.hp > 0 && pm.ability == Abilities::GOODASGOLD && !user_breaks_gold {
+                        continue;
+                    }
+                    if ally_misses {
                         continue;
                     }
                     // PS data/abilities.ts waterabsorb / dryskin `onTryHit`: an ally
@@ -5014,6 +5029,35 @@ fn execute_action_inner(
                 move_failed = true;
             }
         }
+        // Heal Bell (`target: allyTeam`, onHit once with the user as target): every
+        // party member but the user is skipped when it has Soundproof or Good as
+        // Gold (`-immune`); the rest, the user included, are cured. Fails when
+        // nobody was cured. Bench members count too. PS data/moves.ts healbell,
+        // sim/pokemon.ts cureStatus.
+        // TODO(PS parity): Mold Breaker / Gastro Acid suppression of the ally's ability.
+        if choice.move_id == Choices::HEALBELL && ti == 0 {
+            let mut cured = false;
+            for t in crate::state::pokemon_index_iter() {
+                let (hp, status, ability) = {
+                    let p = state.side(side).team_member(t);
+                    (p.hp, p.status, p.ability)
+                };
+                if hp <= 0 || status == PokemonStatus::NONE {
+                    continue;
+                }
+                if t != idx
+                    && matches!(ability, Abilities::SOUNDPROOF | Abilities::GOODASGOLD)
+                {
+                    continue;
+                }
+                state.side_mut(side).team_member_mut(t).status = PokemonStatus::NONE;
+                cured = true;
+            }
+            if !cured {
+                move_failed = true;
+            }
+        }
+
         if let Some(h) = choice.heal.as_ref().filter(|_| !matches!(choice.move_id, Choices::LIFEDEW | Choices::STEELBEAM)) {
             // Milk Drink (champions `target: adjacentAllyOrSelf`): heals the
             // chosen target, the user or its ally. PS data/mods/champions/moves.ts.
@@ -5797,12 +5841,18 @@ fn execute_action_inner(
                 move_failed = true;
             } else if let Some(tp) = state.side(target_side).slot_pokemon(target_slot) {
                 let atk = multiply_boost(tb.atk, tp.attack).max(1);
+                let ooze = tp.ability == Abilities::LIQUIDOOZE;
                 let tidx = state.side(target_side).active[target_slot].pokemon_index.unwrap();
                 apply_boosts(state, target_side, tidx, &StatBoosts { attack: -1, ..Default::default() }, true);
-                let pm = state.side_mut(side).team_member_mut(idx);
-                let healed = pm.hp < pm.maxhp;
-                pm.hp = (pm.hp + atk).min(pm.maxhp);
-                let _ = healed;
+                if ooze {
+                    // Liquid Ooze `onSourceTryHeal` (`strengthsap` is on its list): the
+                    // heal event still runs and the user takes the amount as damage,
+                    // even at full HP. PS data/abilities.ts liquidooze, sim/battle.ts heal.
+                    apply_damage(state, side, slot, atk);
+                } else {
+                    let pm = state.side_mut(side).team_member_mut(idx);
+                    pm.hp = (pm.hp + atk).min(pm.maxhp);
+                }
             }
         }
 
@@ -10769,7 +10819,10 @@ fn end_turn_disable_moves(state: &DoublesState, rng: &mut Gen5Rng) {
         }
         // `TrapPokemon` runs for the same pokemon right after its DisableMove.
         let mut ts: Vec<(i64, i32, i64)> = Vec::new();
-        if a.trapped {
+        // No Retreat `onStart` = `addVolatile('trapped')`: the same `trapped`
+        // condition (`onTrapPokemon`, subOrder 2) as Block / Mean Look.
+        // PS data/moves.ts noretreat, data/conditions.ts trapped.
+        if a.trapped || a.no_retreat {
             ts.push((4294967296, speed, 2));
         }
         if a.partial_trap.is_some() {

@@ -76,6 +76,9 @@ pub struct ActiveSlot {
     /// Focus Punch volatile (`focuspunch`, duration 1) and its `lostFocus`.
     pub focus_punch: bool,
     pub lost_focus: bool,
+    /// Beak Blast volatile (`beakblast`, set by its priority charge, removed
+    /// after its own move): a contact hit on this slot burns the attacker.
+    pub beak_blast: bool,
     pub stockpile_def: i8,
     pub stockpile_spd: i8,
     /// Used Protect this turn; incoming attacks fail until end of turn.
@@ -279,6 +282,7 @@ impl ActiveSlot {
             confusion: 0,
             drag_out: false,
             focus_punch: false,
+            beak_blast: false,
             lost_focus: false,
             stockpile_def: 0,
             stockpile_spd: 0,

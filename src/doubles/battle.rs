@@ -1116,7 +1116,7 @@ pub fn run_battle_fuzz(
         }
         // Beak Blast (PS data/moves.ts beakblast.priorityChargeCallback): its
         // `priorityChargeMove` action has no target location, so `resolveAction`
-        // draws a random foe. TODO(PS parity): the burn on contact (`condition.onHit`).
+        // draws a random foe. The burn on contact is in the hit loop below.
         let beak_blasters: Vec<(Side, usize, PokemonIndex)> = actions
             .iter()
             .filter(|a| a.choice.move_id == Choices::BEAKBLAST && !state.side(a.side).active[a.slot].recharging)
@@ -1138,7 +1138,8 @@ pub fn run_battle_fuzz(
         // `beforeTurnMove` actions (Counter / Mirror Coat `beforeTurnCallback`):
         // each is an action of its own and ends with `eachEvent('Update')`.
         for a in actions.iter() {
-            if matches!(a.choice.move_id, Choices::COUNTER | Choices::MIRRORCOAT) {
+            // A recharging pokemon's action is `recharge` (no `beforeTurnMove`).
+            if matches!(a.choice.move_id, Choices::COUNTER | Choices::MIRRORCOAT) && !state.side(a.side).active[a.slot].recharging {
                 each_event_update(state, rng);
             }
         }
@@ -1156,10 +1157,15 @@ pub fn run_battle_fuzz(
             .map(|a| (a.side, a.slot, a.pokemon_index, a.choice.move_id == Choices::FOCUSPUNCH))
             .collect();
         for &(cs, csl, cidx, is_focus) in &chargers {
-            if state.side(cs).active[csl].pokemon_index == Some(cidx) && is_focus {
+            if state.side(cs).active[csl].pokemon_index == Some(cidx) {
                 let a = &mut state.side_mut(cs).active[csl];
-                a.focus_punch = true;
-                a.lost_focus = false;
+                if is_focus {
+                    a.focus_punch = true;
+                    a.lost_focus = false;
+                } else {
+                    // PS beakblast.priorityChargeCallback: `addVolatile('beakblast')`.
+                    a.beak_blast = true;
+                }
             }
             each_event_update(state, rng);
         }
@@ -1731,7 +1737,9 @@ fn resort_queue(state: &mut DoublesState, rng: &mut Gen5Rng, queue: &mut [Action
             a.priority += now - a.boost;
             a.boost = now;
         }
-        if state.side(a.side).active[a.slot].pokemon_index == Some(a.pokemon_index) {
+        // Actions follow the pokemon: an Ally Switch moves it to the other slot.
+        if let Some(sl) = (0..2).find(|&sl| state.side(a.side).active[sl].pokemon_index == Some(a.pokemon_index)) {
+            a.slot = sl;
             if let Some(sp) = effective_speed(state, a.side, a.slot) {
                 a.speed = sp;
             }
@@ -2088,6 +2096,15 @@ fn execute_action(
     let before = state.side(action.side).active[action.slot].charging;
     state.copy_called = false;
     execute_action_body(state, rng, action, move_order, queue);
+    // PS beakblast `onAfterMove`: the user's Beak Blast volatile ends with its move.
+    if action.choice.move_id == Choices::BEAKBLAST {
+        for sl in 0..2 {
+            let a = &mut state.side_mut(action.side).active[sl];
+            if a.pokemon_index == Some(action.pokemon_index) {
+                a.beak_blast = false;
+            }
+        }
+    }
     // PS `runMove`: a failed BeforeMove runs `MoveAborted`, which removes
     // `twoturnmove` (data/conditions.ts). The charge was not consumed. The body
     // returns early for every BeforeMove failure (sleep, flinch, ...), so this
@@ -4581,6 +4598,17 @@ fn execute_action_inner(
             for sl in [slot, ally_slot] {
                 if let Some(tidx) = state.side(side).active[sl].pokemon_index {
                     let pm = state.side_mut(side).team_member_mut(tidx);
+                    // PS data/abilities.ts waterabsorb / dryskin `onTryHit`: an ally
+                    // with them takes the Water move as a heal of `maxhp / 4`
+                    // (truncated) and the move does not hit it, so Life Dew's own
+                    // heal (rounded) does not apply to that ally. Not a success.
+                    // TODO(PS parity): Mold Breaker on the user.
+                    if sl != slot && pm.hp > 0 && matches!(pm.ability, Abilities::WATERABSORB | Abilities::DRYSKIN) {
+                        if pm.hp < pm.maxhp {
+                            pm.hp = (pm.hp + (pm.maxhp / 4).max(1)).min(pm.maxhp);
+                        }
+                        continue;
+                    }
                     if pm.hp > 0 && pm.hp < pm.maxhp {
                         pm.hp = (pm.hp + ((pm.maxhp as f32 / 4.0).round() as i16).max(1)).min(pm.maxhp);
                         healed = true;
@@ -6448,6 +6476,18 @@ fn execute_action_inner(
         // Focus Punch `condition.onHit`: a damaging move breaks the focus.
         if hit_damage.is_some() && state.side(target_side).active[target_slot].focus_punch {
             state.side_mut(target_side).active[target_slot].lost_focus = true;
+        }
+
+        // Beak Blast `condition.onHit` (PS data/moves.ts beakblast): a contact hit
+        // on the charging user burns the attacker (`source.trySetStatus('brn',
+        // target)`). The effect is the volatile, not a move; no draw.
+        if hit_damage.is_some() && choice.flags.contact && state.side(target_side).active[target_slot].beak_blast {
+            if let Some(bidx) = state.side(target_side).active[target_slot].pokemon_index {
+                let attacker_alive = state.side(side).team_member(idx).hp > 0;
+                if attacker_alive {
+                    try_set_status_from_ability(state, rng, side, slot, PokemonStatus::BURN, target_side, bidx);
+                }
+            }
         }
 
         // Recorded for the DamagingHit pass below (PS `spreadMoveHit` runs the
@@ -8477,7 +8517,14 @@ fn cursed_body(
     if state.side(side).active[slot].disabled.is_some() || choice.move_id == Choices::STRUGGLE {
         return;
     }
-    if rng.label("ability").random_chance(3, 10) {
+    let hit = rng.label("ability").random_chance(3, 10);
+    // PS `addVolatile('disable')` -> `TryAddVolatile` -> `onAllyTryAddVolatile`
+    // (data/abilities.ts aromaveil): an Aroma Veil on the attacker's side (the
+    // holder or its ally) interrupts it. The roll above still happens.
+    let aroma_veil = (0..2).any(|sl| {
+        state.side(side).slot_pokemon(sl).is_some_and(|p| p.hp > 0 && p.ability == Abilities::AROMAVEIL)
+    });
+    if hit && !aroma_veil {
         state.side_mut(side).active[slot].disabled = Some((choice.move_id, 4));
     }
 }
@@ -11016,6 +11063,7 @@ fn end_of_turn(
             a.helping_hand_mult = 1.0;
             a.focus_punch = false;
             a.lost_focus = false;
+            a.beak_blast = false;
             a.stats_raised_this_turn = false;
             a.stats_lowered_this_turn = false;
             a.last_attacker = None;

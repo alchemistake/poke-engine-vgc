@@ -226,6 +226,11 @@ fn resolve_faints(state: &mut DoublesState, rng: &mut Gen5Rng, pick: impl Fn(Sid
             return true;
         }
         let s = state.side_mut(side);
+        // PS `clearVolatile` -> `setSpecies(baseSpecies)` restores the base
+        // `storedStats`, so a Speed Swap is undone when the pokemon faints.
+        if let Some(sp) = s.saved_speed[idx as usize].take() {
+            s.team_member_mut(idx).speed = sp;
+        }
         s.speed_cache[idx as usize] = s.team_member(idx).speed;
         resolved.push((side, idx));
         false
@@ -3750,6 +3755,7 @@ fn execute_action_inner(
     // Moves a Copycat / Sleep Talk `onHit` ran (`useMove`) inside the hit loop.
     let mut copy_order: Vec<String> = Vec::new();
     let mut berserk_before: Vec<(Side, usize, i16)> = Vec::new();
+    let mut ee_before: Vec<(Side, usize, i16)> = Vec::new();
 
     state.side_mut(side).active[slot].hit_number = 1;
     let faint_mark = state.faint_log.len();
@@ -4124,22 +4130,14 @@ fn execute_action_inner(
                     }
                 }
             }
-            // Emergency Exit / Wimp Out `onEmergencyExit` (champions): crossing
-            // 50% HP flags the holder to switch out after the action (allies
-            // included: PS runs it for every damaged target).
+            // Emergency Exit / Wimp Out: remember the HP before the move's first
+            // damaging hit on each target; the check runs once the move is over
+            // (PS `tryMoveHit`, after every hit and DamagingHit, so a Skill Swap
+            // during the hit can hand the ability over first).
             if damage > 0 && (target_side, target_slot) != (side, slot) {
                 if let Some(d) = state.side(target_side).slot_pokemon(target_slot) {
-                    let after = d.hp as i32;
-                    let before = after + damage as i32;
-                    let max = d.maxhp as i32;
-                    if matches!(d.ability, Abilities::EMERGENCYEXIT | Abilities::WIMPOUT)
-                        && after > 0
-                        && after * 2 <= max
-                        && before * 2 > max
-                        && state.side(target_side).find_replacement().is_some()
-                        && !state.side(target_side).active[target_slot].force_switch
-                    {
-                        state.side_mut(target_side).active[target_slot].force_switch = true;
+                    if !ee_before.iter().any(|&(s2, l2, _)| s2 == target_side && l2 == target_slot) {
+                        ee_before.push((target_side, target_slot, d.hp + damage));
                     }
                 }
             }
@@ -4820,6 +4818,31 @@ fn execute_action_inner(
             }
         }
 
+        // Clangorous Soul (PS data/moves.ts clangoroussoul, champions accuracy
+        // true): `onTry` fails at or below 33% HP (`hp <= maxhp * 33 / 100`, a
+        // float compare); `onTryHit` +1 to every stat (`boost` fails when no stat
+        // can rise); `onHit` the user takes `floor(maxhp * 33 / 100)`.
+        if choice.move_id == Choices::CLANGOROUSSOUL && ti == 0 {
+            let (hp, maxhp) = {
+                let p = state.side(side).team_member(idx);
+                (p.hp as i32, p.maxhp as i32)
+            };
+            let b = state.side(side).slot_boosts(slot).cloned().unwrap_or_default();
+            let can_rise = [b.atk, b.def, b.spa, b.spd, b.spe].iter().any(|&x| x < 6);
+            if maxhp == 1 || hp * 100 <= maxhp * 33 || !can_rise {
+                move_failed = true;
+            } else {
+                apply_boosts(
+                    state,
+                    side,
+                    idx,
+                    &StatBoosts { attack: 1, defense: 1, special_attack: 1, special_defense: 1, speed: 1, ..Default::default() },
+                    false,
+                );
+                apply_damage(state, side, slot, (maxhp * 33 / 100) as i16);
+            }
+        }
+
         // Heal Pulse `onHit`: heals the target by ceil(maxhp/2) (x0.75 with
         // Mega Launcher); fails at full HP.
         if choice.move_id == Choices::HEALPULSE && ti == 0 {
@@ -4947,6 +4970,9 @@ fn execute_action_inner(
             match (user_idx, target_ability) {
                 (Some(u), Some(ta)) if state.side(side).team_member(u).ability != ta => {
                     state.side_mut(side).team_member_mut(u).ability = ta;
+                    // PS `setAbility` runs the new ability's Start event
+                    // (Sand Stream, Drought, ...), as Skill Swap does.
+                    let _ = apply_on_switch_abilities(state, side, slot, rng);
                 }
                 _ => move_failed = true,
             }
@@ -6220,6 +6246,25 @@ fn execute_action_inner(
         }
     }
 
+    // Emergency Exit / Wimp Out `onEmergencyExit` (champions), PS `tryMoveHit`
+    // after the hit loop: crossing 50% HP flags the holder to switch out after
+    // the action (allies included: PS runs it for every damaged target).
+    // PS data/mods/champions/abilities.ts emergencyexit.
+    for &(ts, tsl, before) in &ee_before {
+        let Some(d) = state.side(ts).slot_pokemon(tsl) else { continue };
+        let after = d.hp as i32;
+        let max = d.maxhp as i32;
+        if matches!(d.ability, Abilities::EMERGENCYEXIT | Abilities::WIMPOUT)
+            && after > 0
+            && after * 2 <= max
+            && (before as i32) * 2 > max
+            && state.side(ts).find_replacement().is_some()
+            && !state.side(ts).active[tsl].force_switch
+        {
+            state.side_mut(ts).active[tsl].force_switch = true;
+        }
+    }
+
     // Healing Wish / Lunar Dance (slot-condition moves) make exactly one
     // hit-loop `eachEvent('Update')` in PS, while the user still counts as
     // active (faints are resolved afterwards).
@@ -7086,7 +7131,21 @@ fn try_set_status(
     src_side: Side,
     src_idx: PokemonIndex,
 ) {
-    try_set_status_with(state, rng, ts, tslot, st, src_side, src_idx, true);
+    try_set_status_with(state, rng, ts, tslot, st, src_side, src_idx, true, true);
+}
+
+/// Yawn's `onEnd` -> `target.trySetStatus('slp', source)`: the setStatus effect
+/// is the Yawn condition, which Safeguard exempts (`effect.id === 'yawn'`), and
+/// Substitute only blocks move effects. Uproar, Sweet Veil and terrain still do.
+fn try_set_status_yawn(
+    state: &mut DoublesState,
+    rng: &mut Gen5Rng,
+    ts: Side,
+    tslot: usize,
+    src_side: Side,
+    src_idx: PokemonIndex,
+) {
+    try_set_status_with(state, rng, ts, tslot, PokemonStatus::SLEEP, src_side, src_idx, false, false);
 }
 
 /// A status from a contact ability (Effect Spore, Static, ...). PS
@@ -7102,7 +7161,7 @@ fn try_set_status_from_ability(
     src_side: Side,
     src_idx: PokemonIndex,
 ) {
-    try_set_status_with(state, rng, ts, tslot, st, src_side, src_idx, false);
+    try_set_status_with(state, rng, ts, tslot, st, src_side, src_idx, false, true);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -7115,10 +7174,11 @@ fn try_set_status_with(
     src_side: Side,
     src_idx: PokemonIndex,
     substitute_blocks: bool,
+    safeguard_blocks: bool,
 ) {
     let Some(tidx) = state.side(ts).active[tslot].pokemon_index else { return };
     let src_slot = (0..2).find(|&sl| state.side(src_side).active[sl].pokemon_index == Some(src_idx));
-    if status_immune_ex(state, ts, tslot, st, ts != src_side, src_side, src_slot.unwrap_or(0), substitute_blocks) {
+    if status_immune_ex(state, ts, tslot, st, ts != src_side, src_side, src_slot.unwrap_or(0), substitute_blocks, safeguard_blocks) {
         return;
     }
     set_status(state, rng, ts, tidx, st);
@@ -7137,7 +7197,7 @@ fn status_immune(
     src_side: Side,
     src_slot: usize,
 ) -> bool {
-    status_immune_ex(state, ts, tslot, status, from_opponent, src_side, src_slot, true)
+    status_immune_ex(state, ts, tslot, status, from_opponent, src_side, src_slot, true, true)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -7150,6 +7210,7 @@ fn status_immune_ex(
     src_side: Side,
     src_slot: usize,
     substitute_blocks: bool,
+    safeguard_blocks: bool,
 ) -> bool {
     let Some(target) = state.side(ts).slot_pokemon(tslot) else { return true };
     // Safeguard / Substitute block statuses from any other pokemon, allies
@@ -7176,7 +7237,7 @@ fn status_immune_ex(
         sun: matches!(state.weather.weather_type, Weather::SUN | Weather::HARSHSUN),
         misty_terrain: state.terrain.terrain_type == crate::engine::state::Terrain::MISTYTERRAIN,
         electric_terrain: state.terrain.terrain_type == crate::engine::state::Terrain::ELECTRICTERRAIN,
-        safeguard: state.side(ts).side_conditions.safeguard > 0,
+        safeguard: safeguard_blocks && state.side(ts).side_conditions.safeguard > 0,
         substitute: substitute_blocks && state.side(ts).active[tslot].substitute_health > 0,
         from_opponent,
         sleep_clause: false,
@@ -7204,7 +7265,10 @@ fn yawn_volatile_blocked(state: &DoublesState, ts: Side, tslot: usize, src_side:
     if (0..2).any(|sl| state.side(ts).slot_pokemon(sl).is_some_and(|p| p.hp > 0 && p.ability == Abilities::SWEETVEIL)) {
         return true;
     }
-    (ts, tslot) != (src_side, src_slot) && state.side(ts).active[tslot].substitute_health > 0
+    // Safeguard `onTryAddVolatile` (PS data/moves.ts safeguard): yawn from
+    // another pokemon is blocked.
+    (ts, tslot) != (src_side, src_slot)
+        && (state.side(ts).active[tslot].substitute_health > 0 || state.side(ts).side_conditions.safeguard > 0)
 }
 
 /// One target's damage for a hit (fixed / OHKO / `calculate_damage`), without
@@ -8018,7 +8082,7 @@ fn maybe_synchronize(
     let src_slot = (0..2).find(|&sl| state.side(source_side).active[sl].pokemon_index == Some(source_idx));
     let tgt_slot = (0..2).find(|&sl| state.side(target_side).active[sl].pokemon_index == Some(target_idx));
     if let (Some(ss), Some(ts)) = (src_slot, tgt_slot) {
-        if status_immune_ex(state, source_side, ss, status, true, target_side, ts, false) {
+        if status_immune_ex(state, source_side, ss, status, true, target_side, ts, false, true) {
             return;
         }
     }
@@ -10003,7 +10067,7 @@ fn end_of_turn(
                     if let Some((ss, si)) = src {
                         let already = state.side(side).slot_pokemon(slot).map(|p| p.status != PokemonStatus::NONE).unwrap_or(true);
                         if !already {
-                            try_set_status(state, rng, side, slot, PokemonStatus::SLEEP, ss, si);
+                            try_set_status_yawn(state, rng, side, slot, ss, si);
                         }
                     }
                 }

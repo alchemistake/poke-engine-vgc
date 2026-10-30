@@ -8240,7 +8240,9 @@ fn execute_action_inner(
         } };
 
         // Secondary effects (flinch/burn/poison/boosts after a hit).
-        if let Some(secs) = choice.secondaries.as_ref().filter(|_| !custom_secondary || shield_dust) {
+        // Sheer Force deleted the secondaries outright (PS data/abilities.ts
+        // sheerforce.onModifyMove), so Shield Dust has no `self` entry to keep.
+        if let Some(secs) = choice.secondaries.as_ref().filter(|_| !custom_secondary || (shield_dust && !sheer_force)) {
             for sec in secs {
                 if shield_dust && sec.target != MoveTarget::User {
                     continue;
@@ -8570,13 +8572,12 @@ fn execute_action_inner(
                 && choice.flags.contact
                 && (side, slot) != (target_side, target_slot)
             {
-                let shield = state
-                    .side(target_side)
-                    .slot_pokemon(target_slot)
-                    .map(|p| p.ability == Abilities::SHIELDDUST)
-                    .unwrap_or(false);
                 // The hit's target as it was at the hit (a KO already cleared the
-                // slot, and PS still rolls for the hit).
+                // slot, and PS still rolls for the hit and still sees its Shield
+                // Dust: `target.hasAbility` on the still-active fainted target).
+                let shield = hit_target_pi
+                    .map(|ti| state.side(target_side).team_member(ti).ability == Abilities::SHIELDDUST)
+                    .unwrap_or(false);
                 if !shield && hit_target_pi.is_some() {
                     if rng.label("ability").random_chance(3, 10) {
                         try_set_status(state, rng, target_side, target_slot, PokemonStatus::POISON, side, idx);

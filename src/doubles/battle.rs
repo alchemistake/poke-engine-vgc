@@ -1349,7 +1349,9 @@ pub fn run_battle_fuzz(
             // PS data/moves.ts round, sim/battle-queue.ts prioritizeAction.
             if std::mem::take(&mut state.queue_round) {
                 // `i` is already past the running action (PS `queue.list`).
-                if let Some(j) = (i..actions.len()).find(|&j| actions[j].choice.move_id == Choices::ROUND) {
+                // PS round.onTry: `action.move.id === 'round'`. A recharging pokemon's
+                // queued action is the `recharge` pseudo-move, not Round.
+                if let Some(j) = (i..actions.len()).find(|&j| actions[j].choice.move_id == Choices::ROUND && !actions[j].recharge) {
                     let mut a = actions.remove(j);
                     a.choice.base_power *= 2.0;
                     a.prioritized = true;
@@ -2197,6 +2199,51 @@ fn pressure_deduct_pp(state: &mut DoublesState, action: &Action) {
     mv.pp = (mv.pp - extra).max(0);
 }
 
+thread_local! {
+    /// The running move's `AfterMove` handler sort was already drawn by
+    /// `execute_action_inner` (before a duration-1 lockedmove release, whose
+    /// `onEnd` confusion must come after the sort). Reset per action.
+    static AFTER_MOVE_TIE_DRAWN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// PS `runMove` -> `runEvent('AfterMove', pokemon)`: the handlers are the
+/// user's own `onAfterMove` volatiles (lockedmove, charge, beakblast), each
+/// `onAnyAfterMove` holder among the user's side and the foes (Opportunist),
+/// keyed by holder speed. Two or more with equal keys shuffle (one draw per
+/// swap). PS data/conditions.ts lockedmove, data/moves.ts charge / beakblast,
+/// data/abilities.ts opportunist; sim/battle.ts findEventHandlers.
+fn after_move_handler_ties(state: &DoublesState, rng: &mut Gen5Rng, side: Side, idx: PokemonIndex, lock_seen: bool) {
+    let Some(slot) = (0..2).find(|&sl| state.side(side).active[sl].pokemon_index == Some(idx)) else { return };
+    if !state.side(side).slot_pokemon(slot).is_some_and(|p| p.hp > 0) {
+        return;
+    }
+    let a = &state.side(side).active[slot];
+    let speed = cached_speed(state, side, slot);
+    let mut hs: Vec<(i64, i32, i64)> = Vec::new();
+    if lock_seen || a.locked_move.is_some() {
+        hs.push((4294967296, speed, 2));
+    }
+    if a.charge {
+        hs.push((4294967296, speed, 2));
+    }
+    if a.beak_blast {
+        hs.push((4294967296, speed, 2));
+    }
+    for sd in [Side::One, Side::Two] {
+        for sl in 0..2 {
+            let Some(hidx) = state.side(sd).active[sl].pokemon_index else { continue };
+            if state.side(sd).slot_pokemon(sl).is_some_and(|p| p.hp > 0)
+                && real_ability(state, sd, hidx) == Abilities::OPPORTUNIST
+            {
+                hs.push((4294967296, cached_speed(state, sd, sl), 7));
+            }
+        }
+    }
+    if hs.len() >= 2 {
+        sort_handler_ties(&mut hs, rng, "speed tie (move order)");
+    }
+}
+
 fn execute_action_body(
     state: &mut DoublesState,
     rng: &mut Gen5Rng,
@@ -2233,6 +2280,7 @@ fn execute_action_body(
     state.side_mut(action.side).active[action.slot].move_result_this_turn = None;
     state.in_move = true;
     let mold_breaker = mold_breaker_suppress(state, action);
+    AFTER_MOVE_TIE_DRAWN.with(|c| c.set(false));
     execute_action_inner(state, rng, action, move_order, will_act, queue);
     if mold_breaker {
         mold_breaker_restore(state);
@@ -2272,6 +2320,11 @@ fn execute_action_body(
         if state.side(action.side).active[action.slot].pokemon_index.is_some() {
             state.side_mut(action.side).active[action.slot].last_move = Some(action.choice.move_id);
         }
+    }
+    // PS runMove `runEvent('AfterMove')`: the handlers are sorted before any of
+    // them runs (charge removal, lockedmove release below). Only for a move that ran.
+    if move_order.len() > order_len && !AFTER_MOVE_TIE_DRAWN.with(|c| c.get()) {
+        after_move_handler_ties(state, rng, action.side, action.pokemon_index, false);
     }
     // charge `onAfterMove` / `onMoveAborted`: an Electric move uses it up.
     if action.choice.move_type == PokemonType::ELECTRIC && action.choice.move_id != Choices::CHARGE {
@@ -4359,6 +4412,20 @@ fn execute_action_inner(
     // remove the target's protection volatiles (and its `stall` counter). A
     // Protect that blocks the move has already returned above.
     // remove the target's protection volatiles (and its `stall` counter).
+    // The target's side also loses its guards (PS `target.side.removeSideCondition`
+    // for craftyshield, matblock, quickguard, wideguard; gen >= 6 for allies too).
+    if matches!(
+        choice.move_id,
+        Choices::FEINT | Choices::PHANTOMFORCE | Choices::SHADOWFORCE | Choices::HYPERSPACEFURY | Choices::HYPERSPACEHOLE
+    ) && !is_self
+        && !is_field
+    {
+        let sc = &mut state.side_mut(target_side).side_conditions;
+        sc.crafty_shield = 0;
+        sc.mat_block = 0;
+        sc.quick_guard = 0;
+        sc.wide_guard = 0;
+    }
     if matches!(
         choice.move_id,
         Choices::FEINT | Choices::PHANTOMFORCE | Choices::SHADOWFORCE | Choices::HYPERSPACEFURY | Choices::HYPERSPACEHOLE
@@ -4570,6 +4637,11 @@ fn execute_action_inner(
     // A spread boost-only status move: a target that changed nothing is only a
     // per-target failure. The move fails when no target changed (see HITEND below).
     let mut spread_boost_noop = false;
+    // Spread status move whose volatile (confusion) failed on some targets: PS
+    // `spreadMoveHit` returns `false` per target, and the move fails only when
+    // every target gave `false`. Consumed after the hit loop's targets.
+    let mut spread_volatile_fail = false;
+    let mut spread_volatile_ok = false;
     let mut extra_order: Vec<String> = Vec::new();
     // Moves a Copycat / Sleep Talk `onHit` ran (`useMove`) inside the hit loop.
     let mut copy_order: Vec<String> = Vec::new();
@@ -5601,10 +5673,16 @@ fn execute_action_inner(
                         // makes the add fail: `-activate` and "did nothing" (no eachEvent).
                         let misty_blocked = misty_terrain_blocks_confusion(state, ts, tslot);
                         // Swagger / Flatter keep their boost, so they do not fail.
-                        if choice.category == MoveCategory::Status
+                        let add_fails = choice.category == MoveCategory::Status
                             && choice.boost.is_none()
-                            && (own_tempo || misty_blocked || state.side(ts).active[tslot].confusion > 0)
-                        {
+                            && (own_tempo || misty_blocked || state.side(ts).active[tslot].confusion > 0);
+                        if is_spread && choice.category == MoveCategory::Status && choice.boost.is_none() {
+                            if add_fails {
+                                spread_volatile_fail = true;
+                            } else {
+                                spread_volatile_ok = true;
+                            }
+                        } else if add_fails {
                             move_failed = true;
                         }
                         try_confuse(state, rng, ts, tslot)
@@ -7498,6 +7576,10 @@ fn execute_action_inner(
         if spread_boost_noop && !drop_landed {
             move_failed = true;
         }
+        // PS `spreadMoveHit`: a spread volatile that failed on every target fails the move.
+        if spread_volatile_fail && !spread_volatile_ok {
+            move_failed = true;
+        }
         if is_field || move_failed || move_ty == "all" {
             break;
         }
@@ -7716,6 +7798,11 @@ fn execute_action_inner(
     // PS runs `onAfterMove` on the pokemon, not the slot: an Ally Switch in
     // this move may have moved the user to the other slot.
     let holder = (0..2).find(|&sl| state.side(side).active[sl].pokemon_index == Some(idx)).unwrap_or(slot);
+    // PS runs the `AfterMove` sort before the lock's `onAfterMove` removes it.
+    if state.side(side).active[holder].locked_move.is_some() {
+        after_move_handler_ties(state, rng, side, idx, true);
+        AFTER_MOVE_TIE_DRAWN.with(|c| c.set(true));
+    }
     if let Some((1, t)) = state.side(side).active[holder].locked_move {
         state.side_mut(side).active[holder].locked_move = None;
         if t <= 1 {
@@ -8595,7 +8682,10 @@ fn protect_contact_penalty(
         3 | 5 => {
             if let Some(tidx) = state.side(target_side).active[target_slot].pokemon_index {
                 let st = if kind == 3 { PokemonStatus::POISON } else { PokemonStatus::BURN };
-                try_set_status(state, rng, side, slot, st, target_side, tidx);
+                // PS Baneful Bunker / Burning Bulwark `onTryHit`: `source.trySetStatus(st, target)`.
+                // The protector's Substitute (`onTryPrimaryHit` only) does not stop it;
+                // the attacker's Safeguard still does.
+                try_set_status_with(state, rng, side, slot, st, target_side, tidx, false, true, false);
             }
         }
         4 => apply_boosts(state, side, idx, &StatBoosts { speed: -1, ..Default::default() }, true),

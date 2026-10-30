@@ -276,6 +276,8 @@ fn faint_pokemon(state: &mut DoublesState, side: Side, slot: usize) {
                 state.side(att_side).active[sl].pokemon_index == Some(att_idx)
             }) {
                 if state.side(att_side).team_member(att_idx).hp > 0 {
+                    let lock = state.side(att_side).active[att_slot].locked_move;
+                    state.db_alive_pending.push((att_side, att_idx, lock));
                     state.side_mut(att_side).team_member_mut(att_idx).hp = 0;
                     faint_pokemon(state, att_side, att_slot);
                 }
@@ -337,6 +339,7 @@ fn resolve_faints(state: &mut DoublesState, rng: &mut Gen5Rng, pick: impl Fn(Sid
     }
     // Still-queued faints of other slots remain unresolved.
     state.unresolved_faints = keep;
+    state.db_alive_pending.retain(|e| !resolved.contains(&(e.0, e.1)));
     let batch = resolved.len();
     // PS `Faint` event: `onAllyFaint` of the fainted pokemon's active allies.
     for (side, idx) in resolved {
@@ -4662,6 +4665,8 @@ fn execute_action_inner(
     // `eachEvent('WeatherChange')` — a speed sort. Set when such a holder
     // faints this move; consumed after the per-hit eachEvent.
     let mut weather_suppress_fainted = false;
+    // Targets that took a hit this move (PS `targetsCopy` of `afterMoveSecondaryEvent`).
+    let mut after_hit_targets: Vec<(Side, usize)> = Vec::new();
     let mut drop_landed = false;
     // A spread boost-only status move: a target that changed nothing is only a
     // per-target failure. The move fails when no target changed (see HITEND below).
@@ -4862,6 +4867,7 @@ fn execute_action_inner(
                 && state.side(side).team_member(idx).ability != Abilities::INFILTRATOR
             {
                 sub_hit = true;
+                after_hit_targets.push((target_side, target_slot));
                 hit_landed = true;
                 if let Some(tpi) = hit_target_pi {
                     if !magician_targets.contains(&(hts, tpi)) {
@@ -5103,6 +5109,7 @@ fn execute_action_inner(
             }
             total_damage = total_damage.saturating_add(damage);
             hit_damage = Some(damage);
+            after_hit_targets.push((target_side, target_slot));
             hit_landed = true;
             // Berserk `onAfterMoveSecondary`: remember the HP before this move's
             // first hit on the holder. Allies count too (a spread move such as
@@ -5800,25 +5807,34 @@ fn execute_action_inner(
                 PokemonVolatileStatus::LOCKEDMOVE => {
                     // PS `addVolatile` returns false for a fainted pokemon (`!this.hp`),
                     // so a user that fainted this move (Destiny Bond) takes no lock
-                    // and draws no duration (sim/pokemon.ts addVolatile).
-                    if state.side(ts).slot_pokemon(tslot).is_some_and(|p| p.hp > 0) {
-                        // PS lockedmove `onStart`: trueDuration = random(2, 4);
-                        // `onRestart`: duration back to 2 while trueDuration >= 2.
-                        if ts == side && tslot == slot {
+                    // and draws no duration (sim/pokemon.ts addVolatile). A Destiny
+                    // Bond KO is resolved only after the move, so the user is still
+                    // alive here (`db_alive_pending`, with its lock at the KO); its
+                    // slot is already empty, so only the draw and no state change.
+                    let alive_idx = slot_index_or_unresolved(state, ts, tslot);
+                    let db_lock = alive_idx.and_then(|ti_idx| {
+                        state.db_alive_pending.iter().find(|e| e.0 == ts && e.1 == ti_idx).map(|e| e.2)
+                    });
+                    let alive = match alive_idx {
+                        Some(ti_idx) => state.side(ts).team_member(ti_idx).hp > 0 || db_lock.is_some(),
+                        None => false,
+                    };
+                    if alive {
+                        let in_slot = state.side(ts).active[tslot].pokemon_index.is_some();
+                        if in_slot && ts == side && tslot == slot {
                             state.side_mut(ts).active[tslot].locked_move_id = Some(choice.move_id);
                         }
-                        match state.side(ts).active[tslot].locked_move {
-                            None => {
-                                let t = rng.label("volatile duration").random_range(2, 4) as u8;
-                                state.side_mut(ts).active[tslot].locked_move = Some((2, t));
-                            }
+                        // PS lockedmove `onStart`: trueDuration = random(2, 4);
+                        // `onRestart`: duration back to 2 while trueDuration >= 2.
+                        let current = if in_slot { state.side(ts).active[tslot].locked_move } else { db_lock.flatten() };
+                        let next = match current {
+                            None => Some((2, rng.label("volatile duration").random_range(2, 4) as u8)),
                             Some((d, t)) => {
-                                if t >= 2 {
-                                    state.side_mut(ts).active[tslot].locked_move = Some((2, t));
-                                } else {
-                                    state.side_mut(ts).active[tslot].locked_move = Some((d, t));
-                                }
+                                if t >= 2 { Some((2, t)) } else { Some((d, t)) }
                             }
+                        };
+                        if in_slot {
+                            state.side_mut(ts).active[tslot].locked_move = next;
                         }
                     }
                 }
@@ -6618,6 +6634,11 @@ fn execute_action_inner(
                     move_failed = true;
                 } else {
                     if a != Abilities::NONE {
+                        // PS gastroacid `onStart`: `singleEvent('End', ability)`. A Cloud
+                        // Nine / Air Lock `onEnd` runs `eachEvent('WeatherChange')`.
+                        if matches!(a, Abilities::CLOUDNINE | Abilities::AIRLOCK) {
+                            let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+                        }
                         mold_breaker_forget(target_side, tidx);
                         state.side_mut(target_side).team_member_mut(tidx).ability = Abilities::NONE;
                     }
@@ -7629,6 +7650,16 @@ fn execute_action_inner(
         if weather_suppress_fainted {
             weather_suppress_fainted = false;
             each_event_update(state, rng);
+        }
+    }
+
+    // PS `hitStepMoveHitLoop` -> `afterMoveSecondaryEvent(targets)` (after the
+    // hit loop): `runEvent('AfterMoveSecondary')` speed-sorts the handlers of
+    // the hit targets. Skipped under Sheer Force (`suppressingSecondaries`).
+    if any_hit_landed && is_attack && !after_hit_targets.is_empty() {
+        let sheer = state.side(side).team_member(idx).ability == Abilities::SHEERFORCE && has_secondaries(choice);
+        if !sheer {
+            after_move_secondary_ties(state, rng, &after_hit_targets);
         }
     }
 
@@ -9921,6 +9952,15 @@ fn skill_swap(
     {
         return false;
     }
+    // PS sim/battle.ts skillSwap: `singleEvent('End', sourceAbility)` then
+    // `singleEvent('End', targetAbility)` before the swap. A Cloud Nine / Air
+    // Lock `onEnd` (data/abilities.ts) runs `eachEvent('WeatherChange')`, a
+    // speed sort of all actives.
+    for ab in [src_ability, tgt_ability] {
+        if matches!(ab, Abilities::CLOUDNINE | Abilities::AIRLOCK) {
+            let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+        }
+    }
     state.side_mut(src_side).team_member_mut(si).ability = tgt_ability;
     state.side_mut(tgt_side).team_member_mut(ti).ability = src_ability;
     reset_protean_effect(state, src_side, si);
@@ -10597,6 +10637,12 @@ fn update_forecast(state: &mut DoublesState) {
     for sd in [Side::One, Side::Two] {
         for sl in 0..2 {
             if let Some(idx) = state.side(sd).active[sl].pokemon_index {
+                // PS `onWeatherChange` only runs on a weather change (or the
+                // holder's switch-in): the type is not re-set while the weather
+                // is unchanged, so a Soak / Magic Powder type sticks.
+                if state.side(sd).active[sl].forecast_weather == Some(weather) {
+                    continue;
+                }
                 let pm = state.side_mut(sd).team_member_mut(idx);
                 // PS data/abilities.ts forecast.onUpdate: only Castform (any forme)
                 // changes type; a Forecast holder of another species (Skill Swap,
@@ -10610,6 +10656,7 @@ fn update_forecast(state: &mut DoublesState) {
                 );
                 if pm.ability == Abilities::FORECAST && pm.hp > 0 && is_castform {
                     pm.types = (t, PokemonType::TYPELESS);
+                    state.side_mut(sd).active[sl].forecast_weather = Some(weather);
                 }
             }
         }
@@ -11753,6 +11800,44 @@ fn try_hit_side_handler_ties(state: &DoublesState, rng: &mut Gen5Rng, ps: Side) 
             && real_ability(state, ps, hidx) == Abilities::MAGICBOUNCE
         {
             hs.push((4294967296, cached_speed(state, ps, sl), 7));
+        }
+    }
+    if hs.len() >= 2 {
+        sort_handler_ties(&mut hs, rng, "speed tie (move order)");
+    }
+}
+
+/// PS `afterMoveSecondaryEvent` -> `runEvent('AfterMoveSecondary', targets)`:
+/// `findEventHandlers` collects each hit target's `onAfterMoveSecondary`
+/// handlers (its frozen status `frz`, and the Pickpocket / Berserk / Color
+/// Change / Anger Shell abilities), each keyed by its holder's speed. Equal
+/// keys tie and draw (`speedSort`). The handlers' effects are modelled
+/// elsewhere; only the sort's draws are made here.
+/// TODO(PS parity): held items (Eject Button, Kee Berry, Maranga Berry, Red Card).
+fn after_move_secondary_ties(state: &mut DoublesState, rng: &mut Gen5Rng, targets: &[(Side, usize)]) {
+    let mut hs: Vec<(i64, i32, i64)> = Vec::new();
+    let mut seen: Vec<(Side, usize)> = Vec::new();
+    for &(ts, tsl) in targets {
+        if seen.contains(&(ts, tsl)) {
+            continue;
+        }
+        seen.push((ts, tsl));
+        let Some(idx) = slot_index_or_unresolved(state, ts, tsl) else { continue };
+        // A KO'd target still counts with its stored speed until its faint resolves.
+        let speed = if state.side(ts).slot_pokemon(tsl).is_some() {
+            cached_speed(state, ts, tsl)
+        } else {
+            state.side(ts).speed_cache[idx as usize] as i32
+        };
+        // PS `onAfterMoveSecondary` order: NO_ORDER; subOrder Status 0, Ability 7.
+        if state.side(ts).team_member(idx).status == PokemonStatus::FREEZE {
+            hs.push((4294967296, speed, 0));
+        }
+        if matches!(
+            real_ability(state, ts, idx),
+            Abilities::PICKPOCKET | Abilities::BERSERK | Abilities::COLORCHANGE | Abilities::ANGERSHELL
+        ) {
+            hs.push((4294967296, speed, 7));
         }
     }
     if hs.len() >= 2 {

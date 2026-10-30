@@ -24,6 +24,10 @@ use std::str::FromStr;
 pub struct ActiveSlot {
     /// Team member currently occupying this slot, or `None` when empty.
     pub pokemon_index: Option<PokemonIndex>,
+    /// The weather the Forecast holder last synced its type to (PS
+    /// `forecast.onWeatherChange`, which runs on a weather change or switch-in
+    /// only, so a Soak / Magic Powder type sticks until the next change).
+    pub forecast_weather: Option<Weather>,
     pub volatile_statuses: VolatileStatusBitset,
     pub volatile_status_durations: VolatileStatusDurations,
     pub substitute_health: i16,
@@ -281,6 +285,7 @@ impl ActiveSlot {
     pub fn empty() -> Self {
         Self {
             pokemon_index: None,
+            forecast_weather: None,
             volatile_statuses: VolatileStatusBitset::default(),
             volatile_status_durations: VolatileStatusDurations::default(),
             substitute_health: 0,
@@ -581,6 +586,11 @@ pub struct DoublesState {
     /// volatiles until `faintMessages`, so a DamagingHit handler that runs after
     /// a Destiny Bond KO of its attacker still sees the attacker's Disable.
     pub faint_disabled: Vec<(Side, PokemonIndex, Option<(Choices, u8)>)>,
+    /// Attackers KO'd by a Destiny Bond `onAfterFaint` during the current move.
+    /// PS only resolves their faint after the move, so until then they still
+    /// have HP for the rest of the hit (e.g. a lock volatile's `addVolatile`).
+    /// The attacker's lock (`locked_move`) at its KO, for the same reason.
+    pub db_alive_pending: Vec<(Side, PokemonIndex, Option<(u8, u8)>)>,
     /// Disguise holders whose hit was absorbed by a spread move. PS busts the
     /// forme in `onUpdate`, i.e. inside the next `eachEvent('Update')` after
     /// its speed sort (the sort still sees the stale speed).
@@ -1192,6 +1202,7 @@ impl DoublesState {
             turn: 1,
             unresolved_faints: Vec::new(),
             faint_disabled: Vec::new(),
+            db_alive_pending: Vec::new(),
             pending_disguise: Vec::new(),
             faint_log: Vec::new(),
             pending_after_faint: None,

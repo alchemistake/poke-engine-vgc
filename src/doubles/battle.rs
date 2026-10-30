@@ -3904,6 +3904,9 @@ fn execute_action_inner(
         side_total_fainted(state, side),
         1,
     ) > 0.0
+        // Spit Up's `basePowerCallback` is 100 per Stockpile layer (onTry needs one),
+        // so it is an attack with power for the immunity step (PS hitStepTryImmunity).
+        || (choice.move_id == Choices::SPITUP && state.side(side).active[slot].stockpile > 0)
         // `damageCallback` moves (Endeavor, ...) are attacks: type immunity applies.
         || (!is_self
             && !is_field
@@ -4063,6 +4066,11 @@ fn execute_action_inner(
                 .is_none()
             {
                 state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+                // Spit Up's `onAfterMove` still runs after an immune hit (PS removes
+                // the Stockpile volatile and its stat drops): `end_stockpile`.
+                if choice.move_id == Choices::SPITUP {
+                    end_stockpile(state, side, slot);
+                }
                 push_order(move_order);
                 return;
             }
@@ -8385,9 +8393,13 @@ fn safeguard_blocks_confusion(
 
 /// Misty Terrain `onTryAddVolatile` (PS data/conditions.ts): a grounded
 /// pokemon can't be confused. TODO(PS parity): semi-invulnerable exemption.
+// PS data/moves.ts mistyterrain.onTryAddVolatile: `!target.isGrounded()` lets the
+// add through, so Magnet Rise (and Gravity / Ingrain / Smackdown as grounding) decide.
 fn misty_terrain_blocks_confusion(state: &DoublesState, ts: Side, tslot: usize) -> bool {
     let Some(p) = state.side(ts).slot_pokemon(tslot) else { return false };
-    state.terrain.terrain_type == crate::engine::state::Terrain::MISTYTERRAIN && (p.is_grounded() || state.gravity.active)
+    let a = &state.side(ts).active[tslot];
+    state.terrain.terrain_type == crate::engine::state::Terrain::MISTYTERRAIN
+        && (state.gravity.active || a.ingrain || slot_grounded(p, a))
 }
 
 /// PS `addVolatile` -> `runEvent('TryAddVolatile', target, source)` (sim/pokemon.ts
@@ -9404,10 +9416,13 @@ fn resolve_future_move(
     // trySpreadMoveHit -> data/conditions.ts substitute): a damaging move hits
     // the Substitute unless it bypasses it or the source has Infiltrator
     // (`data.moveData.infiltrates`). The Substitute takes the damage; no HP loss.
+    // PS futuremove `onEnd`: `data.source.hasAbility('infiltrator')`. A source
+    // that is no longer active has its ability ignored (gen 5+ `ignoringAbility`),
+    // so only an active Infiltrator bypasses the Substitute.
     let sub_hp = state.side(ts).active[tslot].substitute_health;
     if sub_hp > 0
         && !bypasses_substitute(&choice)
-        && state.side(ss).team_member(si).ability != Abilities::INFILTRATOR
+        && !(src_slot.is_some() && state.side(ss).team_member(si).ability == Abilities::INFILTRATOR)
     {
         let d = damage.min(sub_hp);
         state.side_mut(ts).active[tslot].substitute_health = sub_hp - d;
@@ -10572,7 +10587,10 @@ fn entry_hazards(state: &mut DoublesState, side: Side, slot: usize) {
         // the hazard's `trySetStatus`, while the spikes are still cleared by a
         // Poison type (PS toxicspikes `onSwitchIn`).
         let purifying_salt = s.team_member(idx).ability == Abilities::PURIFYINGSALT;
-        let new_status = if grounded && !misty_on && toxic_spikes > 0 && s.side_conditions.safeguard == 0 && !purifying_salt {
+        // Immunity `onSetStatus` (PS data/abilities.ts immunity) refuses psn / tox,
+        // which are the only statuses the hazard sets: the spikes stay up.
+        let immunity = s.team_member(idx).ability == Abilities::IMMUNITY;
+        let new_status = if grounded && !misty_on && toxic_spikes > 0 && s.side_conditions.safeguard == 0 && !purifying_salt && !immunity {
             let cur = s.team_member(idx).status;
             if cur == PokemonStatus::NONE {
                 if types.0 == PokemonType::POISON || types.1 == PokemonType::POISON {
@@ -11682,6 +11700,10 @@ fn end_of_turn(
                 let raw = p.speed;
                 let s = state.side_mut(side);
                 s.team_member_mut(idx).id = new_id;
+                // PS `formeChange` -> `setSpecies` -> `setType(species.types)`: a type
+                // from Magic Powder / Soak is replaced by the species type (both
+                // Morpeko formes are Electric / Dark, species_types.rs).
+                s.team_member_mut(idx).types = (PokemonType::ELECTRIC, PokemonType::DARK);
                 // PS `formeChange` -> `setSpecies`: `storedStats` are rebuilt from the
                 // base stats, so an averaged Atk / SpA (Power Split) or Def / SpD
                 // (Guard Split) is undone, as on switch-in.

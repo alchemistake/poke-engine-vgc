@@ -79,6 +79,9 @@ pub struct ActiveSlot {
     /// Beak Blast volatile (`beakblast`, set by its priority charge, removed
     /// after its own move): a contact hit on this slot burns the attacker.
     pub beak_blast: bool,
+    /// Chilly Reception volatile (`chillyreception`, duration 1, set by its
+    /// priority charge): only takes part in the residual sort.
+    pub chilly_reception: bool,
     pub stockpile_def: i8,
     pub stockpile_spd: i8,
     /// Used Protect this turn; incoming attacks fail until end of turn.
@@ -126,6 +129,9 @@ pub struct ActiveSlot {
     pub smackdown: bool,
     /// PS `activeTurns`: end-of-turn count since switch-in.
     pub active_turns: u8,
+    /// PS `activeMoveActions`: move actions since switch-in, counted at the start
+    /// of `runMove` (Fake Out / First Impression `onTry` fail when it is > 1).
+    pub active_move_actions: u8,
     /// Illusion ended (hit by a damaging move): the log shows the real species.
     pub illusion_broken: bool,
     /// Illusion's disguise, fixed at switch-in (`onBeforeSwitchIn`): the last
@@ -283,6 +289,7 @@ impl ActiveSlot {
             drag_out: false,
             focus_punch: false,
             beak_blast: false,
+            chilly_reception: false,
             lost_focus: false,
             stockpile_def: 0,
             stockpile_spd: 0,
@@ -304,6 +311,7 @@ impl ActiveSlot {
             magnet_rise: 0,
             smackdown: false,
             active_turns: 0,
+            active_move_actions: 0,
             illusion_broken: false,
             illusion_target: None,
             cursed: false,

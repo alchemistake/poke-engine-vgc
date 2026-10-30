@@ -164,7 +164,7 @@ fn commit_queue_sort(actions: &mut Vec<Action>, state: &DoublesState, rng: &mut 
         let live = !state.side(a.side).active[a.slot].recharging;
         let pseudo_order = match a.choice.move_id {
             Choices::COUNTER | Choices::MIRRORCOAT if live => Some(5),
-            Choices::FOCUSPUNCH | Choices::BEAKBLAST if live => Some(107),
+            Choices::FOCUSPUNCH | Choices::BEAKBLAST | Choices::CHILLYRECEPTION if live => Some(107),
             _ => None,
         };
         if let Some(order) = pseudo_order {
@@ -731,13 +731,13 @@ fn plan_queue_change(
     if matches!(a.choice.move_id, Choices::COUNTER | Choices::MIRRORCOAT | Choices::PURSUIT) {
         let mut charge = a.clone();
         charge.target_loc = 0;
-        let _ = ps_get_target(state, rng, &charge);
+        let _ = ps_get_target_queue_insert(state, rng, &charge);
     }
-    if let Some((ts, tsl)) = ps_get_target(state, rng, &a) {
+    if let Some((ts, tsl)) = ps_get_target_queue_insert(state, rng, &a) {
         a.target_loc = if ts == a.side { -(tsl as i8 + 1) } else { tsl as i8 + 1 };
         a.target = tsl;
     }
-    let _ = ps_get_target(state, rng, &a);
+    let _ = ps_get_target_queue_insert(state, rng, &a);
     // `insertChoice`: first / last index among the queue (the target's own
     // action already cancelled) by comparePriority.
     let rest: Vec<&Action> = queue.iter().enumerate().filter(|&(k, _)| k != j).map(|(_, x)| x).collect();
@@ -1159,7 +1159,10 @@ pub fn run_battle_fuzz(
             }
             // 2. FractionalPriority event.
             let ability = state.side(a.side).team_member(a.pokemon_index).ability;
-            a.fractional = match crate::engine::mechanics::fractional_priority(ability, a.choice.category) {
+            // PS `recharge` pseudo-move (`moveid: 'recharge'`, no `category`):
+            // not Status, so Quick Draw rolls for it (sim/side.ts chooseMove).
+            let category = if a.recharge { MoveCategory::Physical } else { a.choice.category };
+            a.fractional = match crate::engine::mechanics::fractional_priority(ability, category) {
                 Some(crate::engine::mechanics::FractionalPriority::Fixed(f)) => f,
                 Some(crate::engine::mechanics::FractionalPriority::QuickDraw) => {
                     if rng.label("fractional priority").random_chance(3, 10) {
@@ -1216,20 +1219,23 @@ pub fn run_battle_fuzz(
         // `beforeTurn` is not followed by a move, so its re-sort is skipped;
         // each charge action ends with `eachEvent('Update')`, the last with
         // the re-sort.
-        let chargers: Vec<(Side, usize, PokemonIndex, bool)> = actions
+        let chargers: Vec<(Side, usize, PokemonIndex, Choices)> = actions
             .iter()
             .filter(|a| {
-                matches!(a.choice.move_id, Choices::FOCUSPUNCH | Choices::BEAKBLAST)
+                matches!(a.choice.move_id, Choices::FOCUSPUNCH | Choices::BEAKBLAST | Choices::CHILLYRECEPTION)
                     && !state.side(a.side).active[a.slot].recharging
             })
-            .map(|a| (a.side, a.slot, a.pokemon_index, a.choice.move_id == Choices::FOCUSPUNCH))
+            .map(|a| (a.side, a.slot, a.pokemon_index, a.choice.move_id))
             .collect();
-        for &(cs, csl, cidx, is_focus) in &chargers {
+        for &(cs, csl, cidx, charge_id) in &chargers {
             if state.side(cs).active[csl].pokemon_index == Some(cidx) {
                 let a = &mut state.side_mut(cs).active[csl];
-                if is_focus {
+                if charge_id == Choices::FOCUSPUNCH {
                     a.focus_punch = true;
                     a.lost_focus = false;
+                } else if charge_id == Choices::CHILLYRECEPTION {
+                    // PS chillyreception.priorityChargeCallback: `addVolatile`.
+                    a.chilly_reception = true;
                 } else {
                     // PS beakblast.priorityChargeCallback: `addVolatile('beakblast')`.
                     a.beak_blast = true;
@@ -1535,7 +1541,25 @@ pub fn run_battle_fuzz(
 /// `sample`, which draws even with one candidate). PS calls it in
 /// `getActionSpeed` (queue build and every re-sort) and in `runMove`.
 fn ps_get_target(state: &DoublesState, rng: &mut Gen5Rng, action: &Action) -> Option<(Side, usize)> {
-    ps_get_target_inner(state, rng, action)
+    ps_get_target_inner(state, rng, action, "retarget")
+}
+
+/// The pokemon in `(side, slot)` is in the charge turn of a semi-invulnerable
+/// move (Dig, Dive, Fly, Bounce, Phantom Force, Shadow Force, Sky Drop) and its
+/// charge was not aborted: a move aimed at it misses. PS `twoturnmove` /
+/// `onInvulnerability` (data/moves.ts, data/conditions.ts).
+fn ally_semi_invulnerable(state: &DoublesState, side: Side, slot: usize) -> bool {
+    let a = &state.side(side).active[slot];
+    a.charging.is_some_and(|(m, _)| {
+        matches!(m, Choices::DIG | Choices::DIVE | Choices::FLY | Choices::BOUNCE | Choices::PHANTOMFORCE | Choices::SHADOWFORCE | Choices::SKYDROP)
+    }) && !a.charge_aborted
+}
+
+/// `ps_get_target` for a draw made under PS `insertChoice` (Encore's
+/// `changeAction`): the call stack contains `insertChoice`, so PS tags the draw
+/// "speed tie (queue insert)".
+fn ps_get_target_queue_insert(state: &DoublesState, rng: &mut Gen5Rng, action: &Action) -> Option<(Side, usize)> {
+    ps_get_target_inner(state, rng, action, "speed tie (queue insert)")
 }
 
 /// PS `priorityEvent('RedirectTarget')` (sim/pokemon.ts `getMoveTargets`):
@@ -1594,7 +1618,12 @@ fn redirect_target(state: &DoublesState, action: &Action, target: (Side, usize))
     target
 }
 
-fn ps_get_target_inner(state: &DoublesState, rng: &mut Gen5Rng, action: &Action) -> Option<(Side, usize)> {
+fn ps_get_target_inner(
+    state: &DoublesState,
+    rng: &mut Gen5Rng,
+    action: &Action,
+    label: &'static str,
+) -> Option<(Side, usize)> {
     let (side, slot) = (action.side, action.slot);
     let a = &state.side(side).active[slot];
     // A recharging pokemon's locked action is the `recharge` pseudo-move,
@@ -1620,7 +1649,7 @@ fn ps_get_target_inner(state: &DoublesState, rng: &mut Gen5Rng, action: &Action)
             "self" | "all" | "allySide" | "allyTeam" | "adjacentAllyOrSelf" => Some((side, slot)),
             "adjacentAlly" => {
                 if alive(side, 1 - slot) {
-                    let _ = rng.label("retarget").random(1);
+                    let _ = rng.label(label).random(1);
                     Some((side, 1 - slot))
                 } else {
                     None
@@ -1636,7 +1665,7 @@ fn ps_get_target_inner(state: &DoublesState, rng: &mut Gen5Rng, action: &Action)
                     let across = if matches!(ty, "normal" | "adjacentFoe" | "randomNormal") { 1 - slot } else { 0 };
                     Some((foe, across))
                 } else {
-                    Some((foe, foes[rng.label("retarget").random(foes.len() as u32) as usize]))
+                    Some((foe, foes[rng.label(label).random(foes.len() as u32) as usize]))
                 }
             }
         }
@@ -2257,6 +2286,9 @@ fn execute_action_inner(
 
     resolve_faints(state, rng, |_, _| true);
 
+    // PS `runMove` starts by counting the move action (`activeMoveActions++`,
+    // before the target and the BeforeMove checks). sim/battle-actions.ts runMove.
+    state.side_mut(side).active[slot].active_move_actions += 1;
     // PS `runMove` resolves the target before the BeforeMove checks.
     // Stalwart / Propeller Tail set `tracksTarget` (`getTarget` with an active
     // `originalTarget` returns it without a draw or a redirect).
@@ -2618,7 +2650,7 @@ fn execute_action_inner(
     let weather_id = match choice.move_id {
         Choices::RAINDANCE => 1,
         Choices::SANDSTORM => 3,
-        Choices::SNOWSCAPE => 5,
+        Choices::SNOWSCAPE | Choices::CHILLYRECEPTION => 5,
         _ => choice.weather_id,
     };
     let is_field = weather_id != 0
@@ -3367,11 +3399,7 @@ fn execute_action_inner(
             == "adjacentAllyOrSelf"
         && matches!(resolved, Some((rs, rl)) if rs == side && rl != slot);
     if (is_ally && !is_self || ally_or_self_picked_ally) && !is_field && choice.move_id != Choices::HELPINGHAND {
-        let a = &state.side(side).active[ally_slot];
-        if a.charging.is_some_and(|(m, _)| {
-            matches!(m, Choices::DIG | Choices::DIVE | Choices::FLY | Choices::BOUNCE | Choices::PHANTOMFORCE | Choices::SHADOWFORCE | Choices::SKYDROP)
-        }) && !a.charge_aborted
-        {
+        if ally_semi_invulnerable(state, side, ally_slot) {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
             push_order();
             return;
@@ -3849,6 +3877,16 @@ fn execute_action_inner(
             push_order();
             return;
         }
+    }
+
+    // Fake Out / First Impression `onTry` (data/moves.ts): fails after the first
+    // move action since switch-in (`activeMoveActions > 1`). No draw.
+    if matches!(choice.move_id, Choices::FAKEOUT | Choices::FIRSTIMPRESSION)
+        && state.side(side).active[slot].active_move_actions > 1
+    {
+        state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+        push_order();
+        return;
     }
 
     // Attract: PS `onTryImmunity` succeeds only for male -> female or
@@ -4722,6 +4760,11 @@ fn execute_action_inner(
                             && choice.flags.sound
                             && state.side(side).slot_pokemon(sl).is_some_and(|p| p.ability == Abilities::SOUNDPROOF)
                         {
+                            continue;
+                        }
+                        // A semi-invulnerable ally misses (PS `hitStepInvulnerabilityEvent`
+                        // for each target): no boost for it.
+                        if sl != slot && ally_semi_invulnerable(state, side, sl) {
                             continue;
                         }
                         if let Some(tidx) = state.side(side).active[sl].pokemon_index {
@@ -6765,25 +6808,6 @@ fn execute_action_inner(
                 state.side_mut(side).active[slot].glaive_rush = true;
             }
             contact_abilities(state, rng, side, slot, idx, target_side, target_slot, choice);
-            // Poison Touch `onSourceDamagingHit`: a contact hit has a 3/10 chance to
-            // poison the target (Shield Dust blocks). PS data/abilities.ts poisontouch.
-            if attacker_poison_touch
-                && choice.flags.contact
-                && (side, slot) != (target_side, target_slot)
-            {
-                let shield = state
-                    .side(target_side)
-                    .slot_pokemon(target_slot)
-                    .map(|p| p.ability == Abilities::SHIELDDUST)
-                    .unwrap_or(false);
-                // The hit's target as it was at the hit (a KO already cleared the
-                // slot, and PS still rolls for the hit).
-                if !shield && hit_target_pi.is_some() {
-                    if rng.label("ability").random_chance(3, 10) {
-                        try_set_status(state, rng, target_side, target_slot, PokemonStatus::POISON, side, idx);
-                    }
-                }
-            }
             cursed_body(state, rng, side, slot, target_side, target_slot, choice);
             // Weak Armor, Steam Engine, ... (shared with the singles engine).
             if let Some(didx) = state.side(target_side).active[target_slot].pokemon_index {
@@ -6869,6 +6893,28 @@ fn execute_action_inner(
                 }
             }
             maybe_wandering_spirit(state, side, slot, target_side, target_slot, choice, rng);
+            // PS `runEvent('DamagingHit')` runs the target's `onDamagingHit` handlers
+            // before the attacker's `onSourceDamagingHit` (same order and priority,
+            // so the stable insertion order decides; sim/battle.ts findEventHandlers).
+            // Poison Touch `onSourceDamagingHit`: a contact hit has a 3/10 chance to
+            // poison the target (Shield Dust blocks). PS data/abilities.ts poisontouch.
+            if attacker_poison_touch
+                && choice.flags.contact
+                && (side, slot) != (target_side, target_slot)
+            {
+                let shield = state
+                    .side(target_side)
+                    .slot_pokemon(target_slot)
+                    .map(|p| p.ability == Abilities::SHIELDDUST)
+                    .unwrap_or(false);
+                // The hit's target as it was at the hit (a KO already cleared the
+                // slot, and PS still rolls for the hit).
+                if !shield && hit_target_pi.is_some() {
+                    if rng.label("ability").random_chance(3, 10) {
+                        try_set_status(state, rng, target_side, target_slot, PokemonStatus::POISON, side, idx);
+                    }
+                }
+            }
         }
       }
         // PS `hitStepMoveHitLoop`: `eachEvent('Update')` after every hit that
@@ -7148,6 +7194,8 @@ fn execute_action_inner(
         Choices::TELEPORT => true,
         // Parting Shot: only if a stat drop landed (`selfSwitch` is deleted otherwise).
         Choices::PARTINGSHOT => drop_landed,
+        // Chilly Reception (`selfSwitch`): the snow is set and the user switches out.
+        Choices::CHILLYRECEPTION => !move_failed,
         _ => false,
     };
     // Revival Blessing (`selfSwitch: true`): flags the switch request even
@@ -10117,6 +10165,9 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             if a.focus_punch {
                 push(NO_ORDER, speed, 2, ResidualKind::Marker); // focuspunch (duration 1)
             }
+            if a.chilly_reception {
+                push(NO_ORDER, speed, 2, ResidualKind::Marker); // chillyreception (duration 1)
+            }
             if a.recharging {
                 push(NO_ORDER, speed, 2, ResidualKind::Marker); // mustrecharge
             }
@@ -11409,6 +11460,7 @@ fn end_of_turn(
             a.focus_punch = false;
             a.lost_focus = false;
             a.beak_blast = false;
+            a.chilly_reception = false;
             a.stats_raised_this_turn = false;
             a.stats_lowered_this_turn = false;
             a.last_attacker = None;

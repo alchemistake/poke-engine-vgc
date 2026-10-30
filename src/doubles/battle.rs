@@ -4491,11 +4491,14 @@ fn execute_action_inner(
     // Leech Seed `onTryImmunity`: Grass targets are immune (no draw).
     // PS data/moves.ts leechseed.
     if choice.move_id == Choices::LEECHSEED && !is_self && !is_field {
+        // `target.hasType('Grass')` includes a type added by Forest's Curse
+        // (`addedType`, kept in the slot for a dual-typed target).
         let grass = state
             .side(target_side)
             .slot_pokemon(target_slot)
             .map(|p| p.has_type(&PokemonType::GRASS))
-            .unwrap_or(false);
+            .unwrap_or(false)
+            || state.side(target_side).active[target_slot].added_type == PokemonType::GRASS;
         if grass {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
             push_order(move_order);

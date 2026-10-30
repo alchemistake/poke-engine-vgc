@@ -51,6 +51,10 @@ struct Action {
     /// `getActionSpeed` `ModifyPriority`). Re-sorts recompute it with the
     /// current ability (Skill Swap / Trace can give Prankster mid-turn).
     boost: i8,
+    /// PS `action.originalTarget` (`getAtLoc(targetLoc)` in `resolveAction`):
+    /// the pokemon that held the target slot when the action was queued, for
+    /// Stalwart / Propeller Tail `tracksTarget` in `getTarget`.
+    original_target: Option<(Side, PokemonIndex)>,
 }
 
 impl Action {
@@ -759,6 +763,7 @@ fn plan_queue_change(
         prioritized: false,
         no_pp: false,
         recharge: false,
+        original_target: None,
     };
     // `resolveAction`: no target location -> `getRandomTarget` (a draw), then
     // `getActionSpeed` -> `getTarget`. The new action is a real `move` (not the
@@ -787,6 +792,7 @@ fn plan_queue_change(
         a.target_loc = if ts == a.side { -(tsl as i8 + 1) } else { tsl as i8 + 1 };
         a.target = tsl;
     }
+    a.original_target = action_original_target(state, &a);
     let _ = ps_get_target_queue_insert(state, rng, &a);
     // `insertChoice`: first / last index among the queue (the target's own
     // action already cancelled) by comparePriority.
@@ -860,7 +866,7 @@ fn instruct_action(
         choice.base_power = 0.0;
     }
     let boost = ability_priority_boost(p, &choice) + grassy_glide_boost(state, p, &choice);
-    Some(Action {
+    let mut a = Action {
         side,
         slot,
         pokemon_index: idx,
@@ -874,7 +880,10 @@ fn instruct_action(
         prioritized: true,
         no_pp: false,
         recharge: false,
-    })
+        original_target: None,
+    };
+    a.original_target = action_original_target(state, &a);
+    Some(a)
 }
 
 /// Applies a planned queue change to `actions[from..]`.
@@ -1184,6 +1193,7 @@ pub fn run_battle_fuzz(
                                 prioritized: false,
                                 no_pp,
                                 recharge: s.active[slot].recharging,
+                                original_target: None,
                             });
                         }
                     }
@@ -1275,6 +1285,7 @@ pub fn run_battle_fuzz(
                     a.target_loc = if ts == a.side { -(tsl as i8 + 1) } else { tsl as i8 + 1 };
                 }
             }
+            a.original_target = action_original_target(state, a);
             let _ = ps_get_target(state, rng, a);
         }
         // Beak Blast (PS data/moves.ts beakblast.priorityChargeCallback): its
@@ -1712,6 +1723,35 @@ pub fn run_battle_fuzz(
         prng_draws: rng.draw_log.clone(),
         prng_draw_ctx: rng.draw_ctx.clone(),
     }
+}
+
+/// PS `move.pranksterBoosted` with the user still holding Prankster (the
+/// `hitStepTryImmunity` check). Prankster's `onModifyPriority` sets it on a
+/// Status move; a move called by `useMove` inherits the calling move's flag
+/// (`move.pranksterBoosted = activeMove.pranksterBoosted`; every caller,
+/// Copycat / Sleep Talk / Metronome, is a Status move), except a Magic Bounce
+/// copy (`hasBounced`, `pranksterBoosted = false`). PS sim/battle-actions.ts
+/// useMoveInner, data/abilities.ts prankster / magicbounce.
+fn prankster_boosted(state: &DoublesState, side: Side, slot: usize, choice: &Choice) -> bool {
+    if state.side(side).slot_pokemon(slot).map(|p| p.ability) != Some(Abilities::PRANKSTER) {
+        return false;
+    }
+    let a = &state.side(side).active[slot];
+    if a.external_call {
+        !a.bounced
+    } else {
+        choice.category == MoveCategory::Status
+    }
+}
+
+/// PS `resolveAction`: `action.originalTarget = pokemon.getAtLoc(targetLoc)`.
+fn action_original_target(state: &DoublesState, a: &Action) -> Option<(Side, PokemonIndex)> {
+    let loc = a.target_loc;
+    if loc == 0 || loc.abs() > 2 {
+        return None;
+    }
+    let (ts, tsl) = if loc > 0 { (a.side.other(), (loc - 1) as usize) } else { (a.side, (-loc - 1) as usize) };
+    state.side(ts).active[tsl].pokemon_index.map(|i| (ts, i))
 }
 
 /// pokemon-showdown `getTarget` (sim/battle.ts) for a queued move, for doubles:
@@ -2619,7 +2659,13 @@ fn execute_action_inner(
         state.side(side).team_member(action.pokemon_index).ability,
         Abilities::STALWART | Abilities::PROPELLERTAIL
     );
-    let tracked = if tracks && action.target_loc != 0 {
+    let tracked = if tracks && action.original_target.is_some() && !state.side(side).active[slot].external_call {
+        // `originalTarget?.isActive`: the queued target, wherever it stands now.
+        let (os, oi) = action.original_target.unwrap();
+        (0..2)
+            .find(|&sl| state.side(os).active[sl].pokemon_index == Some(oi) && state.side(os).team_member(oi).hp > 0)
+            .map(|sl| (os, sl))
+    } else if tracks && action.target_loc != 0 {
         let loc = action.target_loc;
         let (ts, tsl) = if loc > 0 { (side.other(), (loc - 1) as usize) } else { (side, (-loc - 1) as usize) };
         if tsl < 2 && state.side(ts).slot_pokemon(tsl).map(|p| p.hp > 0).unwrap_or(false) {
@@ -3102,7 +3148,18 @@ fn execute_action_inner(
         // `useMoveInner` prints `-fail` before any accuracy roll (battle-actions.ts
         // `!targets.length`). The charge ends as on any firing turn.
         let firing_charge = matches!(state.side(side).active[slot].charging, Some((m, 0)) if m == choice.move_id);
-        if !has_target && (matches!(choice.charge_setup, ChargeSetup::None) || firing_charge) {
+        // A charge move whose charge the weather skips (Solar Beam in sun, ...)
+        // fires at once: `onTryMove` returns without charging, then the
+        // `!targets.length` fail (PS data/moves.ts solarbeam.onTryMove).
+        let charge_skipped = {
+            let w = effective_weather(state);
+            match choice.charge_setup {
+                ChargeSetup::NotSun { .. } => w == Weather::SUN,
+                ChargeSetup::OnlyRain { .. } => matches!(w, Weather::RAIN | Weather::HEAVYRAIN),
+                _ => false,
+            }
+        };
+        if !has_target && (matches!(choice.charge_setup, ChargeSetup::None) || firing_charge || charge_skipped) {
             if firing_charge {
                 state.side_mut(side).active[slot].charging = None;
                 state.side_mut(side).active[slot].twoturn_fired = true;
@@ -3714,8 +3771,7 @@ fn execute_action_inner(
             // Status move skips each Dark foe on its own (no draw); the other
             // targets still get their accuracy roll.
             if ts != side
-                && choice.category == MoveCategory::Status
-                && state.side(side).slot_pokemon(slot).map(|p| p.ability) == Some(Abilities::PRANKSTER)
+                && prankster_boosted(state, side, slot, choice)
                 && (d.types.0 == PokemonType::DARK || d.types.1 == PokemonType::DARK)
             {
                 continue;
@@ -4321,13 +4377,12 @@ fn execute_action_inner(
     // sim/battle-actions.ts `hitStepTryImmunity`, gen >= 7). No draw. PS
     // skips `isAlly` targets, so a move aimed at the user's own side (Wonder
     // Room's `all` target resolves to the user) is not affected.
-    if choice.category == MoveCategory::Status
+    if prankster_boosted(state, side, slot, choice)
         && !is_self
         && !is_ally
         && !is_field
         && !is_spread
         && target_side != side
-        && state.side(side).slot_pokemon(slot).map(|p| p.ability) == Some(Abilities::PRANKSTER)
         && state
             .side(target_side)
             .slot_pokemon(target_slot)
@@ -11829,6 +11884,19 @@ fn each_event_update(state: &mut DoublesState, rng: &mut Gen5Rng) {
             disguise_bust(state, s, sl);
         }
     }
+    for &(s, sl) in &order {
+        // Attract `onUpdate` (PS data/moves.ts attract.condition): the volatile
+        // is removed once its source is no longer active (switched / dragged
+        // out or fainted: `isActive` false), even if it comes back later.
+        if let Some((ss, si)) = state.side(s).active[sl].attract {
+            let src_active = (0..2).any(|k| {
+                state.side(ss).active[k].pokemon_index == Some(si) && state.side(ss).team_member(si).hp > 0
+            });
+            if !src_active {
+                state.side_mut(s).active[sl].attract = None;
+            }
+        }
+    }
     for (s, sl) in order {
         // Trace `onUpdate` (PS data/abilities.ts trace): every Update event
         // while the holder still has Trace and seeks draws a random valid foe.
@@ -13094,6 +13162,7 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
                             prioritized: false,
                             no_pp: false,
                             recharge: s.active[slot].recharging,
+                            original_target: None,
                         });
                     }
                 }

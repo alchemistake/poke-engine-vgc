@@ -8,3 +8,6 @@ poke-engine-py/docs/build/
 
 # fuzz harness output (per-run artifacts, never committed)
 fuzz/work/
+fuzz/.DS_Store
+.gitignore
+.DS_Store

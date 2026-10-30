@@ -1475,6 +1475,8 @@ pub fn run_battle_fuzz(
                         } else {
                             None
                         };
+                        // PS gastroacid has no `noCopy`: Baton Pass copies it to the replacement.
+                        let baton_gastro = state.side(side).active[slot].baton_passing && state.side(side).active[slot].gastro_acid;
                         let shed = state.side(side).active[slot].shed_tailing;
                         let passed = if shed {
                             let a = &state.side(side).active[slot];
@@ -1524,6 +1526,22 @@ pub fn run_battle_fuzz(
                                 if let Some(ni) = a.pokemon_index {
                                     let pm = state.side_mut(side).team_member_mut(ni);
                                     std::mem::swap(&mut pm.attack, &mut pm.defense);
+                                }
+                            }
+                        }
+                        // Baton Pass copies the `gastroacid` volatile (PS copyVolatileFrom):
+                        // the replacement's ability is suppressed again unless it cannot be
+                        // suppressed (`onCopy`). TODO(PS parity): the End event's side effects
+                        // (Cloud Nine / Air Lock weather change) are not run here.
+                        if baton_gastro {
+                            if let Some(ni) = state.side(side).active[slot].pokemon_index {
+                                let a = state.side(side).team_member(ni).ability;
+                                if !gastro_cant_suppress(a) {
+                                    if a != Abilities::NONE {
+                                        mold_breaker_forget(side, ni);
+                                        state.side_mut(side).team_member_mut(ni).ability = Abilities::NONE;
+                                    }
+                                    state.side_mut(side).active[slot].gastro_acid = true;
                                 }
                             }
                         }
@@ -2162,6 +2180,26 @@ fn real_ability(state: &DoublesState, side: Side, idx: PokemonIndex) -> Abilitie
         .unwrap_or(state.side(side).team_member(idx).ability)
 }
 
+/// PS `cantsuppress` abilities: Gastro Acid fails on them (onTryHit), and
+/// Baton Pass's copied `gastroacid` is dropped on them (onCopy).
+fn gastro_cant_suppress(a: Abilities) -> bool {
+    matches!(
+        a,
+        Abilities::MULTITYPE
+            | Abilities::STANCECHANGE
+            | Abilities::DISGUISE
+            | Abilities::ZENMODE
+            | Abilities::SCHOOLING
+            | Abilities::SHIELDSDOWN
+            | Abilities::POWERCONSTRUCT
+            | Abilities::COMATOSE
+            | Abilities::ICEFACE
+            | Abilities::GULPMISSILE
+            | Abilities::HUNGERSWITCH
+            | Abilities::BATTLEBOND
+    )
+}
+
 /// Drop the Mold Breaker blank of a pokemon whose ability really became
 /// No Ability (Gastro Acid), so the restore keeps it suppressed.
 fn mold_breaker_forget(side: Side, idx: PokemonIndex) {
@@ -2219,6 +2257,9 @@ thread_local! {
     /// `execute_action_inner` (before a duration-1 lockedmove release, whose
     /// `onEnd` confusion must come after the sort). Reset per action.
     static AFTER_MOVE_TIE_DRAWN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The running move found no targets (PS useMoveInner `!targets.length`):
+    /// it returns false without `MoveFail`, so no crash / Steel Beam fail damage.
+    static NO_TARGET_FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// PS `runMove` -> `runEvent('AfterMove', pokemon)`: the handlers are the
@@ -2297,6 +2338,7 @@ fn execute_action_body(
     state.in_move = true;
     let mold_breaker = mold_breaker_suppress(state, action);
     AFTER_MOVE_TIE_DRAWN.with(|c| c.set(false));
+    NO_TARGET_FAIL.with(|c| c.set(false));
     execute_action_inner(state, rng, action, move_order, will_act, queue);
     if mold_breaker {
         mold_breaker_restore(state);
@@ -2386,8 +2428,10 @@ fn execute_action_body(
     // `onMoveFail` after `useMoveInner` found `moveResult` false (a miss,
     // Protect, an immunity, ...). PS data/moves.ts jumpkick / supercellslam
     // (`damage(baseMaxhp / 2)`), sim/battle-actions.ts useMoveInner.
+    let no_target_fail = NO_TARGET_FAIL.with(|c| c.get());
     if action.choice.crash.is_some()
         && move_order.len() > order_len
+        && !no_target_fail
         && state.side(action.side).active[action.slot].move_result_this_turn == Some(false)
     {
         if let Some(p) = state.side(action.side).slot_pokemon(action.slot) {
@@ -2402,6 +2446,7 @@ fn execute_action_body(
     // recoil is its `heal` entry. PS data/moves.ts steelbeam,
     // sim/battle-actions.ts recoilDamage.
     if move_order.len() > order_len
+        && !no_target_fail
         && match action.choice.move_id {
             Choices::STEELBEAM | Choices::MINDBLOWN | Choices::CHLOROBLAST => {
                 state.side(action.side).active[action.slot].move_result_this_turn == Some(false)
@@ -2514,7 +2559,11 @@ fn execute_action_inner(
 
     // PS `runMove` starts by counting the move action (`activeMoveActions++`,
     // before the target and the BeforeMove checks). sim/battle-actions.ts runMove.
-    state.side_mut(side).active[slot].active_move_actions += 1;
+    // A move called from another move (Copycat, Metronome, Sleep Talk, ...) goes
+    // through `useMove`, which does not count (Fake Out's `onTry` then sees 1).
+    if !state.side(side).active[slot].external_call {
+        state.side_mut(side).active[slot].active_move_actions += 1;
+    }
     // PS `runMove` resolves the target before the BeforeMove checks.
     // Stalwart / Propeller Tail set `tracksTarget` (`getTarget` with an active
     // `originalTarget` returns it without a draw or a redirect).
@@ -2980,6 +3029,7 @@ fn execute_action_inner(
             // PS useMoveInner `!targets.length`: `-fail` and `return false`, so
             // `moveThisTurnResult` is false (Stomping Tantrum's doubled BP reads it).
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+            NO_TARGET_FAIL.with(|c| c.set(true));
             modify_move_field_tie(state, rng);
         modify_move_user_tie(state, rng, side, slot);
             push_order(move_order);
@@ -3733,6 +3783,12 @@ fn execute_action_inner(
             spread_list.push((ts, tsl));
         }
         if spread_list.is_empty() {
+            // PS useMoveInner: `selfdestruct: 'always'` faints the user before
+            // the target step, so it faints even when every adjacent foe is
+            // skipped (a semi-invulnerable Dig holder is `-miss`ed in PS).
+            if matches!(choice.move_id, Choices::EXPLOSION | Choices::MISTYEXPLOSION | Choices::SELFDESTRUCT) {
+                selfdestruct_user_faint(state, rng, side, slot);
+            }
             push_order(move_order);
             return;
         }
@@ -5300,6 +5356,10 @@ fn execute_action_inner(
                     // Curse here is the non-Ghost self-boost (its volatile is Ghost-only).
                     && (choice.volatile_status.is_none()
                         || choice.move_id == Choices::CURSE
+                        // Confusion (Swagger, Flatter, ...): `addVolatile` returns false
+                        // while the target is already confused (no `onRestart`).
+                        || (choice.volatile_status.as_ref().is_some_and(|v| v.volatile_status == PokemonVolatileStatus::CONFUSION)
+                            && state.side(ts).active[tslot].confusion > 0)
                         // Minimize: `addVolatile('minimize')` returns null (its
                         // `onRestart`) while the volatile is already present.
                         || (choice.move_id == Choices::MINIMIZE
@@ -5704,7 +5764,18 @@ fn execute_action_inner(
                     }
                 }
                 PokemonVolatileStatus::CONFUSION => {
-                    if !safeguard_blocks_confusion(state, side, slot, idx, ts, tslot) {
+                    // Safeguard `onTryAddVolatile` (PS data/moves.ts safeguard): `-activate`
+                    // and the add returns null, so a status move with no boost "did nothing"
+                    // (no hit-loop eachEvent), as with Misty Terrain below.
+                    if safeguard_blocks_confusion(state, side, slot, idx, ts, tslot) {
+                        if choice.category == MoveCategory::Status && choice.boost.is_none() {
+                            if is_spread {
+                                spread_volatile_fail = true;
+                            } else {
+                                move_failed = true;
+                            }
+                        }
+                    } else {
                         // `addVolatile` fails (already confused, Own Tempo): a status
                         // move's `-fail` ends the hit loop with no `eachEvent`.
                         let own_tempo = state.side(ts).slot_pokemon(tslot).map(|p| p.ability == Abilities::OWNTEMPO).unwrap_or(false);
@@ -6616,21 +6687,7 @@ fn execute_action_inner(
         if choice.move_id == Choices::GASTROACID && ti == 0 && !move_failed {
             if let Some(tidx) = state.side(target_side).active[target_slot].pokemon_index {
                 let a = real_ability(state, target_side, tidx);
-                if matches!(
-                    a,
-                    Abilities::MULTITYPE
-                        | Abilities::STANCECHANGE
-                        | Abilities::DISGUISE
-                        | Abilities::ZENMODE
-                        | Abilities::SCHOOLING
-                        | Abilities::SHIELDSDOWN
-                        | Abilities::POWERCONSTRUCT
-                        | Abilities::COMATOSE
-                        | Abilities::ICEFACE
-                        | Abilities::GULPMISSILE
-                        | Abilities::HUNGERSWITCH
-                        | Abilities::BATTLEBOND
-                ) {
+                if gastro_cant_suppress(a) {
                     move_failed = true;
                 } else {
                     if a != Abilities::NONE {
@@ -8150,6 +8207,7 @@ fn base_power_with_modifiers(
     helping_hand_mult: f32,
     speeds: (i32, i32),
     terrain: crate::engine::state::Terrain,
+    defender_semi_invulnerable: bool,
     ate_boosted: bool,
     fallen: u8,
     steely_spirits: u8,
@@ -8315,7 +8373,7 @@ fn base_power_with_modifiers(
     if move_boost {
         mods.push((0, 6144));
     }
-    if let Some(m) = crate::engine::mechanics::terrain_base_power_modifier(terrain, choice, attacker, defender) {
+    if let Some(m) = crate::engine::mechanics::terrain_base_power_modifier(terrain, choice, attacker, defender, defender_semi_invulnerable) {
         mods.push((6, m));
     }
     // Helping Hand stacks one x1.5 per use (`helping_hand_mult` = 1.5^n).
@@ -9328,6 +9386,7 @@ fn compute_hit_damage(
                 att_slot.helping_hand_mult,
                 speeds,
                 state.terrain.terrain_type,
+                ally_semi_invulnerable(state, target_side, target_slot),
                 ate_boosted,
                 att_slot.fallen,
                 (0..2)
@@ -11034,6 +11093,10 @@ enum ResidualKind {
     /// A handler with no modeled effect (duration countdowns, ...): it only
     /// takes part in the sort, where ties still consume PRNG draws.
     Marker,
+    /// Trick Room's `onFieldResidual` duration tick (order 27, subOrder 1).
+    /// At 0 it ends and the speeds flip back before any later residual step
+    /// or faint-replacement switch-in reads them.
+    TrickRoom,
     /// Opportunist `onResidual` (order 29): flush the copied boosts.
     OpportunistFlush(Side, usize),
     /// A side condition with a duration (reflect, light screen, safeguard, mist,
@@ -11138,8 +11201,10 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
     if state.terrain.terrain_type != crate::engine::state::Terrain::NONE {
         push(27, 0, 7, ResidualKind::Terrain);
     }
+    // PS data/moves.ts trickroom: onFieldResidualOrder 27, SubOrder 1. Its
+    // duration drops (and it ends, `-fieldend`) in this residual handler.
     if state.trick_room.active {
-        push(27, 0, 1, ResidualKind::Marker);
+        push(27, 0, 1, ResidualKind::TrickRoom);
     }
     if state.wonder_room.active {
         push(27, 0, 5, ResidualKind::WonderRoom);
@@ -11903,6 +11968,15 @@ fn end_of_turn(
         }
         match h.kind {
             ResidualKind::Marker => {}
+            ResidualKind::TrickRoom => {
+                if state.trick_room.active && state.trick_room.turns_remaining > 0 {
+                    state.trick_room.turns_remaining -= 1;
+                    if state.trick_room.turns_remaining == 0 {
+                        state.trick_room.active = false;
+                        update_speed(state);
+                    }
+                }
+            }
             ResidualKind::OpportunistFlush(side, slot) => flush_opportunist(state, side, slot),
             ResidualKind::SideDuration(side, which) => {
                 let d = side_condition_duration_mut(state, side, which);
@@ -12717,12 +12791,6 @@ fn end_of_turn(
 
     // Tick down durations.
 
-    if state.trick_room.active && state.trick_room.turns_remaining > 0 {
-        state.trick_room.turns_remaining -= 1;
-        if state.trick_room.turns_remaining == 0 {
-            state.trick_room.active = false;
-        }
-    }
     for side in [Side::One, Side::Two] {
         let s = state.side_mut(side);
         // Clear per-turn volatiles.

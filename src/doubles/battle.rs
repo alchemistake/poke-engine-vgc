@@ -409,9 +409,9 @@ fn hp_snapshot(state: &DoublesState) -> TurnHp {
 /// consumes PRNG draws even though it does not change the move order, so we must
 /// replicate it to keep the draw sequence aligned.
 fn resort_all_active(state: &DoublesState, rng: &mut Gen5Rng) {
-    // The active slots are fixed by switch-in order in pokemon-showdown; the
-    // speedSort only determines move order, not slot assignment. No-op here.
-    let _ = (state, rng);
+    // PS sim/battle-actions.ts runSwitch: `speedSort(getAllActive(true))`.
+    // The active slots are fixed by switch-in order; only the draws matter here.
+    let _ = sorted_actives(state, rng, "speed tie (switch-in)");
 }
 
 /// Switch a replacement into a fainted slot at the end of the turn, and
@@ -1035,7 +1035,16 @@ pub fn run_battle_fuzz(
                             // using Uproar whatever was sent (no PP, priority 0).
                             let uproar_lock = s.active[slot].uproar > 0 && mv.move_id != Choices::UPROAR && !*struggle;
                             let prio = if uproar_lock { 0 } else { prio };
+                            // `lockedmove` (Petal Dance, Outrage, ...): PS `getLockedMove`
+                            // replaces the chosen move with the locked one; no PP is used.
+                            let locked_id = s.active[slot].locked_move.and(s.active[slot].locked_move_id);
                             let (mv, no_pp) = match s.active[slot].charging {
+                                _ if !uproar_lock && !*struggle && locked_id.is_some_and(|m| m != mv.move_id) => {
+                                    match MOVES.get(&locked_id.unwrap()).cloned() {
+                                        Some(l) => (l, true),
+                                        None => (mv, false),
+                                    }
+                                }
                                 _ if uproar_lock => match MOVES.get(&Choices::UPROAR).cloned() {
                                     Some(l) => (l, true),
                                     None => (mv, false),
@@ -1667,12 +1676,13 @@ fn ps_get_target_inner(
     // which has no target type.
     let move_id = action.choice.move_id.to_string().to_lowercase();
     let user_types = state.side(side).team_member(action.pokemon_index).types;
+    // PS `source.hasType('Ghost')`: the current types, including an added type.
+    let user_ghost = user_types.0 == PokemonType::GHOST
+        || user_types.1 == PokemonType::GHOST
+        || state.side(side).active[slot].added_type == PokemonType::GHOST;
     let ty = if action.recharge {
         ""
-    } else if action.choice.move_id == Choices::CURSE
-        && user_types.0 != PokemonType::GHOST
-        && user_types.1 != PokemonType::GHOST
-    {
+    } else if action.choice.move_id == Choices::CURSE && !user_ghost {
         // curse.onModifyMove: `move.target = move.nonGhostTarget` ('self').
         "self"
     } else {
@@ -2745,7 +2755,16 @@ fn execute_action_inner(
                 target_slot = sl;
             }
             _ => {
-                target_slot = action.target.min(1);
+                // PS `getTarget`: a fainted ally chosen by an adjacentAlly move is
+                // the target itself (no retarget). The hit loop then breaks with no
+                // `eachEvent`, and the move fails.
+                match resolved {
+                    Some((ts, sl)) if ts == side => {
+                        target_side = ts;
+                        target_slot = sl;
+                    }
+                    _ => target_slot = action.target.min(1),
+                }
                 // An allAdjacent move (Earthquake) with no living foe still hits
                 // the living ally: PS `getMoveTargets` lists the adjacent allies.
                 // PS data/moves.ts earthquake (target allAdjacent).
@@ -2780,6 +2799,21 @@ fn execute_action_inner(
             }
         }
     }
+
+    // Long Reach `onModifyMove` (PS data/abilities.ts longreach): the user's
+    // moves lose the `contact` flag, so Fluffy, Tough Claws, Protect's contact
+    // penalty and the contact abilities of the target all see a non-contact move.
+    let long_reach_choice;
+    let choice = if choice.flags.contact && state.side(side).team_member(idx).ability == Abilities::LONGREACH {
+        long_reach_choice = {
+            let mut c = choice.clone();
+            c.flags.contact = false;
+            c
+        };
+        &long_reach_choice
+    } else {
+        choice
+    };
 
     // Shell Side Arm `onModifyMove` (PS data/moves.ts shellsidearm): the user's
     // Atk vs SpA and the target's Def vs SpD, all with boosts but no ability or
@@ -4433,6 +4467,12 @@ fn execute_action_inner(
       for (ti, &(hts, htsl)) in hit_targets.iter().enumerate() {
         target_side = hts;
         target_slot = htsl;
+        // PS data/moves.ts batonpass.onHit: with no replacement (`canSwitch`
+        // false) it is `-fail` (NOT_FAIL), so the hit did nothing and
+        // hitStepMoveHitLoop breaks before its `eachEvent('Update')`.
+        if choice.move_id == Choices::BATONPASS && state.side(side).find_replacement().is_none() {
+            move_failed = true;
+        }
         // Substitute `onTryPrimaryHit` for a spread Status move: this target
         // is skipped (the accuracy roll was already drawn).
         if is_spread
@@ -4472,7 +4512,10 @@ fn execute_action_inner(
             // `eachEvent('Update')`); for a spread move only the remaining
             // (alive) targets would still be processed.
             let mut any_alive = false;
-            for &(ts, tsl) in hit_targets.iter() {
+            // An ally-targeted move's target is the ally (`target_ok` above),
+            // not the default foe slot in `hit_targets`.
+            let check_targets: Vec<(Side, usize)> = if is_ally { vec![(side, ally_slot)] } else { hit_targets.clone() };
+            for &(ts, tsl) in check_targets.iter() {
                 if slot_alive(state, ts, tsl) {
                     any_alive = true;
                     break;
@@ -4567,6 +4610,7 @@ fn execute_action_inner(
                         .as_ref()
                         .is_some_and(|v| v.volatile_status == PokemonVolatileStatus::LOCKEDMOVE && v.target == MoveTarget::User)
                 {
+                    state.side_mut(side).active[slot].locked_move_id = Some(choice.move_id);
                     match state.side(side).active[slot].locked_move {
                         None => {
                             let t = rng.label("volatile duration").random_range(2, 4) as u8;
@@ -4855,7 +4899,9 @@ fn execute_action_inner(
             // Curse: a Ghost user pays HP instead of changing stats (`onTryHit`).
             let ghost_curse = choice.move_id == Choices::CURSE && {
                 let t = state.side(side).team_member(idx).types;
-                t.0 == PokemonType::GHOST || t.1 == PokemonType::GHOST
+                t.0 == PokemonType::GHOST
+                    || t.1 == PokemonType::GHOST
+                    || state.side(side).active[slot].added_type == PokemonType::GHOST
             };
             // Ally-targeted moves (Coaching, Aromatic Mist, ...) keep upstream's
             // singles-era `User` boost target; in doubles they hit the ally.
@@ -5352,6 +5398,9 @@ fn execute_action_inner(
                 PokemonVolatileStatus::LOCKEDMOVE => {
                     // PS lockedmove `onStart`: trueDuration = random(2, 4);
                     // `onRestart`: duration back to 2 while trueDuration >= 2.
+                    if ts == side && tslot == slot {
+                        state.side_mut(ts).active[tslot].locked_move_id = Some(choice.move_id);
+                    }
                     match state.side(ts).active[tslot].locked_move {
                         None => {
                             let t = rng.label("volatile duration").random_range(2, 4) as u8;
@@ -5513,7 +5562,10 @@ fn execute_action_inner(
         // else the user loses half its max HP and the target is cursed.
         if choice.move_id == Choices::CURSE && ti == 0 {
             let t = state.side(side).team_member(idx).types;
-            if t.0 == PokemonType::GHOST || t.1 == PokemonType::GHOST {
+            if t.0 == PokemonType::GHOST
+                || t.1 == PokemonType::GHOST
+                || state.side(side).active[slot].added_type == PokemonType::GHOST
+            {
                 if state.side(target_side).active[target_slot].cursed {
                     move_failed = true;
                 } else {
@@ -7394,7 +7446,10 @@ fn run_copied_move(
     // random foe was already drawn. PS data/moves.ts curse.onModifyMove.
     if m == Choices::CURSE {
         let user_types = state.side(action.side).team_member(action.pokemon_index).types;
-        if user_types.0 != PokemonType::GHOST && user_types.1 != PokemonType::GHOST {
+        let user_ghost = user_types.0 == PokemonType::GHOST
+            || user_types.1 == PokemonType::GHOST
+            || state.side(action.side).active[action.slot].added_type == PokemonType::GHOST;
+        if !user_ghost {
             let foes: Vec<usize> = (0..2)
                 .filter(|&sl| state.side(action.side.other()).slot_pokemon(sl).is_some_and(|p| p.hp > 0))
                 .collect();

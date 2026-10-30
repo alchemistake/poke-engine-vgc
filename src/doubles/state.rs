@@ -233,6 +233,9 @@ pub struct ActiveSlot {
     /// `lockedmove` volatile (Outrage, Thrash, Petal Dance): (duration,
     /// trueDuration) from PS data/conditions.ts.
     pub locked_move: Option<(u8, u8)>,
+    /// The move that set `locked_move` (a copied Petal Dance locks its copier
+    /// into Petal Dance). PS `getLockedMove` replaces the chosen move with it.
+    pub locked_move_id: Option<Choices>,
     /// `disable` volatile: the disabled move and remaining duration.
     pub disabled: Option<(Choices, u8)>,
     /// BeforeMove aborted the locked charge turn: PS `twoturnmove` is gone
@@ -355,6 +358,7 @@ impl ActiveSlot {
             endure: false,
             last_target_loc: 0,
             locked_move: None,
+            locked_move_id: None,
             disabled: None,
             charge_aborted: false,
             yawn_source: None,

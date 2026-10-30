@@ -3458,6 +3458,10 @@ fn execute_action_inner(
                 if st.side(ts).active[tsl].glaive_rush {
                     return true;
                 }
+                // Minimize `onAccuracy`: minimize-flagged moves always hit it.
+                if crate::engine::mechanics::minimize_move(choice.move_id) && st.side(ts).active[tsl].minimize {
+                    return true;
+                }
                 // No Guard `onAnyAccuracy`: no roll when either side has it.
                 if user_no_guard
                     || st.side(ts).slot_pokemon(tsl).map(|p| p.ability == Abilities::NOGUARD).unwrap_or(false)
@@ -3484,6 +3488,8 @@ fn execute_action_inner(
         && move_ty != "all"
         && !toxic_hits
         && !state.side(target_side).active[target_slot].glaive_rush
+        && !(crate::engine::mechanics::minimize_move(choice.move_id)
+            && state.side(target_side).active[target_slot].minimize)
         && !weather_guaranteed
         && choice.accuracy > 0.0
         && !(state.side(side).team_member(idx).ability == Abilities::NOGUARD
@@ -4572,6 +4578,10 @@ fn execute_action_inner(
                             5
                         };
                     }
+                }
+                PokemonVolatileStatus::MINIMIZE => {
+                    // data/moves.ts minimize.volatileStatus; no restart fail.
+                    state.side_mut(ts).active[tslot].minimize = true;
                 }
                 other => {
                     // TODO(PS parity): model remaining volatiles (Leech Seed,
@@ -7123,6 +7133,12 @@ fn compute_hit_damage(
                     if double {
                         m = (m * 8192 + 2048) >> 12;
                     }
+                }
+                // Minimize `onSourceModifyDamage`: x2 for the stomp family.
+                if state.side(target_side).active[target_slot].minimize
+                    && crate::engine::mechanics::minimize_move(choice.move_id)
+                {
+                    m = (m * 8192 + 2048) >> 12;
                 }
                 // Glaive Rush `onSourceModifyDamage`: x2 (chained).
                 if state.side(target_side).active[target_slot].glaive_rush {

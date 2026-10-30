@@ -154,6 +154,8 @@ pub struct ActiveSlot {
     /// `glaiverush` volatile: moves against it always hit and deal x2 damage
     /// until its holder next tries to move (PS data/moves.ts glaiverush).
     pub glaive_rush: bool,
+    /// Minimize volatile (PS `minimize`): see `mechanics::minimize_move`.
+    pub minimize: bool,
     /// `ingrain` volatile: heals 1/16 max HP each residual (order 7).
     pub ingrain: bool,
     /// `healblock` volatile: remaining duration (0 = none).
@@ -300,6 +302,7 @@ impl ActiveSlot {
             dragon_cheer: None,
             last_move: None,
             glaive_rush: false,
+            minimize: false,
             ingrain: false,
             heal_block: 0,
             syrup_bomb: None,

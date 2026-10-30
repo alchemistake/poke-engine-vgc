@@ -563,6 +563,23 @@ pub fn toxic_always_hits(move_id: Choices, user: &Pokemon) -> bool {
     move_id == Choices::TOXIC && user.has_type(&PokemonType::POISON)
 }
 
+/// Moves with the `minimize` flag (PS data/moves.ts): against a Minimized
+/// target they skip the accuracy roll (Minimize `onAccuracy`) and deal x2
+/// damage (Minimize `onSourceModifyDamage`).
+pub fn minimize_move(move_id: Choices) -> bool {
+    matches!(
+        move_id,
+        Choices::STOMP
+            | Choices::BODYSLAM
+            | Choices::DRAGONRUSH
+            | Choices::FLYINGPRESS
+            | Choices::HEATCRASH
+            | Choices::HEAVYSLAM
+            | Choices::STEAMROLLER
+            | Choices::SUPERCELLSLAM
+    )
+}
+
 /// The attacker's ability in PS's `ModifyAtk` / `ModifySpA` step, as a
 /// 4096-based modifier (4096 = none): Overgrow / Blaze / Torrent / Swarm
 /// (`move.type === X && attacker.hp <= attacker.maxhp / 3` -> x1.5).

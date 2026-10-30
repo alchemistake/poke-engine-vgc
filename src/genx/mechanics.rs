@@ -530,24 +530,24 @@ pub fn powder_immune(p: &Pokemon) -> bool {
 pub fn terrain_base_power_modifier(
     terrain: super::state::Terrain,
     choice: &Choice,
-    attacker: &Pokemon,
-    defender: &Pokemon,
+    attacker_grounded: bool,
+    defender_grounded: bool,
     defender_semi_invulnerable: bool,
 ) -> Option<i64> {
     use super::state::Terrain;
     let t = choice.move_type;
     match terrain {
-        Terrain::ELECTRICTERRAIN if t == PokemonType::ELECTRIC && attacker.is_grounded() => Some(5325),
-        Terrain::PSYCHICTERRAIN if t == PokemonType::PSYCHIC && attacker.is_grounded() => Some(5325),
+        Terrain::ELECTRICTERRAIN if t == PokemonType::ELECTRIC && attacker_grounded => Some(5325),
+        Terrain::PSYCHICTERRAIN if t == PokemonType::PSYCHIC && attacker_grounded => Some(5325),
         Terrain::GRASSYTERRAIN
             if matches!(choice.move_id, Choices::EARTHQUAKE | Choices::BULLDOZE | Choices::MAGNITUDE)
-                && defender.is_grounded()
+                && defender_grounded
                 && !defender_semi_invulnerable =>
         {
             Some(2048)
         }
-        Terrain::GRASSYTERRAIN if t == PokemonType::GRASS && attacker.is_grounded() => Some(5325),
-        Terrain::MISTYTERRAIN if t == PokemonType::DRAGON && defender.is_grounded() => Some(2048),
+        Terrain::GRASSYTERRAIN if t == PokemonType::GRASS && attacker_grounded => Some(5325),
+        Terrain::MISTYTERRAIN if t == PokemonType::DRAGON && defender_grounded => Some(2048),
         _ => None,
     }
 }

@@ -1051,8 +1051,13 @@ pub fn run_battle_fuzz(
                     FuzzAction::Move {
                         slot: mi,
                         target,
-                        struggle,
+                        struggle: struggle_flag,
                     } => {
+                        // PS `side.chooseMove` (`!moves.length`): a request with no
+                        // enabled move is Struggle, whatever move was sent.
+                        let struggle_now = *struggle_flag
+                            || s.active[slot].pokemon_index.is_some_and(|i| no_usable_moves(state, side, slot, i));
+                        let struggle = &struggle_now;
                         if let Some(idx) = s.active[slot].pokemon_index {
                             let p = s.team_member(idx);
                             let (mv, prio) = if *struggle {
@@ -4543,6 +4548,11 @@ fn execute_action_inner(
             if matches!(choice.move_id, Choices::EXPLOSION | Choices::MISTYEXPLOSION | Choices::SELFDESTRUCT) {
                 selfdestruct_user_faint(state, rng, side, slot);
             }
+            // Spit Up's `onAfterMove` still runs after a miss (PS runMove runs
+            // `AfterMove` after `useMove`): the Stockpile volatile ends.
+            if choice.move_id == Choices::SPITUP {
+                end_stockpile(state, side, slot);
+            }
             push_order(move_order);
             return;
         }
@@ -4777,6 +4787,9 @@ fn execute_action_inner(
     // Targets that took a hit this move (PS `targetsCopy` of `afterMoveSecondaryEvent`).
     let mut after_hit_targets: Vec<(Side, usize)> = Vec::new();
     let mut drop_landed = false;
+    // Parting Shot aimed at a Mirror Armor holder (PS `onHit`: `success` is false
+    // when the drops bounced, but `!target.hasAbility('mirrorarmor')` keeps selfSwitch).
+    let mut parting_shot_held = false;
     // A spread boost-only status move: a target that changed nothing is only a
     // per-target failure. The move fails when no target changed (see HITEND below).
     let mut spread_boost_noop = false;
@@ -5386,6 +5399,9 @@ fn execute_action_inner(
             } else if let Some(tidx) = state.side(ts).active[tslot].pokemon_index {
                 let before = state.side(ts).team_boosts[tidx as usize].clone();
                 let boosts = if ts != side { mirror_armor_bounce(state, side, slot, ts, tidx, &b.boosts) } else { b.boosts.clone() };
+                if choice.move_id == Choices::PARTINGSHOT && state.side(ts).team_member(tidx).ability == Abilities::MIRRORARMOR {
+                    parting_shot_held = true;
+                }
                 let landed = apply_boosts_from(state, ts, tidx, &boosts, ts != side, (ts, tslot) != (side, slot));
                 let after = &state.side(ts).team_boosts[tidx as usize];
                 if (before.atk, before.def, before.spa, before.spd, before.spe, before.acc, before.eva)
@@ -7142,8 +7158,14 @@ fn execute_action_inner(
             };
             // Magic Bounce `onAllyTryHitSide`: a reflectable move aimed at the
             // holder's side is used back on the user's side instead.
+            // PS `tryMoveHit` runs `TryHitSide` on the first foe (`targets[0]`,
+            // a Pokemon), and the handler returns early when that foe is
+            // semi-invulnerable (`target.isSemiInvulnerable()`), so no bounce.
             // TODO(PS parity): single-target reflectable moves, Mold Breaker.
-            let bouncer = if choice.flags.reflectable && cs != side {
+            let reference_semi_invulnerable = (0..2)
+                .find(|&sl| state.side(cs).active[sl].pokemon_index.is_some())
+                .is_some_and(|sl| ally_semi_invulnerable(state, cs, sl));
+            let bouncer = if choice.flags.reflectable && cs != side && !reference_semi_invulnerable {
                 (0..2).find(|&sl| {
                     state.side(cs).slot_pokemon(sl).map(|p| p.hp > 0 && p.ability == Abilities::MAGICBOUNCE).unwrap_or(false)
                 })
@@ -8063,8 +8085,9 @@ fn execute_action_inner(
     let self_switch = match choice.move_id {
         Choices::UTURN | Choices::VOLTSWITCH | Choices::FLIPTURN => total_damage > 0 || real_hit,
         Choices::TELEPORT => true,
-        // Parting Shot: only if a stat drop landed (`selfSwitch` is deleted otherwise).
-        Choices::PARTINGSHOT => drop_landed,
+        // Parting Shot: only if a stat drop landed (`selfSwitch` is deleted otherwise),
+        // or the target has Mirror Armor (it never deletes `selfSwitch`).
+        Choices::PARTINGSHOT => drop_landed || parting_shot_held,
         // Chilly Reception (`selfSwitch`): the snow is set and the user switches out.
         Choices::CHILLYRECEPTION => !move_failed,
         _ => false,
@@ -8296,6 +8319,10 @@ fn base_power_with_modifiers(
     fixed_bp: f32,
     // Rivalry: 1 same gender, -1 opposite, 0 when either is genderless.
     rivalry: i8,
+    // PS `isGrounded` for the attacker and the defender (Gravity, Smack Down,
+    // Magnet Rise, Levitate, Air Balloon, Iron Ball): terrain and Gravity checks.
+    attacker_grounded: bool,
+    defender_grounded: bool,
     state: &DoublesState,
 ) -> f32 {
     let dynamic = dynamic_base_power(
@@ -8438,17 +8465,16 @@ fn base_power_with_modifiers(
     }
     // expandingforce / mistyexplosion `onBasePower`: x1.5 in Psychic / Misty
     // Terrain for a grounded user; gravapple: x1.5 under Gravity.
-    let grounded = attacker.is_grounded() || state.gravity.active;
     let move_boost = match choice.move_id {
-        Choices::EXPANDINGFORCE => terrain == crate::engine::state::Terrain::PSYCHICTERRAIN && grounded,
-        Choices::MISTYEXPLOSION => terrain == crate::engine::state::Terrain::MISTYTERRAIN && grounded,
+        Choices::EXPANDINGFORCE => terrain == crate::engine::state::Terrain::PSYCHICTERRAIN && attacker_grounded,
+        Choices::MISTYEXPLOSION => terrain == crate::engine::state::Terrain::MISTYTERRAIN && attacker_grounded,
         Choices::GRAVAPPLE => state.gravity.active,
         _ => false,
     };
     if move_boost {
         mods.push((0, 6144));
     }
-    if let Some(m) = crate::engine::mechanics::terrain_base_power_modifier(terrain, choice, attacker, defender, defender_semi_invulnerable) {
+    if let Some(m) = crate::engine::mechanics::terrain_base_power_modifier(terrain, choice, attacker_grounded, defender_grounded, defender_semi_invulnerable) {
         mods.push((6, m));
     }
     // Helping Hand stacks one x1.5 per use (`helping_hand_mult` = 1.5^n).
@@ -9513,6 +9539,8 @@ fn compute_hit_damage(
                         _ => 0,
                     }
                 },
+                state.gravity.active || slot_grounded(attacker, &att_slot),
+                state.gravity.active || slot_grounded(defender, &state.side(target_side).active[target_slot]),
                 state,
             ),
         };
@@ -11837,6 +11865,25 @@ fn end_turn_disable_moves(state: &DoublesState, rng: &mut Gen5Rng) {
             sort_handler_ties(&mut ts, rng, "speed tie (trap)");
         }
     }
+}
+
+/// PS `pokemon.getMoves()` is empty (every known move has no PP, is disabled,
+/// sealed by a foe's Imprison, or a Status move under Taunt), so `chooseMove`
+/// makes the pokemon Struggle (sim/side.ts `!moves.length`). A locked, charging,
+/// recharging or Encore'd pokemon keeps its locked flow instead.
+fn no_usable_moves(state: &DoublesState, side: Side, slot: usize, idx: PokemonIndex) -> bool {
+    let a = &state.side(side).active[slot];
+    if a.encore.is_some() || a.locked_move.is_some() || a.charging.is_some() || a.uproar > 0 || a.recharging {
+        return false;
+    }
+    let p = state.side(side).team_member(idx);
+    [&p.moves.m0, &p.moves.m1, &p.moves.m2, &p.moves.m3].iter().all(|m| {
+        m.pp <= 0
+            || m.disabled
+            || a.disabled.is_some_and(|(d, _)| d == m.id)
+            || imprison_blocks(state, side, m.id)
+            || (a.taunt > 0 && m.choice.category == MoveCategory::Status)
+    })
 }
 
 /// PS Imprison `onFoeBeforeMove` (data/moves.ts imprison): true when an active

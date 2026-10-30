@@ -2242,7 +2242,12 @@ fn execute_action_inner(
             // frz: a `defrost` move acts (and thaws); else time--, thaw at 0
             // or with THAW_CHANCE.
             PokemonStatus::FREEZE => {
-                if crate::engine::mechanics::THAWS_USER.contains(&move_id) {
+                // PS champions frz.onBeforeMove: a `defrost` move acts without the
+                // roll, except Burn Up from a user that lost its Fire type.
+                let burnup_no_fire = move_id == Choices::BURNUP
+                    && p.types.0 != PokemonType::FIRE
+                    && p.types.1 != PokemonType::FIRE;
+                if crate::engine::mechanics::THAWS_USER.contains(&move_id) && !burnup_no_fire {
                     p.status = PokemonStatus::NONE;
                 } else {
                     p.sleep_turns -= 1;
@@ -2480,8 +2485,10 @@ fn execute_action_inner(
     if state.side(side).team_member(idx).ability == Abilities::LIQUIDVOICE && modified.flags.sound {
         modified.move_type = PokemonType::WATER;
     }
-    // Thunder / Hurricane `onModifyMove`: accuracy 50 in harsh sunlight.
+    // Thunder / Hurricane `onModifyMove`: accuracy 50 in harsh sunlight
+    // (`target.effectiveWeather()`: Cloud Nine / Air Lock suppress it).
     if matches!(modified.move_id, Choices::THUNDER | Choices::HURRICANE)
+        && !weather_suppressed(state)
         && matches!(state.weather.weather_type, Weather::SUN | Weather::HARSHSUN)
     {
         modified.accuracy = 50.0;
@@ -3265,7 +3272,13 @@ fn execute_action_inner(
         );
     }
     // Ally-targeted moves (Dragon Cheer, Coaching, ...) miss a semi-invulnerable ally.
-    if is_ally && !is_self && !is_field && choice.move_id != Choices::HELPINGHAND {
+    // `adjacentAllyOrSelf` moves (Acupressure, Milk Drink) that picked the ally
+    // are ally-targeted too (PS `hitStepInvulnerabilityEvent` for the ally).
+    let ally_or_self_picked_ally = is_self
+        && crate::doubles::move_targets::ps_move_target(&choice.move_id.to_string().to_lowercase())
+            == "adjacentAllyOrSelf"
+        && matches!(resolved, Some((rs, rl)) if rs == side && rl != slot);
+    if (is_ally && !is_self || ally_or_self_picked_ally) && !is_field && choice.move_id != Choices::HELPINGHAND {
         let a = &state.side(side).active[ally_slot];
         if a.charging.is_some_and(|(m, _)| {
             matches!(m, Choices::DIG | Choices::DIVE | Choices::FLY | Choices::BOUNCE | Choices::PHANTOMFORCE | Choices::SHADOWFORCE | Choices::SKYDROP)
@@ -3854,6 +3867,11 @@ fn execute_action_inner(
             // Every target missed: PS `hitStepAccuracy` leaves `atLeastOneFailure`
             // set, so `moveThisTurnResult` is `false` (Stomping Tantrum reads it).
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+            // `selfdestruct: 'always'` faints the user before the accuracy rolls
+            // (PS useMoveInner; ifHit moves faint only when they hit).
+            if matches!(choice.move_id, Choices::EXPLOSION | Choices::MISTYEXPLOSION | Choices::SELFDESTRUCT) {
+                selfdestruct_user_faint(state, rng, side, slot);
+            }
             push_order();
             return;
         }
@@ -3890,6 +3908,9 @@ fn execute_action_inner(
         let mods = accuracy_ability_mods(state, side, idx, target_side, target_slot, choice);
         if !roll_accuracy_boosted(roll_accuracy_of(choice), ab, eb, mods, rng) {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+            if matches!(choice.move_id, Choices::EXPLOSION | Choices::MISTYEXPLOSION | Choices::SELFDESTRUCT) {
+                selfdestruct_user_faint(state, rng, side, slot);
+            }
             push_order();
             return;
         }
@@ -4072,6 +4093,8 @@ fn execute_action_inner(
     let mut move_failed = false;
     let mut heal_fail_event = false;
     let mut hits_done = 0u32;
+    // Some hit of a spread attack landed on a target (PS `damage` array).
+    let mut any_hit_landed = false;
     // Hits that landed on a Substitute only: PS's closing `eachEvent` is skipped
     // (`damage` holds no number).
     let mut sub_hit = false;
@@ -4157,6 +4180,9 @@ fn execute_action_inner(
           Vec::new()
       };
       let mut hit_damage_by = vec![None; hit_targets.len()];
+      // A target took something this hit (damage, or a Substitute hit): PS
+      // `hitStepMoveHitLoop` skips `eachEvent` when every `damage[i]` is false.
+      let mut hit_landed = false;
       let mut hit_pi_by = vec![None; hit_targets.len()];
       for (ti, &(hts, htsl)) in hit_targets.iter().enumerate() {
         target_side = hts;
@@ -4245,6 +4271,7 @@ fn execute_action_inner(
                 && state.side(side).team_member(idx).ability != Abilities::INFILTRATOR
             {
                 sub_hit = true;
+                hit_landed = true;
                 let d = damage.min(sub_hp);
                 state.side_mut(target_side).active[target_slot].substitute_health = sub_hp - d;
                 total_damage = total_damage.saturating_add(d);
@@ -4472,6 +4499,7 @@ fn execute_action_inner(
             }
             total_damage = total_damage.saturating_add(damage);
             hit_damage = Some(damage);
+            hit_landed = true;
             // Berserk `onAfterMoveSecondary`: remember the HP before this move's
             // first hit on the holder. Allies count too (a spread move such as
             // Earthquake): PS only skips `source === target`.
@@ -4517,7 +4545,18 @@ fn execute_action_inner(
             // Drain: heal the attacker for a fraction of the damage dealt.
             if let Some(frac) = choice.drain {
                 let heal = ((damage as f32) * frac).round() as i16;
-                if heal > 0 && state.side(side).active[slot].heal_block == 0 {
+                // Liquid Ooze (on the drained foe) `onSourceTryHeal`: the drainer
+                // takes the amount instead, even at full HP and under Heal Block
+                // (PS data/abilities.ts liquidooze; the Heal event still runs).
+                let ooze = match state.side(target_side).active[target_slot].pokemon_index {
+                    Some(t) => state.side(target_side).team_member(t).ability == Abilities::LIQUIDOOZE,
+                    None => false,
+                };
+                if ooze {
+                    if heal > 0 {
+                        apply_damage(state, side, slot, heal);
+                    }
+                } else if heal > 0 && state.side(side).active[slot].heal_block == 0 {
                     let s = state.side_mut(side);
                     if let Some(p) = s.active[slot].pokemon_index {
                         let pm = s.team_member_mut(p);
@@ -4914,9 +4953,21 @@ fn execute_action_inner(
                 }
                 PokemonVolatileStatus::SMACKDOWN => {
                     // PS data/moves.ts smackdown.condition.onStart / onRestart.
-                    // TODO(PS parity): Fly / Bounce charges (`cancelMove` of the
-                    // holder's queued action) and Telekinesis are not modelled.
+                    // A Fly / Bounce charge on the holder ends first: `removeVolatile`
+                    // of fly / bounce + twoturnmove, `queue.cancelMove`, and it
+                    // counts as applying (both onStart and onRestart).
+                    // TODO(PS parity): Telekinesis is not modelled.
                     if let Some(tidx) = state.side(ts).active[tslot].pokemon_index {
+                        let charge_flight = matches!(
+                            state.side(ts).active[tslot].charging,
+                            Some((Choices::FLY | Choices::BOUNCE, _))
+                        );
+                        if charge_flight {
+                            let sd = state.side_mut(ts);
+                            sd.active[tslot].charging = None;
+                            sd.active[tslot].charge_aborted = false;
+                            state.queue_cancel.push((ts, tslot));
+                        }
                         let sd = state.side(ts);
                         let p = sd.team_member(tidx);
                         let a = &sd.active[tslot];
@@ -4924,12 +4975,13 @@ fn execute_action_inner(
                             // onRestart: no further effect.
                         } else {
                             let mut applies = p.has_type(&PokemonType::FLYING)
-                                || matches!(p.ability, Abilities::LEVITATE | Abilities::EELEVATE);
+                                || matches!(p.ability, Abilities::LEVITATE | Abilities::EELEVATE)
+                                || charge_flight;
                             if p.item == crate::engine::items::Items::IRONBALL
                                 || a.ingrain
                                 || state.gravity.active
                             {
-                                applies = false;
+                                applies = charge_flight;
                             }
                             if a.magnet_rise > 0 {
                                 applies = true;
@@ -6731,7 +6783,13 @@ fn execute_action_inner(
             break;
         }
         hits_done += 1;
-        each_event_update(state, rng);
+        // PS `hitStepMoveHitLoop`: `if (!damage.some(val => !!val || val === 0)) return;`
+        // before the `eachEvent` (a spread attack every target of which was
+        // immune or missed skips it).
+        any_hit_landed |= hit_landed;
+        if !is_spread || !is_attack || hit_landed {
+            each_event_update(state, rng);
+        }
         // Cloud Nine / Air Lock `onEnd` (faint): `eachEvent('WeatherChange')`
         // right after the hit that KO'd the holder. PS data/abilities.ts.
         if weather_suppress_fainted {
@@ -6916,8 +6974,9 @@ fn execute_action_inner(
         }
     }
 
-    // End of PS's hit loop: one more `eachEvent('Update')` (after recoil).
-    if hits_done > 0 {
+    // End of PS's hit loop: one more `eachEvent('Update')` (after recoil), if a
+    // target took something (`if (!damage.some(...)) return damage;`).
+    if hits_done > 0 && (!is_spread || !is_attack || any_hit_landed) {
         each_event_update(state, rng);
     }
 
@@ -10126,6 +10185,15 @@ fn queue_insert_draws(state: &DoublesState, rng: &mut Gen5Rng) {
         }
         inserted.push(speed);
     }
+}
+
+/// PS `useMoveInner` `selfdestruct: 'always'`: the user faints (HP 0) and the
+/// faint is resolved before the move's accuracy / hit steps and its closing
+/// `eachEvent`.
+fn selfdestruct_user_faint(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize) {
+    let hp = state.side(side).slot_pokemon(slot).map(|p| p.hp).unwrap_or(0);
+    apply_damage(state, side, slot, hp);
+    resolve_faints(state, rng, |fs, fsl| (fs, fsl) == (side, slot));
 }
 
 /// PS `eachEvent('Update')` (sim/battle.ts): speed-sorts all actives, which

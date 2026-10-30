@@ -229,6 +229,21 @@ pub struct DamageCtx {
 /// `defender`. Draws the critical and damage rolls from `rng` — in that order,
 /// exactly like pokemon-showdown. Returns `None` if the defender is immune
 /// (no draws are made in that case).
+/// The `runEvent` sorts inside PS `getDamage` the caller draws the handler
+/// ties for (`calculate_damage_with`'s hook), in PS order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DamageEvent {
+    /// `runEvent('ModifyCritRatio', source, target)`, before the crit roll.
+    ModifyCritRatio,
+    /// `runEvent('BasePower', source, target, move, bp, true)`, after the crit roll.
+    BasePower,
+    /// `runEvent('ModifyAtk' / 'ModifySpA', source, target)`, then
+    /// `runEvent('ModifyDef' / 'ModifySpD', target, source)`.
+    ModifyStats,
+    /// `runEvent('ModifyDamage', source, target)` (champions `modifyDamage`).
+    ModifyDamage,
+}
+
 pub fn calculate_damage(
     attacker: &Pokemon,
     defender: &Pokemon,
@@ -236,6 +251,21 @@ pub fn calculate_damage(
     rng: &mut Gen5Rng,
     spread: bool,
     ctx: &DamageCtx,
+) -> Option<DamageOutcome> {
+    calculate_damage_with(attacker, defender, choice, rng, spread, ctx, &mut |_, _| false)
+}
+
+/// `calculate_damage`, calling `on_event` at each PS `getDamage` `runEvent`
+/// (so the caller can draw its handler speed ties at the right place). It
+/// returns whether it drew the ties (else the ModifyDamage fallback below).
+pub fn calculate_damage_with(
+    attacker: &Pokemon,
+    defender: &Pokemon,
+    choice: &Choice,
+    rng: &mut Gen5Rng,
+    spread: bool,
+    ctx: &DamageCtx,
+    on_event: &mut dyn FnMut(DamageEvent, &mut Gen5Rng) -> bool,
 ) -> Option<DamageOutcome> {
     if choice.category == MoveCategory::Status || choice.category == MoveCategory::Switch {
         return Some(DamageOutcome { damage: 0, crit: false });
@@ -276,11 +306,15 @@ pub fn calculate_damage(
     // critical roll (drawn in getDamage, before the damage roll).
     // Standard moves have critRatio 1 (1/24); crit-boosting moves (1/8) are
     // handled via `crit_ratio`; guaranteed-crit moves skip the roll.
+    let _ = on_event(DamageEvent::ModifyCritRatio, rng);
     let cm = crit_mult(choice.crit_ratio + ctx.crit_bonus);
     let mut crit = choice.move_id.guaranteed_crit();
     if !crit && cm > 0 {
         crit = rng.label("crit").random_chance(1, cm as u32);
     }
+    // PS `runEvent('BasePower')` (handlers sorted before Fickle Beam's
+    // `onBasePower` draws below).
+    let _ = on_event(DamageEvent::BasePower, rng);
     if ctx.disguise || ctx.no_crit {
         // disguise / shellarmor onCriticalHit returns false (the roll is still drawn).
         crit = false;
@@ -324,6 +358,7 @@ pub fn calculate_damage(
     if choice.move_id == crate::choices::Choices::FICKLEBEAM && rng.label("fickle beam").random_chance(3, 10) {
         base_power *= 2.0;
     }
+    let _ = on_event(DamageEvent::ModifyStats, rng);
 
     // base damage
     let level_f = level as f64;
@@ -408,17 +443,20 @@ pub fn calculate_damage(
     if ctx.sniper && crit {
         chain_in(6144);
     }
-    // PS `runEvent('ModifyDamage')` -> `speedSort` over the handlers. Friend
-    // Guard holders (subOrder 7, speed > 0) sort before the screens (speed 0);
-    // each tie group shuffles (group - 1 draws).
-    for &g in ctx.friend_guard_ties.iter().filter(|&&g| g > 0) {
-        for m in (2..=g as u32).rev() {
+    // PS `runEvent('ModifyDamage')` -> `speedSort` over the handlers, drawn by
+    // the caller's hook. Fallback (no hook): Friend Guard holders (subOrder 7,
+    // speed > 0) sort before the screens (speed 0); each tie group shuffles
+    // (group - 1 draws).
+    if !on_event(DamageEvent::ModifyDamage, rng) {
+        for &g in ctx.friend_guard_ties.iter().filter(|&&g| g > 0) {
+            for m in (2..=g as u32).rev() {
+                let _ = rng.label("speed tie (move order)").random(m);
+            }
+        }
+        // The screens share order / priority / subOrder (4) / speed, so they shuffle.
+        for m in (2..=ctx.screen_handlers as u32).rev() {
             let _ = rng.label("speed tie (move order)").random(m);
         }
-    }
-    // The screens share order / priority / subOrder (4) / speed, so they shuffle.
-    for m in (2..=ctx.screen_handlers as u32).rev() {
-        let _ = rng.label("speed tie (move order)").random(m);
     }
     if !crit && ((ctx.reflect && is_physical) || (ctx.light_screen && !is_physical)) {
         chain_in(2732);

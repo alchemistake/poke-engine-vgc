@@ -265,6 +265,21 @@ pub fn run_event_ties(
     target: (Side, usize),
     source: Option<(Side, usize)>,
 ) {
+    run_event_ties_on_effect(state, rng, event, target, source, None);
+}
+
+/// `run_event_ties` for a `runEvent(..., onEffect = true)` call: the source
+/// effect's own `on<Event>` handler (a move's `onBasePower`) is added first,
+/// held by the target, with its `on<Event>Priority` (`effect_priority`).
+/// A Move effect has subOrder 0 (PS resolvePriority `effectTypeOrder`).
+pub fn run_event_ties_on_effect(
+    state: &DoublesState,
+    rng: &mut Gen5Rng,
+    event: &str,
+    target: (Side, usize),
+    source: Option<(Side, usize)>,
+    effect_priority: Option<i32>,
+) {
     if LEFT_TO_RIGHT.contains(&event) {
         return;
     }
@@ -272,6 +287,10 @@ pub fn run_event_ties(
     let mut hs: Vec<Key> = Vec::new();
     let mut dbg: Vec<String> = Vec::new();
     let (ts, tsl) = target;
+    if let Some(priority) = effect_priority {
+        hs.push(Key { order: NO_ORDER, priority, speed: cached_speed(state, ts, tsl), sub_order: 0 });
+        dbg.push(format!("on{} (move)", event));
+    }
     let on = format!("on{}", event);
     let target_active = state.side(ts).active[tsl].pokemon_index.is_some();
     let source_active = source.is_some_and(|(s, sl)| state.side(s).active[sl].pokemon_index.is_some());

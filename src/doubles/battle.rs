@@ -1840,7 +1840,7 @@ pub fn run_battle_fuzz(
                                 let a = state.side(side).team_member(ni).ability;
                                 if !gastro_cant_suppress(a) {
                                     if a != Abilities::NONE {
-                                        mold_breaker_forget(side, ni);
+                                        mold_breaker_forget(state, side, ni);
                                         state.side_mut(side).team_member_mut(ni).ability = Abilities::NONE;
                                     }
                                     state.side_mut(side).active[slot].gastro_acid = true;
@@ -2501,12 +2501,6 @@ thread_local! {
     static PRESSURE_EXTRA: std::cell::Cell<i8> = const { std::cell::Cell::new(-1) };
 }
 
-thread_local! {
-    /// Abilities blanked by Mold Breaker for the running move: (side, team
-    /// index, real ability). PS `battle.suppressingAbility(target)`.
-    static MOLD_SAVED: std::cell::RefCell<Vec<(Side, PokemonIndex, Abilities)>> = const { std::cell::RefCell::new(Vec::new()) };
-}
-
 /// PS `flags.breakable` (data/abilities.ts, champions mod).
 fn is_breakable(a: Abilities) -> bool {
     crate::doubles::ability_flags::has_flag(a, crate::doubles::ability_flags::BREAKABLE)
@@ -2526,7 +2520,7 @@ fn mold_breaker_suppress(state: &mut DoublesState, action: &Action) -> bool {
     if !ignores || action.recharge {
         return false;
     }
-    let mut saved = Vec::new();
+    let mut saved = arrayvec::ArrayVec::new();
     for sd in [Side::One, Side::Two] {
         for sl in 0..2 {
             if (sd, sl) == (action.side, action.slot) {
@@ -2541,14 +2535,14 @@ fn mold_breaker_suppress(state: &mut DoublesState, action: &Action) -> bool {
         }
     }
     let any = !saved.is_empty();
-    MOLD_SAVED.with(|m| *m.borrow_mut() = saved);
+    state.mold_saved = saved;
     any
 }
 
 /// Undo `mold_breaker_suppress`. An ability changed during the move (Simple
 /// Beam, Worry Seed, a switch-out reset, ...) is kept.
 fn mold_breaker_restore(state: &mut DoublesState) {
-    for (sd, i, a) in MOLD_SAVED.with(|m| std::mem::take(&mut *m.borrow_mut())) {
+    for (sd, i, a) in std::mem::take(&mut state.mold_saved) {
         let pm = state.side_mut(sd).team_member_mut(i);
         if pm.ability == Abilities::NONE {
             pm.ability = a;
@@ -2602,8 +2596,11 @@ fn status_on_try_hit_fails(
 }
 
 pub(crate) fn real_ability(state: &DoublesState, side: Side, idx: PokemonIndex) -> Abilities {
-    MOLD_SAVED
-        .with(|m| m.borrow().iter().find(|&&(s, i, _)| s == side && i == idx).map(|&(_, _, a)| a))
+    state
+        .mold_saved
+        .iter()
+        .find(|&&(s, i, _)| s == side && i == idx)
+        .map(|&(_, _, a)| a)
         .unwrap_or(state.side(side).team_member(idx).ability)
 }
 
@@ -2626,8 +2623,8 @@ fn gastro_cant_suppress(a: Abilities) -> bool {
 
 /// Drop the Mold Breaker blank of a pokemon whose ability really became
 /// No Ability (Gastro Acid), so the restore keeps it suppressed.
-fn mold_breaker_forget(side: Side, idx: PokemonIndex) {
-    MOLD_SAVED.with(|m| m.borrow_mut().retain(|&(s, i, _)| (s, i) != (side, idx)));
+fn mold_breaker_forget(state: &mut DoublesState, side: Side, idx: PokemonIndex) {
+    state.mold_saved.retain(|&mut (s, i, _)| (s, i) != (side, idx));
 }
 
 /// Pressure `onDeductPP`: one extra PP per Pressure foe among the move's
@@ -7573,7 +7570,7 @@ fn execute_action_inner(
                         if matches!(a, Abilities::CLOUDNINE | Abilities::AIRLOCK) {
                             let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
                         }
-                        mold_breaker_forget(target_side, tidx);
+                        mold_breaker_forget(state, target_side, tidx);
                         state.side_mut(target_side).team_member_mut(tidx).ability = Abilities::NONE;
                     }
                     state.side_mut(target_side).active[target_slot].gastro_acid = true;
@@ -12511,14 +12508,18 @@ enum ResidualKind {
 fn sync_vol_order(state: &mut DoublesState) {
     for side in [Side::One, Side::Two] {
         for slot in 0..2 {
-            let present: Vec<String> = crate::doubles::events::pokemon_effects(state, side, slot)
-                .into_iter()
-                .filter(|(_, k)| *k == crate::doubles::event_handlers::HandlerKind::Volatile)
-                .map(|(id, _)| id)
-                .collect();
+            let mut present: [&'static str; 64] = [""; 64];
+            let mut n = 0;
+            crate::doubles::events::visit_pokemon_effects(state, side, slot, |e| {
+                if let crate::doubles::events::Effect::Id(id, crate::doubles::event_handlers::HandlerKind::Volatile) = e {
+                    present[n] = id;
+                    n += 1;
+                }
+            });
+            let present = &present[..n];
             let order = &mut state.side_mut(side).active[slot].vol_order;
             order.retain(|o| present.contains(o));
-            for id in present {
+            for &id in present {
                 if !order.contains(&id) {
                     order.push(id);
                 }
@@ -12664,11 +12665,11 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             // collected in PS `pokemon.volatiles` key (insertion) order: the
             // order tied handlers enter `speedSort`. PS sim/battle.ts
             // findPokemonEventHandlers (`for (const id in pokemon.volatiles)`).
-            let mut vols: Vec<(String, i64, i32, ResidualKind)> = Vec::new();
+            let mut vols: Vec<(&'static str, i64, i32, ResidualKind)> = Vec::new();
             // An aborted charge lost `twoturnmove` (`onMoveAborted`), whose
             // `onEnd` also removed the move's own volatile (Dig, Fly, ...).
             if let Some((m, _)) = a.charging.filter(|_| !a.charge_aborted) {
-                vols.push(("twoturnmove".to_string(), NO_ORDER, 2, ResidualKind::Marker)); // twoturnmove
+                vols.push(("twoturnmove", NO_ORDER, 2, ResidualKind::Marker)); // twoturnmove
                 if matches!(
                     m,
                     Choices::DIG
@@ -12681,114 +12682,114 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
                 ) {
                     // Gone with an aborted charge: `twoturnmove.onEnd` removes the
                     // move's volatile. PS data/conditions.ts twoturnmove.
-                    vols.push((m.to_string().to_lowercase(), NO_ORDER, 2, ResidualKind::Marker)); // the move's own condition
+                    vols.push((crate::doubles::events::semi_invulnerable_id(m).unwrap(), NO_ORDER, 2, ResidualKind::Marker)); // the move's own condition
                 }
             }
             if a.twoturn_fired && a.charging.is_none() {
-                vols.push(("twoturnmove".to_string(), NO_ORDER, 2, ResidualKind::Marker)); // twoturnmove (duration 2, last turn)
+                vols.push(("twoturnmove", NO_ORDER, 2, ResidualKind::Marker)); // twoturnmove (duration 2, last turn)
             }
             if a.protected || a.endure {
-                vols.push((if a.protected { crate::doubles::events::PROTECT_IDS[(a.protect_kind as usize).min(5)] } else { "endure" }.to_string(), NO_ORDER, 2, ResidualKind::Marker)); // protect / endure
+                vols.push((if a.protected { crate::doubles::events::PROTECT_IDS[(a.protect_kind as usize).min(5)] } else { "endure" }, NO_ORDER, 2, ResidualKind::Marker)); // protect / endure
             }
             if a.stall.is_some() {
-                vols.push(("stall".to_string(), NO_ORDER, 2, ResidualKind::Stall(side, slot)));
+                vols.push(("stall", NO_ORDER, 2, ResidualKind::Stall(side, slot)));
             }
             if a.flinched {
-                vols.push(("flinch".to_string(), NO_ORDER, 2, ResidualKind::Marker));
+                vols.push(("flinch", NO_ORDER, 2, ResidualKind::Marker));
             }
             if a.helping_hand_mult > 1.0 {
-                vols.push(("helpinghand".to_string(), NO_ORDER, 2, ResidualKind::Marker));
+                vols.push(("helpinghand", NO_ORDER, 2, ResidualKind::Marker));
             }
             if a.focus_punch {
-                vols.push(("focuspunch".to_string(), NO_ORDER, 2, ResidualKind::Marker)); // focuspunch (duration 1)
+                vols.push(("focuspunch", NO_ORDER, 2, ResidualKind::Marker)); // focuspunch (duration 1)
             }
             if a.chilly_reception {
-                vols.push(("chillyreception".to_string(), NO_ORDER, 2, ResidualKind::Marker)); // chillyreception (duration 1)
+                vols.push(("chillyreception", NO_ORDER, 2, ResidualKind::Marker)); // chillyreception (duration 1)
             }
             // PS data/moves.ts electrify.condition / beakblast.condition: duration 1.
             if a.electrify {
-                vols.push(("electrify".to_string(), NO_ORDER, 2, ResidualKind::Marker));
+                vols.push(("electrify", NO_ORDER, 2, ResidualKind::Marker));
             }
             if a.beak_blast {
-                vols.push(("beakblast".to_string(), NO_ORDER, 2, ResidualKind::Marker));
+                vols.push(("beakblast", NO_ORDER, 2, ResidualKind::Marker));
             }
             if a.recharging {
-                vols.push(("mustrecharge".to_string(), NO_ORDER, 2, ResidualKind::Marker)); // mustrecharge
+                vols.push(("mustrecharge", NO_ORDER, 2, ResidualKind::Marker)); // mustrecharge
             }
             if a.salt_cure {
-                vols.push(("saltcure".to_string(), 13, 2, ResidualKind::SaltCure(side, slot)));
+                vols.push(("saltcure", 13, 2, ResidualKind::SaltCure(side, slot)));
             }
             if a.partial_trap.is_some() {
-                vols.push(("partiallytrapped".to_string(), 13, 2, ResidualKind::PartialTrap(side, slot)));
+                vols.push(("partiallytrapped", 13, 2, ResidualKind::PartialTrap(side, slot)));
             }
             if a.yawn > 0 {
-                vols.push(("yawn".to_string(), 23, 2, ResidualKind::Yawn(side, slot)));
+                vols.push(("yawn", 23, 2, ResidualKind::Yawn(side, slot)));
             }
             if a.throat_chop > 0 {
-                vols.push(("throatchop".to_string(), 22, 2, ResidualKind::ThroatChop(side, slot)));
+                vols.push(("throatchop", 22, 2, ResidualKind::ThroatChop(side, slot)));
             }
             if a.taunt > 0 {
-                vols.push(("taunt".to_string(), 15, 2, ResidualKind::Taunt(side, slot)));
+                vols.push(("taunt", 15, 2, ResidualKind::Taunt(side, slot)));
             }
             if a.magnet_rise > 0 {
-                vols.push(("magnetrise".to_string(), 18, 2, ResidualKind::MagnetRise(side, slot)));
+                vols.push(("magnetrise", 18, 2, ResidualKind::MagnetRise(side, slot)));
             }
             if a.cursed {
-                vols.push(("curse".to_string(), 12, 2, ResidualKind::Curse(side, slot)));
+                vols.push(("curse", 12, 2, ResidualKind::Curse(side, slot)));
             }
             if a.encore.is_some() {
-                vols.push(("encore".to_string(), 16, 2, ResidualKind::Encore(side, slot)));
+                vols.push(("encore", 16, 2, ResidualKind::Encore(side, slot)));
             }
             if a.ingrain {
-                vols.push(("ingrain".to_string(), 7, 2, ResidualKind::Ingrain(side, slot)));
+                vols.push(("ingrain", 7, 2, ResidualKind::Ingrain(side, slot)));
             }
             if a.syrup_bomb.is_some() {
-                vols.push(("syrupbomb".to_string(), 14, 2, ResidualKind::SyrupBomb(side, slot)));
+                vols.push(("syrupbomb", 14, 2, ResidualKind::SyrupBomb(side, slot)));
             }
             if a.octolock.is_some() {
-                vols.push(("octolock".to_string(), 14, 2, ResidualKind::Octolock(side, slot)));
+                vols.push(("octolock", 14, 2, ResidualKind::Octolock(side, slot)));
             }
             if a.heal_block > 0 {
-                vols.push(("healblock".to_string(), 20, 2, ResidualKind::HealBlock(side, slot)));
+                vols.push(("healblock", 20, 2, ResidualKind::HealBlock(side, slot)));
             }
             if a.roost_orig.is_some() {
-                vols.push(("roost".to_string(), 25, 2, ResidualKind::Roost(side, slot)));
+                vols.push(("roost", 25, 2, ResidualKind::Roost(side, slot)));
             }
             if a.leech_seed.is_some() {
-                vols.push(("leechseed".to_string(), 8, 2, ResidualKind::LeechSeed(side, slot)));
+                vols.push(("leechseed", 8, 2, ResidualKind::LeechSeed(side, slot)));
             }
             if a.perish > 0 {
-                vols.push(("perishsong".to_string(), 24, 2, ResidualKind::Perish(side, slot)));
+                vols.push(("perishsong", 24, 2, ResidualKind::Perish(side, slot)));
             }
             if a.follow_me > 0 {
-                vols.push(("followme".to_string(), NO_ORDER, 2, ResidualKind::Marker)); // followme / ragepowder (duration 1)
+                vols.push(("followme", NO_ORDER, 2, ResidualKind::Marker)); // followme / ragepowder (duration 1)
             }
             if a.aqua_ring {
-                vols.push(("aquaring".to_string(), 6, 2, ResidualKind::AquaRing(side, slot)));
+                vols.push(("aquaring", 6, 2, ResidualKind::AquaRing(side, slot)));
             }
             if a.counter_vol.is_some() {
-                vols.push(("counter".to_string(), NO_ORDER, 2, ResidualKind::Marker)); // counter (duration 1)
+                vols.push(("counter", NO_ORDER, 2, ResidualKind::Marker)); // counter (duration 1)
             }
             if a.mirror_coat_vol.is_some() {
-                vols.push(("mirrorcoat".to_string(), NO_ORDER, 2, ResidualKind::Marker)); // mirrorcoat (duration 1)
+                vols.push(("mirrorcoat", NO_ORDER, 2, ResidualKind::Marker)); // mirrorcoat (duration 1)
             }
             if a.ally_switch.is_some() {
-                vols.push(("allyswitch".to_string(), NO_ORDER, 2, ResidualKind::AllySwitch(side, slot)));
+                vols.push(("allyswitch", NO_ORDER, 2, ResidualKind::AllySwitch(side, slot)));
             }
             if a.lock_on.is_some() {
-                vols.push(("lockon".to_string(), NO_ORDER, 2, ResidualKind::LockOn(side, slot)));
+                vols.push(("lockon", NO_ORDER, 2, ResidualKind::LockOn(side, slot)));
             }
             if a.uproar > 0 {
-                vols.push(("uproar".to_string(), 28, 1, ResidualKind::Uproar(side, slot)));
+                vols.push(("uproar", 28, 1, ResidualKind::Uproar(side, slot)));
             }
             if a.locked_move.is_some() {
-                vols.push(("lockedmove".to_string(), NO_ORDER, 2, ResidualKind::Locked(side, slot)));
+                vols.push(("lockedmove", NO_ORDER, 2, ResidualKind::Locked(side, slot)));
             }
             if a.disabled.is_some() {
-                vols.push(("disable".to_string(), 17, 2, ResidualKind::Disable(side, slot)));
+                vols.push(("disable", 17, 2, ResidualKind::Disable(side, slot)));
             }
-            let rank = |id: &String| a.vol_order.iter().position(|o| o == id).unwrap_or(usize::MAX);
-            vols.sort_by_key(|v| rank(&v.0));
+            let rank = |id: &str| a.vol_order.iter().position(|&o| o == id).unwrap_or(usize::MAX);
+            vols.sort_by_key(|v| rank(v.0));
             for (_, order, sub, kind) in vols {
                 push(order, speed, sub, kind);
             }
@@ -12830,13 +12831,24 @@ fn sort_residual_handlers(
     rng: &mut Gen5Rng,
     label: &'static str,
 ) -> Vec<ResidualHandler> {
+    sort_residual_slice(&mut hs, rng, label);
+    hs
+}
+
+/// `sort_residual_handlers` in place.
+fn sort_residual_slice(hs: &mut [ResidualHandler], rng: &mut Gen5Rng, label: &'static str) {
     let key = |h: &ResidualHandler| (h.order, -(h.priority as i64), -(h.speed as i64), h.sub_order as i64);
     let mut sorted = 0usize;
+    let mut next_indexes: smallvec::SmallVec<[usize; 16]> = smallvec::SmallVec::new();
     while sorted + 1 < hs.len() {
-        let mut next_indexes = vec![sorted];
+        next_indexes.clear();
+        next_indexes.push(sorted);
         for i in (sorted + 1)..hs.len() {
             match key(&hs[i]).cmp(&key(&hs[next_indexes[0]])) {
-                std::cmp::Ordering::Less => next_indexes = vec![i],
+                std::cmp::Ordering::Less => {
+                    next_indexes.clear();
+                    next_indexes.push(i);
+                }
                 std::cmp::Ordering::Equal => next_indexes.push(i),
                 std::cmp::Ordering::Greater => {}
             }
@@ -12847,11 +12859,10 @@ fn sort_residual_handlers(
             }
         }
         if next_indexes.len() > 1 {
-            shuffle(&mut hs, sorted, sorted + next_indexes.len(), rng, label);
+            shuffle(hs, sorted, sorted + next_indexes.len(), rng, label);
         }
         sorted += next_indexes.len();
     }
-    hs
 }
 
 /// PS team preview `commitChoices`: `queue.sort()` over the 8 `team` actions
@@ -13018,10 +13029,14 @@ fn attacker_key(side: Side, idx: u8) -> u8 {
     ((side as u8) << 4) | idx
 }
 
-fn sorted_actives(state: &DoublesState, rng: &mut Gen5Rng, label: &'static str) -> Vec<(Side, usize)> {
+fn sorted_actives(
+    state: &DoublesState,
+    rng: &mut Gen5Rng,
+    label: &'static str,
+) -> arrayvec::ArrayVec<(Side, usize), 4> {
     // Actives in slot order; a pokemon that fainted in the current hit loop
     // still counts until faints are resolved (`unresolved_faints`).
-    let mut hs: Vec<ResidualHandler> = Vec::new();
+    let mut hs: arrayvec::ArrayVec<ResidualHandler, 4> = arrayvec::ArrayVec::new();
     for (s, sl) in [(Side::One, 0usize), (Side::One, 1), (Side::Two, 0), (Side::Two, 1)] {
         let speed = if state.side(s).slot_pokemon(sl).map(|p| p.hp > 0).unwrap_or(false) {
             cached_speed(state, s, sl)
@@ -13052,8 +13067,8 @@ fn sorted_actives(state: &DoublesState, rng: &mut Gen5Rng, label: &'static str) 
     if crate::doubles::debug::flags().actives {
         eprintln!("ACTIVES {} {:?}", label, hs.iter().map(|h| (h.kind.clone(), h.speed)).collect::<Vec<_>>());
     }
-    sort_residual_handlers(hs, rng, label)
-        .into_iter()
+    sort_residual_slice(&mut hs, rng, label);
+    hs.into_iter()
         .filter_map(|h| match h.kind {
             ResidualKind::Status(s, sl) => Some((s, sl)),
             _ => None,

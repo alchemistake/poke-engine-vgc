@@ -26,6 +26,20 @@ const NO_ORDER: i64 = 4294967296;
 /// PS volatile id per `ActiveSlot::protect_kind`.
 pub const PROTECT_IDS: [&str; 6] = ["protect", "kingsshield", "spikyshield", "banefulbunker", "silktrap", "burningbulwark"];
 
+/// The volatile id a charging semi-invulnerable move adds (PS ids).
+pub fn semi_invulnerable_id(m: Choices) -> Option<&'static str> {
+    match m {
+        Choices::DIG => Some("dig"),
+        Choices::DIVE => Some("dive"),
+        Choices::FLY => Some("fly"),
+        Choices::BOUNCE => Some("bounce"),
+        Choices::PHANTOMFORCE => Some("phantomforce"),
+        Choices::SHADOWFORCE => Some("shadowforce"),
+        Choices::SKYDROP => Some("skydrop"),
+        _ => None,
+    }
+}
+
 /// One effect of a pokemon reported by `visit_pokemon_effects`.
 #[derive(Clone, Copy)]
 pub enum Effect {
@@ -79,17 +93,7 @@ pub fn visit_pokemon_effects(state: &DoublesState, side: Side, slot: usize, mut 
     vol(a.recharging, "mustrecharge");
     if let Some((m, _)) = a.charging.filter(|_| !a.charge_aborted) {
         vol(true, "twoturnmove");
-        let semi_invulnerable = match m {
-            Choices::DIG => Some("dig"),
-            Choices::DIVE => Some("dive"),
-            Choices::FLY => Some("fly"),
-            Choices::BOUNCE => Some("bounce"),
-            Choices::PHANTOMFORCE => Some("phantomforce"),
-            Choices::SHADOWFORCE => Some("shadowforce"),
-            Choices::SKYDROP => Some("skydrop"),
-            _ => None,
-        };
-        if let Some(id) = semi_invulnerable {
+        if let Some(id) = semi_invulnerable_id(m) {
             vol(true, id);
         }
     }
@@ -357,10 +361,30 @@ struct EventTable {
     side_names: [&'static str; 3],
 }
 
+/// FNV-1a: the effect map is hit for every effect of every slot in every
+/// event sort, and its keys are short ids (SipHash cost ~2% of run time).
+#[derive(Default)]
+struct Fnv(u64);
+
+impl std::hash::Hasher for Fnv {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        let mut h = if self.0 == 0 { 0xcbf2_9ce4_8422_2325 } else { self.0 };
+        for &b in bytes {
+            h = (h ^ b as u64).wrapping_mul(0x100_0000_01b3);
+        }
+        self.0 = h;
+    }
+}
+
+type FxMap = std::collections::HashMap<(u8, &'static str), u8, std::hash::BuildHasherDefault<Fnv>>;
+
 struct Tables {
     /// Bit of each pokemon effect (kind, PS id) that has a handler in some
     /// event table. Effects without one never join a sort.
-    fx: std::collections::HashMap<(u8, &'static str), u8>,
+    fx: FxMap,
     /// Bit of each ability (indexed by `Abilities as usize`), or `NO_BIT`.
     ability_bit: Vec<u8>,
     events: Vec<EventTable>,
@@ -385,7 +409,7 @@ fn leak(s: String) -> &'static str {
 fn build_tables() -> Tables {
     use crate::engine::abilities::Abilities;
     use std::str::FromStr;
-    let mut fx: std::collections::HashMap<(u8, &'static str), u8> = std::collections::HashMap::new();
+    let mut fx = FxMap::default();
     let mut ability_bit: Vec<u8> = Vec::new();
     let mut events = Vec::new();
     for ev in Event::ALL {
@@ -499,7 +523,7 @@ struct Collector<'a> {
     ev: &'a EventTable,
     state: &'a DoublesState,
     slots: [Option<SlotEffects>; 4],
-    hs: Vec<Key>,
+    hs: smallvec::SmallVec<[Key; 16]>,
     debug: Option<Vec<String>>,
 }
 
@@ -516,6 +540,9 @@ impl Collector<'_> {
         }
         let speed = cached_speed(self.state, side, slot);
         for &bit in &fx.bits[..fx.n as usize] {
+            if self.ev.poke_mask[prefix] & (1u128 << bit) == 0 {
+                continue;
+            }
             for h in self.ev.poke[prefix].iter().filter(|h| h.bit == bit) {
                 let speed = if h.raw_speed {
                     self.state.side(side).slot_pokemon(slot).map(|p| p.speed as i32).unwrap_or(speed)
@@ -538,11 +565,6 @@ impl Collector<'_> {
             }
         }
     }
-}
-
-thread_local! {
-    /// Reused key buffer for `run_event_ties` (no allocation per call).
-    static KEYS: std::cell::RefCell<Vec<Key>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 fn alive(state: &DoublesState, side: Side, slot: usize) -> bool {
@@ -588,10 +610,9 @@ pub fn run_event_ties_on_effect(
         ev,
         state,
         slots: [None; 4],
-        hs: KEYS.with(|k| std::mem::take(&mut *k.borrow_mut())),
+        hs: smallvec::SmallVec::new(),
         debug: crate::doubles::debug::flags().events.then(Vec::new),
     };
-    c.hs.clear();
     let (ts, tsl) = target;
     if let Some(priority) = effect_priority {
         c.hs.push(Key { order: NO_ORDER, priority, speed: cached_speed(state, ts, tsl), sub_order: 0 });
@@ -644,7 +665,6 @@ pub fn run_event_ties_on_effect(
         }
     }
     speed_sort_keys(&mut c.hs, rng);
-    KEYS.with(|k| *k.borrow_mut() = c.hs);
 }
 
 /// PS `speedSort` (selection sort, shuffling each group of equal keys).
@@ -658,7 +678,7 @@ fn speed_sort_keys(hs: &mut [Key], rng: &mut Gen5Rng) {
     };
     let mut sorted = 0usize;
     // Indices of the smallest keys found so far (reused across rounds).
-    let mut next: Vec<usize> = Vec::new();
+    let mut next: smallvec::SmallVec<[usize; 16]> = smallvec::SmallVec::new();
     while sorted + 1 < hs.len() {
         next.clear();
         next.push(sorted);

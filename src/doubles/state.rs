@@ -166,7 +166,7 @@ pub struct ActiveSlot {
     pub perish: u8,
     /// PS ids of the volatiles in insertion order (PS `pokemon.volatiles` key
     /// order), kept by `sync_vol_order`. Orders the Residual handlers.
-    pub vol_order: Vec<String>,
+    pub vol_order: Vec<&'static str>,
     /// `flashfire` volatile: Fire moves x1.5 (ModifyAtk / ModifySpA).
     pub flash_fire: bool,
     /// `charge` volatile: the next Electric move has doubled power.
@@ -595,6 +595,9 @@ pub struct DoublesState {
     /// resolves faints after the loop, so its per-hit `eachEvent` still sorts
     /// them: (side, slot, team index).
     pub unresolved_faints: Vec<(crate::doubles::state::Side, usize, PokemonIndex)>,
+    /// Abilities blanked by Mold Breaker for the running move: (side, team
+    /// index, real ability). PS `battle.suppressingAbility(target)`.
+    pub mold_saved: arrayvec::ArrayVec<(Side, PokemonIndex, Abilities), 3>,
     /// The `disabled` volatile each pokemon had when it fainted. PS keeps the
     /// volatiles until `faintMessages`, so a DamagingHit handler that runs after
     /// a Destiny Bond KO of its attacker still sees the attacker's Disable.
@@ -1251,6 +1254,7 @@ impl DoublesState {
             },
             turn: 1,
             unresolved_faints: Vec::new(),
+            mold_saved: arrayvec::ArrayVec::new(),
             faint_disabled: Vec::new(),
             db_alive_pending: Vec::new(),
             pending_disguise: Vec::new(),

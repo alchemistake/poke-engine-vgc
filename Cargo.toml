@@ -29,6 +29,8 @@ lto = "fat"
 codegen-units = 1
 
 [dependencies]
+arrayvec = "0.7"
+smallvec = "1"
 dashmap = "6.1.0"
 clap = { version = "4.5.4", features = ["derive"] }
 rand = "0.9.3"

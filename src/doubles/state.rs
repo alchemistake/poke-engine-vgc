@@ -209,6 +209,9 @@ pub struct ActiveSlot {
     pub move_result_last_turn: Option<bool>,
     /// `allyswitch` volatile: (counter, duration).
     pub ally_switch: Option<(u16, u8)>,
+    /// `lockon` volatile on the user (PS data/moves.ts lockon): the locked foe
+    /// (side, team index) and the remaining duration. Its moves always hit it.
+    pub lock_on: Option<(Side, PokemonIndex, u8)>,
     /// `uproar` volatile: remaining duration (0 = none). Locks the move.
     pub uproar: u8,
     /// `stall` volatile (Protect / Detect / Endure counter): (counter, duration).
@@ -334,6 +337,7 @@ impl ActiveSlot {
             move_result_this_turn: None,
             move_result_last_turn: None,
             ally_switch: None,
+            lock_on: None,
             uproar: 0,
             stall: None,
             endure: false,

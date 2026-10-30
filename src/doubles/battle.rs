@@ -2809,9 +2809,11 @@ fn execute_action_inner(
     // have an `onModifyMove` handler with identical sort keys, so the two
     // tie and shuffle (one draw) while both are active.
     // Wonder Room's subOrder is 2 until its handler has run once (`state.target`
-    // unset), so the very first event after it starts does not tie.
-    if state.gravity.active && state.wonder_room.active {
-        if state.wonder_room_seen {
+    // is set by `runEvent` just before the callback, sim/battle.ts; the
+    // `ModifyMove` callback runs for every move while Wonder Room is up, whether
+    // or not Gravity is). So the first event with both active may already tie.
+    if state.wonder_room.active {
+        if state.gravity.active && state.wonder_room_seen {
             let _ = rng.label("speed tie (move order)").random(2);
         }
         state.wonder_room_seen = true;
@@ -3715,6 +3717,10 @@ fn execute_action_inner(
                 if st.side(ts).active[tsl].glaive_rush {
                     return true;
                 }
+                // Lock-On `onSourceAccuracy`: the user's locked foe always gets hit.
+                if lock_on_hits(st, side, slot, ts, tsl) {
+                    return true;
+                }
                 // Minimize `onAccuracy`: minimize-flagged moves always hit it.
                 if crate::engine::mechanics::minimize_move(choice.move_id) && st.side(ts).active[tsl].minimize {
                     return true;
@@ -3748,6 +3754,7 @@ fn execute_action_inner(
         && !choice.ohko
         && move_ty != "all"
         && !toxic_hits
+        && !lock_on_hits(state, side, slot, target_side, target_slot)
         && !state.side(target_side).active[target_slot].glaive_rush
         && !(crate::engine::mechanics::minimize_move(choice.move_id)
             && state.side(target_side).active[target_slot].minimize)
@@ -4207,6 +4214,26 @@ fn execute_action_inner(
                             }
                         }
                     }
+                }
+                // Stench `onModifyMove` pushes its 10% flinch after the move's own
+                // entries, and the rolls run on a Substitute hit too (PS
+                // data/abilities.ts stench; the flinch itself lands on nothing).
+                // Shield Dust (the target's ability) filters it out first.
+                let sub_shield_dust = state.side(target_side).active[target_slot].pokemon_index.is_some_and(|tidx| {
+                    state.side(target_side).team_member(tidx).ability == Abilities::SHIELDDUST
+                        && !crate::engine::abilities::ignores_target_ability(state.side(side).team_member(idx), choice, &Abilities::SHIELDDUST)
+                });
+                let has_flinch = choice
+                    .secondaries
+                    .as_ref()
+                    .is_some_and(|ss| ss.iter().any(|e| matches!(e.effect, Effect::Flinch | Effect::VolatileStatus(PokemonVolatileStatus::FLINCH))));
+                if state.side(side).team_member(idx).ability == Abilities::STENCH
+                    && choice.category != MoveCategory::Status
+                    && !sheer
+                    && !sub_shield_dust
+                    && !has_flinch
+                {
+                    let _ = rng.label("secondary").random_chance(10, 100);
                 }
                 continue;
             }
@@ -4797,10 +4824,13 @@ fn execute_action_inner(
                         // `addVolatile` fails (already confused, Own Tempo): a status
                         // move's `-fail` ends the hit loop with no `eachEvent`.
                         let own_tempo = state.side(ts).slot_pokemon(tslot).map(|p| p.ability == Abilities::OWNTEMPO).unwrap_or(false);
+                        // Misty Terrain `onTryAddVolatile` (PS data/conditions.ts) also
+                        // makes the add fail: `-activate` and "did nothing" (no eachEvent).
+                        let misty_blocked = misty_terrain_blocks_confusion(state, ts, tslot);
                         // Swagger / Flatter keep their boost, so they do not fail.
                         if choice.category == MoveCategory::Status
                             && choice.boost.is_none()
-                            && (own_tempo || state.side(ts).active[tslot].confusion > 0)
+                            && (own_tempo || misty_blocked || state.side(ts).active[tslot].confusion > 0)
                         {
                             move_failed = true;
                         }
@@ -5894,7 +5924,21 @@ fn execute_action_inner(
                 sd.active.swap(0, 1);
                 sd.ps_order.swap(0, 1);
             } else {
+                // PS data/moves.ts allyswitch.onHit returns NOT_FAIL after its
+                // `-fail`: the hit still runs its two `eachEvent('Update')`s.
                 move_failed = true;
+                each_event_update(state, rng);
+                each_event_update(state, rng);
+            }
+        }
+
+        // Lock-On `onTryHit` (fails while the user already has it) and `onHit`
+        // (`source.addVolatile('lockon', target)`, duration 2). No draws.
+        if choice.move_id == Choices::LOCKON && ti == 0 && !move_failed {
+            if state.side(side).active[slot].lock_on.is_some() {
+                move_failed = true;
+            } else if let Some(tidx) = state.side(target_side).active[target_slot].pokemon_index {
+                state.side_mut(side).active[slot].lock_on = Some((target_side, tidx, 2));
             }
         }
 
@@ -7357,14 +7401,19 @@ fn safeguard_blocks_confusion(
         && state.side(side).team_member(idx).ability != Abilities::INFILTRATOR
 }
 
+/// Misty Terrain `onTryAddVolatile` (PS data/conditions.ts): a grounded
+/// pokemon can't be confused. TODO(PS parity): semi-invulnerable exemption.
+fn misty_terrain_blocks_confusion(state: &DoublesState, ts: Side, tslot: usize) -> bool {
+    let Some(p) = state.side(ts).slot_pokemon(tslot) else { return false };
+    state.terrain.terrain_type == crate::engine::state::Terrain::MISTYTERRAIN && (p.is_grounded() || state.gravity.active)
+}
+
 fn try_confuse(state: &mut DoublesState, rng: &mut Gen5Rng, ts: Side, tslot: usize) {
     let Some(p) = state.side(ts).slot_pokemon(tslot) else { return };
     if p.hp <= 0 || p.ability == Abilities::OWNTEMPO || state.side(ts).active[tslot].confusion > 0 {
         return;
     }
-    // Misty Terrain `onTryAddVolatile`: grounded pokemon can't be confused.
-    // TODO(PS parity): semi-invulnerable exemption.
-    if state.terrain.terrain_type == crate::engine::state::Terrain::MISTYTERRAIN && (p.is_grounded() || state.gravity.active) {
+    if misty_terrain_blocks_confusion(state, ts, tslot) {
         return;
     }
     let t = rng.label("volatile duration").random_range(2, 6) as u8;
@@ -7550,12 +7599,19 @@ fn status_immune_ex(
     {
         return true;
     }
+    // Infiltrator (`move.infiltrates`, PS data/abilities.ts infiltrator): the
+    // move skips the target's Substitute (`substitute.onTryPrimaryHit`) and,
+    // against a foe, Safeguard (`safeguard.onSetStatus`).
+    let infiltrates = state
+        .side(src_side)
+        .slot_pokemon(src_slot)
+        .is_some_and(|p| p.ability == Abilities::INFILTRATOR);
     let ctx = crate::engine::mechanics::StatusContext {
         sun: matches!(state.weather.weather_type, Weather::SUN | Weather::HARSHSUN),
         misty_terrain: state.terrain.terrain_type == crate::engine::state::Terrain::MISTYTERRAIN,
         electric_terrain: state.terrain.terrain_type == crate::engine::state::Terrain::ELECTRICTERRAIN,
-        safeguard: safeguard_blocks && state.side(ts).side_conditions.safeguard > 0,
-        substitute: substitute_blocks && state.side(ts).active[tslot].substitute_health > 0,
+        safeguard: safeguard_blocks && state.side(ts).side_conditions.safeguard > 0 && !(infiltrates && ts != src_side),
+        substitute: substitute_blocks && state.side(ts).active[tslot].substitute_health > 0 && !infiltrates,
         from_opponent,
         sleep_clause: false,
         source_ability: state
@@ -9436,6 +9492,8 @@ enum ResidualKind {
     Terrain,
     /// `allyswitch` duration countdown (duration 2).
     AllySwitch(Side, usize),
+    /// `lockon` duration countdown (duration 2, subOrder 2).
+    LockOn(Side, usize),
     /// `uproar` duration countdown (order 28, subOrder 1).
     Uproar(Side, usize),
     /// `stall` duration countdown (duration 2).
@@ -9687,6 +9745,9 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             if a.ally_switch.is_some() {
                 push(NO_ORDER, speed, 2, ResidualKind::AllySwitch(side, slot));
             }
+            if a.lock_on.is_some() {
+                push(NO_ORDER, speed, 2, ResidualKind::LockOn(side, slot));
+            }
             if a.uproar > 0 {
                 push(28, speed, 1, ResidualKind::Uproar(side, slot));
             }
@@ -9919,6 +9980,15 @@ fn end_turn_disable_moves(state: &DoublesState, rng: &mut Gen5Rng) {
 /// equal speed tie and shuffle (PS `findEventHandlers` -> `speedSort`). Called
 /// at `TryMove` and at each `Damage` event. Mold Breaker only suppresses the
 /// handler later, so it does not change the draws.
+/// PS data/moves.ts lockon `onSourceAccuracy`: the user's Lock-On on this foe
+/// makes every move of the user against it hit (no accuracy roll).
+fn lock_on_hits(state: &DoublesState, side: Side, slot: usize, ts: Side, tsl: usize) -> bool {
+    match state.side(side).active[slot].lock_on {
+        Some((ls, lidx, _)) => ls == ts && state.side(ts).active[tsl].pokemon_index == Some(lidx),
+        None => false,
+    }
+}
+
 /// Accuracy of the accuracy roll. Explosion, Mind Blown, Misty Explosion and
 /// Self-Destruct are accuracy 100 in PS (data/moves.ts) but the shared move
 /// table leaves it unset; the doubles roll uses PS's value.
@@ -10487,6 +10557,12 @@ fn end_of_turn(
                         refresh_mimicry(state);
                         let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
                     }
+                }
+            }
+            ResidualKind::LockOn(side, slot) => {
+                let a = &mut state.side_mut(side).active[slot];
+                if let Some((ts, tidx, d)) = a.lock_on {
+                    a.lock_on = if d <= 1 { None } else { Some((ts, tidx, d - 1)) };
                 }
             }
             ResidualKind::AllySwitch(side, slot) => {

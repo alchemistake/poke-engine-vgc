@@ -783,6 +783,17 @@ fn plan_queue_change(
         charge.target_loc = 0;
         let _ = ps_get_target_queue_insert(state, rng, &charge);
     }
+    // `resolveAction` (not midTurn): `runEvent('FractionalPriority')` before the
+    // target (Quick Draw's 3/10 roll). The fuzzer labels it "queue insert"
+    // (insertChoice is on its stack). PS sim/battle-queue.ts resolveAction.
+    let ability = state.side(side).team_member(idx).ability;
+    a.fractional = match crate::engine::mechanics::fractional_priority(ability, a.choice.category) {
+        Some(crate::engine::mechanics::FractionalPriority::Fixed(f)) => f,
+        Some(crate::engine::mechanics::FractionalPriority::QuickDraw) => {
+            rng.label("speed tie (queue insert)").random_chance(3, 10) as i8
+        }
+        None => 0,
+    };
     if let Some((ts, tsl)) = ps_get_target_queue_insert(state, rng, &a) {
         a.target_loc = if ts == a.side { -(tsl as i8 + 1) } else { tsl as i8 + 1 };
         a.target = tsl;
@@ -794,7 +805,8 @@ fn plan_queue_change(
     let mut first: Option<usize> = None;
     let mut last: Option<usize> = None;
     for (k, cur) in rest.iter().enumerate() {
-        let cmp = (cur.priority, cur.speed).cmp(&(a.priority, a.speed)); // new first when cur is "less"
+        // PS comparePriority: priority, then fractionalPriority, then speed.
+        let cmp = (cur.priority, cur.fractional, cur.speed).cmp(&(a.priority, a.fractional, a.speed)); // new first when cur is "less"
         // compared(new, cur) <= 0 <=> new sorts before or ties with cur
         if cmp != std::cmp::Ordering::Greater && first.is_none() {
             first = Some(k);
@@ -4813,6 +4825,7 @@ fn execute_action_inner(
     // `eachEvent('WeatherChange')` — a speed sort. Set when such a holder
     // faints this move; consumed after the per-hit eachEvent.
     let mut weather_suppress_fainted = false;
+    let mut weather_suppress_holder: Option<(Side, usize)> = None;
     // Targets that took a hit this move (PS `targetsCopy` of `afterMoveSecondaryEvent`).
     let mut after_hit_targets: Vec<(Side, usize)> = Vec::new();
     let mut drop_landed = false;
@@ -5263,6 +5276,7 @@ fn execute_action_inner(
                         Some(Abilities::CLOUDNINE) | Some(Abilities::AIRLOCK)
                     ) {
                         weather_suppress_fainted = true;
+                        weather_suppress_holder.get_or_insert((target_side, target_slot));
                     }
                 // Target fainted. `onSourceAfterFaint` (Moxie, Chilling / Grim
                 // Neigh) is queued for the batch's `resolve_faints`, which boosts
@@ -7167,6 +7181,18 @@ fn execute_action_inner(
             }
         }
 
+        // Healing Wish / Lunar Dance `slotCondition`: `addSlotCondition` returns
+        // false while the slot still holds an unused one, so the hit does nothing
+        // (`damage` false: no hit-loop `eachEvent`); the user still faints
+        // (`selfdestruct: 'ifHit'` is checked before). PS sim/battle-actions.ts
+        // runMoveEffects, sim/side.ts addSlotCondition.
+        if matches!(choice.move_id, Choices::HEALINGWISH | Choices::LUNARDANCE)
+            && ti == 0
+            && state.side(side).healing_wish_slot[slot]
+        {
+            move_failed = true;
+        }
+
         // Lock-On `onTryHit` (fails while the user already has it) and `onHit`
         // (`source.addVolatile('lockon', target)`, duration 2). No draws.
         if choice.move_id == Choices::LOCKON && ti == 0 && !move_failed {
@@ -7866,7 +7892,30 @@ fn execute_action_inner(
         // right after the hit that KO'd the holder. PS data/abilities.ts.
         if weather_suppress_fainted {
             weather_suppress_fainted = false;
+            // PS runs it from `faintMessages` (the holder's ability `End`), in
+            // `faintQueue` order: the faints queued before the holder are already
+            // processed (fainted, out of `getAllActive`), among them the user of a
+            // `selfdestruct: 'always'` move (queued in useMoveInner, before the hit).
+            // PS sim/battle.ts faintMessages, sim/battle-actions.ts useMoveInner.
+            let saved = state.unresolved_faints.clone();
+            if let Some(pos) = weather_suppress_holder
+                .and_then(|h| saved.iter().position(|&(fs, fsl, _)| (fs, fsl) == h))
+            {
+                state.unresolved_faints = saved[pos..].to_vec();
+            }
+            let user_queued_first = matches!(
+                choice.move_id,
+                Choices::EXPLOSION | Choices::SELFDESTRUCT | Choices::MISTYEXPLOSION
+            );
+            let user_hp = state.side(side).team_member(idx).hp;
+            if user_queued_first {
+                state.side_mut(side).team_member_mut(idx).hp = 0;
+            }
             each_event_update(state, rng);
+            if user_queued_first {
+                state.side_mut(side).team_member_mut(idx).hp = user_hp;
+            }
+            state.unresolved_faints = saved;
         }
         // PS `hitStepMoveHitLoop` (after the per-hit eachEvent): `if (!pokemon.hp &&
         // targets.length === 1) break;`. A user KO'd by the hit (Rough Skin, Rocky Helmet,
@@ -12931,7 +12980,20 @@ fn end_of_turn(
     // The `instaswitch` actions are speed-sorted (by the switching pokemon's
     // speed; exact ties shuffle: PS `queue.sort`), which also fixes the order
     // the replacements enter.
-    // (Repeated slots are consecutive replacement rounds, not one queue.)
+    // Repeated slots are consecutive replacement rounds (a replacement that
+    // fainted to entry hazards is replaced again): each round is its own
+    // `instaswitch` queue + `runSwitch`, with its own eachEvent / switch-in
+    // sorts (PS sim/battle.ts runAction, one request per round). The round
+    // loop below keeps the block's original indentation.
+    let mut rounds: Vec<Vec<(Side, usize, usize)>> = Vec::new();
+    for &e in &pending_vec {
+        match rounds.last_mut() {
+            Some(r) if !r.iter().any(|&(s2, l2, _)| (s2, l2) == (e.0, e.1)) => r.push(e),
+            _ => rounds.push(vec![e]),
+        }
+    }
+    for round in rounds {
+    let mut pending_vec = round;
     let distinct = pending_vec
         .iter()
         .enumerate()
@@ -13019,6 +13081,12 @@ fn end_of_turn(
     // On-switch abilities (Intimidate) for each newly switched-in pokemon.
     // TODO(PS parity): `fieldEvent('SwitchIn')` handler ties.
     for (side, slot, _) in pending_switches {
+        // `fieldEvent` runs `resolveFaints` after each handler: a replacement KO'd
+        // by entry hazards is `fainted` and its ability's Start is skipped.
+        // PS sim/battle.ts fieldEvent.
+        if !state.side(*side).slot_pokemon(*slot).is_some_and(|p| p.hp > 0) {
+            continue;
+        }
         if apply_on_switch_abilities(state, *side, *slot, rng) {
             let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
         }
@@ -13026,6 +13094,7 @@ fn end_of_turn(
     if !pending_switches.is_empty() {
         each_event_update(state, rng);
     }
+    } // replacement rounds
 
     // PS `endTurn`: `runEvent('DisableMove', pokemon)` for every active. The
     // handler list (the pokemon's own `onDisableMove` volatiles / ability,

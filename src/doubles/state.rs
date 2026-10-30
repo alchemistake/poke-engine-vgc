@@ -537,6 +537,11 @@ pub struct DoublesState {
     /// wiped out at once, PS gives the win to the side of the last one
     /// (`checkWin(faintData)`, sim/battle.ts).
     pub faint_log: Vec<Side>,
+    /// Attacker of a move hit that fainted a pokemon, with its
+    /// `onSourceAfterFaint` ability (Moxie, Chilling Neigh, Grim Neigh): (side,
+    /// slot, team index, ability). PS runs that event once per `resolveFaints`
+    /// batch, with `length` = the batch size, and only if the battle is not over.
+    pub pending_after_faint: Option<(Side, usize, PokemonIndex, Abilities)>,
     /// Encore `onStart` (champions): the target's queued move becomes this move
     /// (`queue.changeAction`), planned during the move and applied by the battle loop.
     pub queue_change: Option<crate::doubles::battle::QueuePlan>,
@@ -1133,6 +1138,7 @@ impl DoublesState {
             turn: 1,
             unresolved_faints: Vec::new(),
             faint_log: Vec::new(),
+            pending_after_faint: None,
         };
         state
     }

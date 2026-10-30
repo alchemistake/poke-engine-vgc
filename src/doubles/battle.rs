@@ -242,9 +242,30 @@ fn resolve_faints(state: &mut DoublesState, rng: &mut Gen5Rng, pick: impl Fn(Sid
         false
     });
     state.unresolved_faints = faints;
+    let batch = resolved.len();
     // PS `Faint` event: `onAllyFaint` of the fainted pokemon's active allies.
     for (side, idx) in resolved {
         ally_faint_copy(state, rng, side, idx);
+    }
+    // PS `resolveFaints`: `checkWin` runs before `AfterFaint`, so a batch that
+    // ends the battle boosts nobody. Otherwise `onSourceAfterFaint` runs once
+    // with `length` = the batch size (PS sim/battle.ts resolveFaints,
+    // data/abilities.ts moxie / chillingneigh / grimneigh).
+    if batch > 0 {
+        if let Some((side, slot, idx, ab)) = state.pending_after_faint.take() {
+            if state.battle_is_over() == 0.0
+                && state.side(side).active[slot].pokemon_index == Some(idx)
+                && state.side(side).slot_pokemon(slot).map(|p| p.hp > 0).unwrap_or(false)
+            {
+                let n = batch as i8;
+                let b = match ab {
+                    Abilities::MOXIE | Abilities::CHILLINGNEIGH => StatBoosts { attack: n, ..Default::default() },
+                    Abilities::GRIMNEIGH => StatBoosts { special_attack: n, ..Default::default() },
+                    _ => StatBoosts::default(),
+                };
+                apply_boosts(state, side, idx, &b, false);
+            }
+        }
     }
 }
 
@@ -4363,21 +4384,13 @@ fn execute_action_inner(
                         weather_suppress_fainted = true;
                     }
                 // Target fainted. `onSourceAfterFaint` (Moxie, Chilling / Grim
-                // Neigh) boosts the attacker if it is still on the field. A
-                // faint that ends the battle runs `checkWin` first, so no
-                // `AfterFaint` (and no boost) happens.
-                if (target_side, target_slot) != (side, slot) && state.battle_is_over() == 0.0 {
-                    // PS `onSourceAfterFaint`: also fires for a fainted ally.
+                // Neigh) is queued for the batch's `resolve_faints`, which boosts
+                // the attacker once by the batch size (or not at all when the
+                // batch ends the battle). PS also fires it for a fainted ally.
+                if (target_side, target_slot) != (side, slot) {
                     let ab = state.side(side).team_member(idx).ability;
-                    let b = match ab {
-                        Abilities::MOXIE | Abilities::CHILLINGNEIGH => Some(StatBoosts { attack: 1, ..Default::default() }),
-                        Abilities::GRIMNEIGH => Some(StatBoosts { special_attack: 1, ..Default::default() }),
-                        _ => None,
-                    };
-                    if let Some(b) = b {
-                        if state.side(side).slot_pokemon(slot).map(|p| p.hp > 0).unwrap_or(false) {
-                            apply_boosts(state, side, idx, &b, false);
-                        }
+                    if matches!(ab, Abilities::MOXIE | Abilities::CHILLINGNEIGH | Abilities::GRIMNEIGH) {
+                        state.pending_after_faint = Some((side, slot, idx, ab));
                     }
                 }
                 }
@@ -6823,8 +6836,10 @@ fn execute_action_inner(
     // right after this action, from the controller's switch answer.
     // TODO(PS parity): Parting Shot (only if a drop landed), Baton Pass
     // (copies boosts), Shed Tail (Substitute), Chilly Reception (snow).
+    // PS `moveHit`: `selfSwitch` sets `didSomething` whenever the target was hit
+    // (a 0-damage hit such as a Disguise bust still switches the user out).
     let self_switch = match choice.move_id {
-        Choices::UTURN | Choices::VOLTSWITCH | Choices::FLIPTURN => total_damage > 0,
+        Choices::UTURN | Choices::VOLTSWITCH | Choices::FLIPTURN => total_damage > 0 || real_hit,
         Choices::TELEPORT => true,
         // Parting Shot: only if a stat drop landed (`selfSwitch` is deleted otherwise).
         Choices::PARTINGSHOT => drop_landed,
@@ -7677,6 +7692,21 @@ fn yawn_volatile_blocked(state: &DoublesState, ts: Side, tslot: usize, src_side:
     if (0..2).any(|sl| state.side(ts).slot_pokemon(sl).is_some_and(|p| p.hp > 0 && p.ability == Abilities::SWEETVEIL)) {
         return true;
     }
+    // Electric Terrain `onTryAddVolatile` (PS data/moves.ts electricterrain):
+    // a grounded target that is not semi-invulnerable blocks yawn (`return null`).
+    let t = &state.side(ts).active[tslot];
+    let semi_invulnerable = t.charging.filter(|_| !t.charge_aborted).is_some_and(|(c, _)| {
+        matches!(
+            c,
+            Choices::FLY | Choices::BOUNCE | Choices::DIVE | Choices::DIG | Choices::PHANTOMFORCE | Choices::SHADOWFORCE | Choices::SKYDROP
+        )
+    });
+    if state.terrain.terrain_type == crate::engine::state::Terrain::ELECTRICTERRAIN
+        && (slot_grounded(target, t) || state.gravity.active)
+        && !semi_invulnerable
+    {
+        return true;
+    }
     // Safeguard `onTryAddVolatile` (PS data/moves.ts safeguard): yawn from
     // another pokemon is blocked.
     (ts, tslot) != (src_side, src_slot)
@@ -7855,7 +7885,8 @@ fn compute_hit_damage(
             guts: attacker.ability == Abilities::GUTS,
             attack_mod: {
             let m = crate::engine::mechanics::attacker_stat_modifier(attacker, choice);
-            let m = if att_slot.flash_fire && choice.move_type == PokemonType::FIRE {
+            // PS flashfire `onModifyAtk`: `attacker.hasAbility('flashfire')`.
+            let m = if att_slot.flash_fire && attacker.ability == Abilities::FLASHFIRE && choice.move_type == PokemonType::FIRE {
                 (m * 6144 + 2048) >> 12
             } else {
                 m
@@ -8485,6 +8516,11 @@ fn ability_update_cures(state: &mut DoublesState, side: Side, slot: usize) {
         let p = state.side(side).team_member(idx);
         (p.ability, p.status, p.hp)
     };
+    // PS flashfire `onEnd` -> `removeVolatile('flashfire')` when the ability
+    // changes or is suppressed (Skill Swap, Entrainment, Receiver copies).
+    if ability != Abilities::FLASHFIRE {
+        state.side_mut(side).active[slot].flash_fire = false;
+    }
     if hp <= 0 {
         return;
     }
@@ -9318,6 +9354,9 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
         // PS `setSpecies` (switch-in): `attackedBy = []`.
         s.team_member_mut(idx).attacked_by.clear();
         s.damaged_by[idx as usize].clear();
+        // PS battle-actions.ts switchIn: `moveSlot.used = false` for every move
+        // of the incoming pokemon (Last Resort's `onTry` reads it).
+        s.moves_used[idx as usize] = [false; 4];
         // `setSpecies`: `storedStats` back to the base stats (Guard / Power Split).
         if let Some(st) = s.saved_stats[idx as usize].take() {
             let p = s.team_member_mut(idx);

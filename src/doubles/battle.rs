@@ -1589,6 +1589,11 @@ pub fn run_battle_fuzz(
                                 a.confusion = confusion;
                                 a.substitute_health = sub;
                             }
+                            // `copyVolatileFrom` runs inside `switchIn`, before the
+                            // `runSwitch` insertChoice's `updateSpeed`: the passed
+                            // Speed boosts are in the cached speed. PS
+                            // sim/battle-actions.ts switchIn, sim/battle-queue.ts insertChoice.
+                            update_speed(state);
                         }
                         each_event_update(state, rng);
                         let _ = sorted_actives(state, rng, "speed tie (switch-in)");
@@ -4569,10 +4574,16 @@ fn execute_action_inner(
         && !is_field
     {
         let sc = &mut state.side_mut(target_side).side_conditions;
+        let broke = sc.crafty_shield > 0 || sc.mat_block > 0 || sc.quick_guard > 0 || sc.wide_guard > 0;
         sc.crafty_shield = 0;
         sc.mat_block = 0;
         sc.quick_guard = 0;
         sc.wide_guard = 0;
+        // PS `if (broke) delete target.volatiles['stall']` (gen >= 6): a broken
+        // guard also drops the target's stall counter.
+        if broke {
+            state.side_mut(target_side).active[target_slot].stall = None;
+        }
     }
     if matches!(
         choice.move_id,
@@ -4688,6 +4699,14 @@ fn execute_action_inner(
         && !bypasses_substitute(choice)
         && state.side(side).team_member(idx).ability != Abilities::INFILTRATOR
     {
+        // The move's own `onTryHit` runs first (`spreadMoveHit` singleEvent
+        // 'TryHit', before `tryPrimaryHitEvent`): a false there ends the hit
+        // loop with no `eachEvent`. PS sim/battle-actions.ts spreadMoveHit.
+        if sub_target_on_try_hit_fails(state, choice.move_id, side, slot, target_side, target_slot) {
+            state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+            push_order(move_order);
+            return;
+        }
         // `onTryPrimaryHit` returns null (not false): the hit loop still runs its
         // `eachEvent('Update')` (once in the loop, once after it).
         each_event_update(state, rng);
@@ -11502,7 +11521,7 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
                 if !a.charge_aborted {
                     push(NO_ORDER, speed, 2, ResidualKind::Marker); // twoturnmove
                 }
-                if matches!(
+                if !a.charge_aborted && matches!(
                     m,
                     Choices::DIG
                         | Choices::DIVE
@@ -11512,6 +11531,8 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
                         | Choices::SHADOWFORCE
                         | Choices::SKYDROP
                 ) {
+                    // Gone with an aborted charge: `twoturnmove.onEnd` removes the
+                    // move's volatile. PS data/conditions.ts twoturnmove.
                     push(NO_ORDER, speed, 2, ResidualKind::Marker); // the move's own condition
                 }
             }
@@ -11859,6 +11880,9 @@ fn sorted_actives(state: &DoublesState, rng: &mut Gen5Rng, label: &'static str) 
             kind: ResidualKind::Status(s, sl),
         });
     }
+    if std::env::var("PE_DEBUG_ACTIVES").is_ok() {
+        eprintln!("ACTIVES {} {:?}", label, hs.iter().map(|h| (h.kind.clone(), h.speed)).collect::<Vec<_>>());
+    }
     sort_residual_handlers(hs, rng, label)
         .into_iter()
         .filter_map(|h| match h.kind {
@@ -11892,6 +11916,28 @@ fn end_turn_disable_moves(state: &DoublesState, rng: &mut Gen5Rng) {
         if state.side(s).team_member(idx).has_type(&PokemonType::GHOST) {
             run_event_ties(state, rng, "MaybeTrapPokemon", (s, sl), None);
         }
+    }
+}
+
+/// A status move's own `onTryHit` returns false for this target (checked
+/// before a Substitute blocks it). PS data/moves.ts entrainment, gastroacid,
+/// lockon, simplebeam, worryseed, yawn `onTryHit`.
+/// TODO(PS parity): Electrify (`queue.willMove`).
+fn sub_target_on_try_hit_fails(state: &DoublesState, mv: Choices, side: Side, slot: usize, ts: Side, tsl: usize) -> bool {
+    use crate::engine::mechanics::{cant_suppress, no_entrain};
+    let Some(ti) = state.side(ts).active[tsl].pokemon_index else { return false };
+    let t_ab = real_ability(state, ts, ti);
+    let Some(si) = state.side(side).active[slot].pokemon_index else { return false };
+    let s_ab = real_ability(state, side, si);
+    match mv {
+        Choices::ENTRAINMENT => {
+            (ts, tsl) == (side, slot) || t_ab == s_ab || cant_suppress(t_ab) || t_ab == Abilities::TRUANT || no_entrain(s_ab)
+        }
+        Choices::GASTROACID | Choices::WORRYSEED => cant_suppress(t_ab),
+        Choices::SIMPLEBEAM => cant_suppress(t_ab) || matches!(t_ab, Abilities::SIMPLE | Abilities::TRUANT),
+        Choices::LOCKON => state.side(side).active[slot].lock_on.is_some(),
+        Choices::YAWN => state.side(ts).team_member(ti).status != PokemonStatus::NONE,
+        _ => false,
     }
 }
 

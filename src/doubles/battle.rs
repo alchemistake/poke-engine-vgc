@@ -3599,6 +3599,9 @@ fn execute_action_inner(
         }
         smart_hits = smart_target && spread_list.len() == 2;
         if spread_list.is_empty() {
+            // Every target missed: PS `hitStepAccuracy` leaves `atLeastOneFailure`
+            // set, so `moveThisTurnResult` is `false` (Stomping Tantrum reads it).
+            state.side_mut(side).active[slot].move_result_this_turn = Some(false);
             push_order();
             return;
         }
@@ -4309,7 +4312,7 @@ fn execute_action_inner(
             } else if let Some(tidx) = state.side(ts).active[tslot].pokemon_index {
                 let before = state.side(ts).team_boosts[tidx as usize].clone();
                 let boosts = if ts != side { mirror_armor_bounce(state, side, slot, ts, tidx, &b.boosts) } else { b.boosts.clone() };
-                apply_boosts(state, ts, tidx, &boosts, ts != side);
+                apply_boosts_from(state, ts, tidx, &boosts, ts != side, (ts, tslot) != (side, slot));
                 let after = &state.side(ts).team_boosts[tidx as usize];
                 if (before.atk, before.def, before.spa, before.spd, before.spe, before.acc, before.eva)
                     != (after.atk, after.def, after.spa, after.spd, after.spe, after.acc, after.eva)
@@ -4744,10 +4747,12 @@ fn execute_action_inner(
                     try_partial_trap(state, rng, ts, tslot, side, idx)
                 }
                 PokemonVolatileStatus::TRAPPED => {
-                    // PS `addVolatile('trapped')` returns false while present: the
-                    // move fails (Block / Mean Look `onTryHit`).
+                    // PS `addVolatile('trapped')` returns false while present, and
+                    // Ghost types are immune (data/typechart.ts `trapped`, checked by
+                    // `runStatusImmunity`): the move fails (Block / Mean Look `onHit`).
                     let a = &state.side(ts).active[tslot];
-                    if a.trapped || !state.side(ts).slot_pokemon(tslot).map(|p| p.hp > 0).unwrap_or(false) {
+                    let ghost = state.side(ts).slot_pokemon(tslot).is_some_and(|p| p.has_type(&PokemonType::GHOST));
+                    if a.trapped || ghost || !state.side(ts).slot_pokemon(tslot).map(|p| p.hp > 0).unwrap_or(false) {
                         move_failed = true;
                     } else {
                         state.side_mut(ts).active[tslot].trapped = true;
@@ -5982,7 +5987,7 @@ fn execute_action_inner(
                     Effect::Boost(b) => {
                         if let Some(tidx) = state.side(ts).active[tslot].pokemon_index {
                             let b = if ts != side { mirror_armor_bounce(state, side, slot, ts, tidx, b) } else { b.clone() };
-                            apply_boosts(state, ts, tidx, &b, ts != side);
+                            apply_boosts_from(state, ts, tidx, &b, ts != side, (ts, tslot) != (side, slot));
                         }
                     }
                     Effect::Status(st) => {
@@ -8256,6 +8261,21 @@ fn apply_boosts(
     b: &StatBoosts,
     source_is_foe: bool,
 ) {
+    apply_boosts_from(state, side, idx, b, source_is_foe, source_is_foe);
+}
+
+/// `apply_boosts` with the source split in two: `source_is_foe` gates the
+/// Defiant / Competitive reaction (foe-only), `source_is_other` gates the
+/// stat-drop blockers. PS `TryBoost` abilities (Clear Body, Hyper Cutter, ...)
+/// check `source && target === source`, so an ally's drop is blocked too.
+fn apply_boosts_from(
+    state: &mut DoublesState,
+    side: Side,
+    idx: PokemonIndex,
+    b: &StatBoosts,
+    source_is_foe: bool,
+    source_is_other: bool,
+) {
     // PS `boost` (sim/battle.ts): `if (this.gen > 5 && !target.side.foePokemonLeft())
     // return false`. Once the other side has no Pokemon left, nothing is boosted
     // (a self-boost after the last KO, e.g. Scale Shot's selfBoost).
@@ -8301,7 +8321,7 @@ fn apply_boosts(
     }
     // PS `runEvent('TryBoost')`: stat-drop blockers, only for boosts from
     // another pokemon (`if (source && target === source) return`).
-    if source_is_foe {
+    if source_is_other {
         // Flower Veil `onAllyTryBoost`: Grass types (holder and ally) can't have
         // stats lowered by others. PS data/abilities.ts flowerveil.
         let grass = {
@@ -9745,6 +9765,10 @@ fn end_of_turn(
                 };
     let p = state.side(side).team_member(idx);
             let dmg: i16 = match p.status {
+                // PS data/conditions.ts brn.onResidual: `baseMaxhp / 16`, then
+                // data/abilities.ts heatproof.onDamage (`effect.id === 'brn'`):
+                // half of it, before the int clamp.
+                PokemonStatus::BURN if p.ability == Abilities::HEATPROOF => (p.maxhp / 32) as i16,
                 PokemonStatus::BURN => (p.maxhp / 16) as i16,
                 PokemonStatus::POISON => (p.maxhp / 8) as i16,
                 PokemonStatus::TOXIC => {
@@ -10117,8 +10141,14 @@ fn end_of_turn(
                 }
             }
             ResidualKind::Uproar(side, slot) => {
+                // PS data/moves.ts uproar.condition.onResidual: a Throat Chop volatile
+                // on the holder ends Uproar (`removeVolatile`, no countdown).
                 let a = &mut state.side_mut(side).active[slot];
-                a.uproar = a.uproar.saturating_sub(1);
+                if a.throat_chop > 0 {
+                    a.uproar = 0;
+                } else {
+                    a.uproar = a.uproar.saturating_sub(1);
+                }
             }
             ResidualKind::Stall(side, slot) => {
                 let a = &mut state.side_mut(side).active[slot];

@@ -22375,6 +22375,9 @@ fn apply_champions_modifiers(moves: &mut HashMap<Choices, Choice>) {
     // data/mods/champions/moves.ts flag overrides.
     moves.get_mut(&Choices::CRUSHCLAW).unwrap().flags.slicing = true;
     moves.get_mut(&Choices::DIRECLAW).unwrap().flags.slicing = true;
+    // PS data/moves.ts direclaw has no `critRatio` (default 1; Dire Claw is not a
+    // high-crit move).
+    moves.get_mut(&Choices::DIRECLAW).unwrap().crit_ratio = 1;
     moves.get_mut(&Choices::METALCLAW).unwrap().flags.slicing = true;
     moves.get_mut(&Choices::DOUBLESHOCK).unwrap().flags.punch = true;
     moves.get_mut(&Choices::DRAGONCHEER).unwrap().flags.sound = true;

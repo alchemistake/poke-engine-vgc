@@ -1427,6 +1427,9 @@ pub fn run_battle_fuzz(
                         // queued actions (`queue.cancelAction(oldActive)`).
                         let old_pi = state.side(side).active[slot].pokemon_index;
                         switch_in(state, side, slot, position);
+                        // PS `insertChoice` -> `pokemon.updateSpeed()` for the incoming
+                        // pokemon: its `speed` is fresh for `runSwitch`'s speedSort.
+                        update_speed(state);
                         if let Some(op) = old_pi {
                             let mut k = queue_start;
                             while k < actions.len() {
@@ -1569,6 +1572,24 @@ fn ps_get_target_queue_insert(state: &DoublesState, rng: &mut Gen5Rng, action: &
     ps_get_target_inner(state, rng, action, "speed tie (queue insert)")
 }
 
+/// The move type `RedirectTarget` sees. PS `useMoveInner` runs the move's
+/// `onModifyType` (singleEvent) and `ModifyType` handlers before `getMoveTargets`:
+/// Aura Wheel is Dark for Morpeko-Hangry and Electric otherwise (data/moves.ts
+/// aurawheel), and Electrify (priority -2) makes any move but Struggle Electric.
+fn redirect_move_type(state: &DoublesState, action: &Action) -> PokemonType {
+    if action.choice.move_id == Choices::AURAWHEEL {
+        return if state.side(action.side).team_member(action.pokemon_index).id == crate::pokemon::PokemonName::MORPEKOHANGRY {
+            PokemonType::DARK
+        } else {
+            PokemonType::ELECTRIC
+        };
+    }
+    if state.side(action.side).active[action.slot].electrify && action.choice.move_id != Choices::STRUGGLE {
+        return PokemonType::ELECTRIC;
+    }
+    action.choice.move_type
+}
+
 /// PS `priorityEvent('RedirectTarget')` (sim/pokemon.ts `getMoveTargets`):
 /// Lightning Rod / Storm Drain `onAnyRedirectTarget` pull an Electric / Water
 /// move with a single-target type to the holder (any other active that is a
@@ -1603,7 +1624,7 @@ fn redirect_target(state: &DoublesState, action: &Action, target: (Side, usize))
             return (foe, sl);
         }
     }
-    let want = match action.choice.move_type {
+    let want = match redirect_move_type(state, action) {
         PokemonType::ELECTRIC => Abilities::LIGHTNINGROD,
         PokemonType::WATER => Abilities::STORMDRAIN,
         _ => return target,
@@ -4187,6 +4208,23 @@ fn execute_action_inner(
         return;
     }
 
+    // Acupressure (PS target `adjacentAllyOrSelf`; the engine's move target is
+    // User, so the block above skips it): an ally holding a Substitute fails it
+    // in `TryPrimaryHit` (status moves have no damage: `getDamage` is falsy),
+    // unless the user is an Infiltrator. The user itself is not blocked.
+    if choice.move_id == Choices::ACUPRESSURE
+        && state.side(side).team_member(idx).ability != Abilities::INFILTRATOR
+    {
+        if let Some((ts, tsl)) = resolved {
+            if ts == side && tsl != slot && state.side(ts).active[tsl].substitute_health > 0 {
+                each_event_update(state, rng);
+                each_event_update(state, rng);
+                push_order();
+                return;
+            }
+        }
+    }
+
     // Multi-hit count.
     // Beat Up `onModifyMove`: one hit per team member that is the user or is
     // unfainted and status-free (`side.pokemon` order); each hit's base power
@@ -5090,6 +5128,10 @@ fn execute_action_inner(
                 | PokemonVolatileStatus::BANEFULBUNKER
                 | PokemonVolatileStatus::SILKTRAP
                 | PokemonVolatileStatus::BURNINGBULWARK => {
+                    // `addVolatile(protect)` -> `TryAddVolatile` (no draw if already up).
+                    if !state.side(ts).active[tslot].protected {
+                        try_add_volatile_ties(state, rng, ts, tslot);
+                    }
                     state.side_mut(ts).active[tslot].protected = true;
                     state.side_mut(ts).active[tslot].protect_kind = match v.volatile_status {
                         PokemonVolatileStatus::KINGSSHIELD => 1,
@@ -5101,6 +5143,10 @@ fn execute_action_inner(
                     };
 
                     // onHit: `addVolatile('stall')` (start: counter 3; restart: x3).
+                    // A restart (counter up) runs `Restart`, not `TryAddVolatile`.
+                    if state.side(ts).active[tslot].stall.is_none() {
+                        try_add_volatile_ties(state, rng, ts, tslot);
+                    }
                     let a = &mut state.side_mut(ts).active[tslot];
                     a.stall = match a.stall {
                         None => Some((3, 2)),
@@ -5229,9 +5275,17 @@ fn execute_action_inner(
                         if v.volatile_status == PokemonVolatileStatus::RAGEPOWDER { 2 } else { 1 };
                 }
                 PokemonVolatileStatus::ENDURE => {
+                    // `addVolatile(endure)` -> `TryAddVolatile`: Insomnia and a Flower
+                    // Veil ally tie at subOrder 7 and draw (Worry Seed makes Insomnia).
+                    if !state.side(ts).active[tslot].endure {
+                        try_add_volatile_ties(state, rng, ts, tslot);
+                    }
                     state.side_mut(ts).active[tslot].endure = true;
 
                     // onHit: `addVolatile('stall')` (start: counter 3; restart: x3).
+                    if state.side(ts).active[tslot].stall.is_none() {
+                        try_add_volatile_ties(state, rng, ts, tslot);
+                    }
                     let a = &mut state.side_mut(ts).active[tslot];
                     a.stall = match a.stall {
                         None => Some((3, 2)),
@@ -6400,6 +6454,9 @@ fn execute_action_inner(
                 move_failed = true;
             } else if matches!(choice.move_id, Choices::QUICKGUARD | Choices::WIDEGUARD) {
                 // quickguard / wideguard `onHitSide`: `source.addVolatile('stall')`.
+                if state.side(side).active[slot].stall.is_none() {
+                    try_add_volatile_ties(state, rng, side, slot);
+                }
                 let a = &mut state.side_mut(side).active[slot];
                 a.stall = match a.stall {
                     None => Some((3, 2)),
@@ -7849,6 +7906,68 @@ fn safeguard_blocks_confusion(
 fn misty_terrain_blocks_confusion(state: &DoublesState, ts: Side, tslot: usize) -> bool {
     let Some(p) = state.side(ts).slot_pokemon(tslot) else { return false };
     state.terrain.terrain_type == crate::engine::state::Terrain::MISTYTERRAIN && (p.is_grounded() || state.gravity.active)
+}
+
+/// PS `addVolatile` -> `runEvent('TryAddVolatile', target, source)` (sim/pokemon.ts
+/// addVolatile, sim/battle.ts runEvent): the handlers are speed-sorted before any
+/// callback runs, so every exact tie group shuffles (one draw per swap). The
+/// handler list depends on the target, not on the volatile being added:
+/// - the target's own `onTryAddVolatile`: Focus Punch's volatile (condition,
+///   subOrder 2) and abilities Insomnia, Inner Focus, Own Tempo, Vital Spirit,
+///   Leaf Guard, Purifying Salt, Shields Down (subOrder 7, holder speed);
+/// - `onAllyTryAddVolatile` of every alive active on the target's side, the
+///   target included: Aroma Veil, Flower Veil, Sweet Veil (subOrder 7);
+/// - Electric / Misty Terrain `onTryAddVolatile` (field, speed 0, subOrder 5);
+/// - Safeguard `onTryAddVolatile` on the target's side (side, speed 0, subOrder 4).
+/// PS data/abilities.ts (insomnia, innerfocus, owntempo, vitalspirit, leafguard,
+/// purifyingsalt, shieldsdown, aromaveil, flowerveil, sweetveil), data/moves.ts
+/// (focuspunch, electricterrain, mistyterrain, safeguard).
+// TODO(PS parity): the other `addVolatile` callers (flinch, confusion, ...) do
+// not draw these ties yet.
+fn try_add_volatile_ties(state: &DoublesState, rng: &mut Gen5Rng, ts: Side, tslot: usize) {
+    let Some(tidx) = state.side(ts).active[tslot].pokemon_index else { return };
+    if state.side(ts).team_member(tidx).hp <= 0 {
+        return;
+    }
+    const ORDER: i64 = 4294967296;
+    let mut hs: Vec<(i64, i32, i64)> = Vec::new();
+    if state.side(ts).active[tslot].focus_punch {
+        hs.push((ORDER, cached_speed(state, ts, tslot), 2));
+    }
+    for sl in 0..2 {
+        let Some(hidx) = state.side(ts).active[sl].pokemon_index else { continue };
+        if state.side(ts).team_member(hidx).hp <= 0 {
+            continue;
+        }
+        let speed = cached_speed(state, ts, sl);
+        if sl == tslot && matches!(
+            real_ability(state, ts, hidx),
+            Abilities::INNERFOCUS
+                | Abilities::INSOMNIA
+                | Abilities::OWNTEMPO
+                | Abilities::VITALSPIRIT
+                | Abilities::LEAFGUARD
+                | Abilities::PURIFYINGSALT
+                | Abilities::SHIELDSDOWN
+        ) {
+            hs.push((ORDER, speed, 7));
+        }
+        if matches!(real_ability(state, ts, hidx), Abilities::AROMAVEIL | Abilities::FLOWERVEIL | Abilities::SWEETVEIL) {
+            hs.push((ORDER, speed, 7));
+        }
+    }
+    if matches!(
+        state.terrain.terrain_type,
+        crate::engine::state::Terrain::ELECTRICTERRAIN | crate::engine::state::Terrain::MISTYTERRAIN
+    ) {
+        hs.push((ORDER, 0, 5));
+    }
+    if state.side(ts).side_conditions.safeguard > 0 {
+        hs.push((ORDER, 0, 4));
+    }
+    if hs.len() >= 2 {
+        sort_handler_ties(&mut hs, rng, "speed tie (move order)");
+    }
 }
 
 fn try_confuse(state: &mut DoublesState, rng: &mut Gen5Rng, ts: Side, tslot: usize) {

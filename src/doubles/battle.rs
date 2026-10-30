@@ -2112,8 +2112,12 @@ fn execute_action_inner(
             }
         }
         Choices::WEATHERBALL => {
+            // PS data/moves.ts weatherball `onModifyType` / `onModifyMove` read
+            // `pokemon.effectiveWeather()`, which is empty while Cloud Nine /
+            // Air Lock suppress weather (`field.suppressingWeather()`).
             let mega_sol = state.side(side).team_member(idx).ability == Abilities::MEGASOL;
-            if let Some(t) = crate::engine::mechanics::weather_ball_type(state.weather.weather_type, mega_sol) {
+            let effective_weather = if weather_suppressed(state) { Weather::NONE } else { state.weather.weather_type };
+            if let Some(t) = crate::engine::mechanics::weather_ball_type(effective_weather, mega_sol) {
                 modified.move_type = t;
                 modified.base_power = 100.0;
             }
@@ -2302,6 +2306,15 @@ fn execute_action_inner(
             ChargeSetup::OnlyRain { .. } => !matches!(effective_weather, Weather::RAIN | Weather::HEAVYRAIN),
             ChargeSetup::OnlySnow { .. } => matches!(effective_weather, Weather::HAIL | Weather::SNOW),
         };
+        // PS data/moves.ts electroshot `onTryMove`: `boost({spa: 1})` runs on the
+        // charge turn and on the rain-skip turn, before the weather check (the
+        // firing turn returns early via `removeVolatile`). The table has no
+        // `charge_boosts` for it, so it is special-cased here.
+        let charge_boost: Option<StatBoosts> = if choice.move_id == Choices::ELECTROSHOT {
+            Some(StatBoosts { special_attack: 1, ..Default::default() })
+        } else {
+            choice.charge_boosts.clone()
+        };
         let charged = state.side_mut(side).active[slot].charging.take();
         match charged {
             Some((m, turns_left)) if m == choice.move_id && turns_left > 0 => {
@@ -2318,7 +2331,7 @@ fn execute_action_inner(
             }
             None if needs_charge => {
                 // Start charging.
-                if let Some(b) = &choice.charge_boosts {
+                if let Some(b) = &charge_boost {
                     apply_boosts(state, side, idx, b, false);
                 }
                 let turns = match choice.charge_setup {
@@ -2339,7 +2352,13 @@ fn execute_action_inner(
                 push_order();
                 return;
             }
-            None => {}
+            None => {
+                // Weather skips the charge (Electro Shot in rain): the
+                // charge-turn boost still applies.
+                if let Some(b) = &charge_boost {
+                    apply_boosts(state, side, idx, b, false);
+                }
+            }
         }
     }
 
@@ -5950,15 +5969,6 @@ fn execute_action_inner(
         }
     }
 
-    // lockedmove `onAfterMove`: removed when duration is 1; `onEnd` then
-    // confuses the user unless trueDuration > 1.
-    if let Some((1, t)) = state.side(side).active[slot].locked_move {
-        state.side_mut(side).active[slot].locked_move = None;
-        if t <= 1 {
-            try_confuse(state, rng, side, slot);
-        }
-    }
-
     // Healing Wish / Lunar Dance (slot-condition moves) make exactly one
     // hit-loop `eachEvent('Update')` in PS, while the user still counts as
     // active (faints are resolved afterwards).
@@ -6085,6 +6095,16 @@ fn execute_action_inner(
     // End of PS's hit loop: one more `eachEvent('Update')` (after recoil).
     if hits_done > 0 {
         each_event_update(state, rng);
+    }
+
+    // lockedmove `onAfterMove` (PS runMove, after useMove's hit loop): removed
+    // when duration is 1; `onEnd` then confuses the user unless trueDuration > 1.
+    // PS data/conditions.ts lockedmove.
+    if let Some((1, t)) = state.side(side).active[slot].locked_move {
+        state.side_mut(side).active[slot].locked_move = None;
+        if t <= 1 {
+            try_confuse(state, rng, side, slot);
+        }
     }
 
     // Speed Swap `onHit` (data/moves.ts speedswap): swap the two pokemon's
@@ -6313,6 +6333,10 @@ fn base_power_with_modifiers(
     total_fainted: u32,
     hit_number: u32,
     bp_doubled: bool,
+    // Beat Up's per-hit base power (`bp_fixed`, 0 when unused): the base that
+    // the modifiers (Technician, ...) act on, as PS `basePowerCallback` runs
+    // before `onBasePower`.
+    fixed_bp: f32,
     // Rivalry: 1 same gender, -1 opposite, 0 when either is genderless.
     rivalry: i8,
     state: &DoublesState,
@@ -6327,7 +6351,13 @@ fn base_power_with_modifiers(
         total_fainted,
         hit_number,
     );
-    let bp = if dynamic > 0.0 { dynamic } else { choice.base_power };
+    let bp = if fixed_bp > 0.0 {
+        fixed_bp
+    } else if dynamic > 0.0 {
+        dynamic
+    } else {
+        choice.base_power
+    };
     // ragefist.basePowerCallback: `min(350, 50 + 50 * timesAttacked)`. Each
     // damaging hit taken since switching in adds an `attacked_by` entry (the
     // champions mod resets the counter in `clearVolatile`).
@@ -6463,7 +6493,7 @@ fn base_power_with_modifiers(
         hh /= 1.5;
     }
     if mods.is_empty() {
-        return if choice.move_id == Choices::RAGEFIST { bp } else { dynamic };
+        return if choice.move_id == Choices::RAGEFIST || fixed_bp > 0.0 { bp } else { dynamic };
     }
     mods.sort_by_key(|&(prio, _)| -prio);
     let mut chain: i64 = 4096;
@@ -7189,6 +7219,7 @@ fn compute_hit_damage(
                 side_total_fainted(state, side),
                 att_slot.hit_number as u32,
                 att_slot.bp_double,
+                att_slot.bp_fixed,
                 // PS `rivalry.onBasePower`: both genders must be set (`M` / `F`).
                 {
                     let gendered = |g: Option<&str>| matches!(g, Some("M") | Some("F"));
@@ -7208,9 +7239,6 @@ fn compute_hit_damage(
             ),
         };
         let mut ctx = ctx;
-        if att_slot.bp_fixed > 0.0 {
-            ctx.base_power_override = att_slot.bp_fixed;
-        }
         if att_slot.bp_double {
             ctx.base_power_override = if ctx.base_power_override > 0.0 {
                 ctx.base_power_override
@@ -8398,6 +8426,33 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
         s.active[slot].pokemon_index = Some(idx);
         // PS `clearVolatile` (switch-in): `newlySwitched = true`.
         s.active[slot].newly_switched = true;
+        // PS `clearVolatile` -> `setSpecies(baseSpecies)`: Aegislash-Blade is
+        // `battleOnly` (data/pokedex.ts), so every switch-in (drag included)
+        // returns it to Shield forme with its stats recomputed.
+        if s.team_member(idx).id == crate::pokemon::PokemonName::AEGISLASHBLADE {
+            if let Some(data) = crate::doubles::species_types::species_data("aegislash") {
+                let p = s.team_member(idx);
+                let (e, lvl, nat) = (p.evs, p.level as u8, p.nature.clone());
+                let evs = crate::doubles::state::Evs {
+                    hp: e.0 as u16,
+                    atk: e.1 as u16,
+                    def: e.2 as u16,
+                    spa: e.3 as u16,
+                    spd: e.4 as u16,
+                    spe: e.5 as u16,
+                };
+                let (_, atk, def, spa, spd, _) =
+                    crate::doubles::state::compute_stats(data.base_stats, &evs, lvl, nat);
+                let pm = s.team_member_mut(idx);
+                pm.id = crate::pokemon::PokemonName::AEGISLASH;
+                pm.attack = atk;
+                pm.defense = def;
+                pm.special_attack = spa;
+                pm.special_defense = spd;
+                let raw = pm.speed;
+                s.speed_cache[idx as usize] = raw as _;
+            }
+        }
         // PS data/conditions.ts tox.onSwitchIn: the toxic stage resets to 0
         // when a poisoned pokemon switches in (first residual is 1x again).
         // This engine's residual computes damage before incrementing, so its

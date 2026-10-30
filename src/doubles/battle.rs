@@ -2582,6 +2582,7 @@ fn execute_action_inner(
         // target checks, and `getRandomTarget` keeps the fainted foe
         // (`randomFoe() || foe.active[0]`). PS data/moves.ts fly.onTryMove.
         if !has_target && matches!(choice.charge_setup, ChargeSetup::None) {
+            modify_move_field_tie(state, rng);
             push_order();
             return;
         }
@@ -2648,6 +2649,10 @@ fn execute_action_inner(
     } else {
         choice
     };
+
+    // `runEvent('ModifyMove')` in `useMoveInner` (after the move's own
+    // `singleEvent` handlers, before TryMove): Gravity and Wonder Room tie.
+    modify_move_field_tie(state, rng);
 
     // Two-turn charge moves (Dig, Meteor Beam, ...): mirrors PS
     // `onTryMove` + `addVolatile('twoturnmove')` (data/moves.ts). The first
@@ -2892,20 +2897,6 @@ fn execute_action_inner(
                 state.side_mut(side).active[slot].ally_switch = Some((if c < 729 { c * 3 } else { c }, 2));
             }
         }
-    }
-
-    // `runEvent('ModifyMove')` in `useMoveInner`: Gravity and Wonder Room both
-    // have an `onModifyMove` handler with identical sort keys, so the two
-    // tie and shuffle (one draw) while both are active.
-    // Wonder Room's subOrder is 2 until its handler has run once (`state.target`
-    // is set by `runEvent` just before the callback, sim/battle.ts; the
-    // `ModifyMove` callback runs for every move while Wonder Room is up, whether
-    // or not Gravity is). So the first event with both active may already tie.
-    if state.wonder_room.active {
-        if state.gravity.active && state.wonder_room_seen {
-            let _ = rng.label("speed tie (move order)").random(2);
-        }
-        state.wonder_room_seen = true;
     }
 
     // Quick Guard `onTry`: `!!this.queue.willAct()` (PS data/moves.ts quickguard).
@@ -4406,7 +4397,7 @@ fn execute_action_inner(
                         .side_mut(target_side)
                         .team_member_mut(tidx)
                         .attacked_by
-                        .push((idx as u8, turn_now));
+                        .push((attacker_key(side, idx as u8), turn_now));
                     // PS `gotAttacked`: `attackedBy` entry with damage / slot
                     // (Metal Burst / Comeuppance `getLastDamagedBy`).
                     state.side_mut(target_side).damaged_by[tidx as usize].push((side, slot, damage, turn_now));
@@ -4482,8 +4473,9 @@ fn execute_action_inner(
             total_damage = total_damage.saturating_add(damage);
             hit_damage = Some(damage);
             // Berserk `onAfterMoveSecondary`: remember the HP before this move's
-            // first hit on the holder.
-            if damage > 0 && target_side != side {
+            // first hit on the holder. Allies count too (a spread move such as
+            // Earthquake): PS only skips `source === target`.
+            if damage > 0 && (target_side, target_slot) != (side, slot) {
                 if let Some(d) = state.side(target_side).slot_pokemon(target_slot) {
                     if d.ability == Abilities::BERSERK
                         && !berserk_before.iter().any(|&(s2, l2, _)| s2 == target_side && l2 == target_slot)
@@ -4652,9 +4644,19 @@ fn execute_action_inner(
         // PS data/moves.ts lifedew, sim/battle.ts heal.
         if choice.move_id == Choices::LIFEDEW && ti == 0 {
             let mut healed = false;
+            // Good as Gold `onTryHit` (status move, target != source) makes an
+            // ally immune: no heal for it (PS prints `-immune` and skips it).
+            let user_breaks_gold = crate::engine::abilities::ignores_target_ability(
+                state.side(side).team_member(idx),
+                choice,
+                &Abilities::GOODASGOLD,
+            );
             for sl in [slot, ally_slot] {
                 if let Some(tidx) = state.side(side).active[sl].pokemon_index {
                     let pm = state.side_mut(side).team_member_mut(tidx);
+                    if sl != slot && pm.hp > 0 && pm.ability == Abilities::GOODASGOLD && !user_breaks_gold {
+                        continue;
+                    }
                     // PS data/abilities.ts waterabsorb / dryskin `onTryHit`: an ally
                     // with them takes the Water move as a heal of `maxhp / 4`
                     // (truncated) and the move does not hit it, so Life Dew's own
@@ -8161,7 +8163,7 @@ fn compute_hit_damage(
                             attacker
                                 .attacked_by
                                 .iter()
-                                .any(|&(s, t)| s == tidx as u8 && t == state.turn)
+                                .any(|&(s, t)| s == attacker_key(target_side, tidx as u8) && t == state.turn)
                         })
                         .unwrap_or(false),
                 side_total_fainted(state, side),
@@ -9130,9 +9132,12 @@ fn apply_on_switch_abilities(
     slot: usize,
     rng: &mut Gen5Rng,
 ) -> bool {
+    // A holder KO'd by the current hit still runs its Start event (PS
+    // `singleEvent('Start')` after Skill Swap ignores `fainted`), so the
+    // pokemon comes from `unresolved_faints` when its slot is already empty.
     let mut ability = {
         let s = state.side(side);
-        match s.active[slot].pokemon_index {
+        match slot_index_or_unresolved(state, side, slot) {
             Some(idx) => s.team_member(idx).ability,
             None => return false,
         }
@@ -9292,7 +9297,7 @@ fn apply_on_switch_abilities(
             ..Default::default()
         },
         Abilities::SUPERSWEETSYRUP => {
-            let me = state.side(side).active[slot].pokemon_index.unwrap();
+            let me = slot_index_or_unresolved(state, side, slot).unwrap();
             if state.side(side).syrup_triggered[me as usize] {
                 return false;
             }
@@ -10131,6 +10136,28 @@ fn each_event_update(state: &DoublesState, rng: &mut Gen5Rng) {
 
 /// PS `eachEvent` / `runSwitch`: the actives speed-sorted (speed only), ties
 /// shuffled.
+/// `runEvent('ModifyMove')` in `useMoveInner`: Gravity and Wonder Room both
+/// have an `onModifyMove` handler with identical sort keys, so the two tie and
+/// shuffle (one draw) while both are active (PS sim/battle.ts `speedSort`).
+/// Wonder Room's subOrder is 2 until its handler has run once (`state.target`
+/// is set by `runEvent` just before the callback); the `ModifyMove` callback
+/// runs for every move while Wonder Room is up, whether or not Gravity is. So
+/// the first event with both active may already tie.
+fn modify_move_field_tie(state: &mut DoublesState, rng: &mut Gen5Rng) {
+    if state.wonder_room.active {
+        if state.gravity.active && state.wonder_room_seen {
+            let _ = rng.label("speed tie (move order)").random(2);
+        }
+        state.wonder_room_seen = true;
+    }
+}
+
+/// Key of a pokemon in another pokemon's `attacked_by` list: side and team
+/// index (PS `attackedBy` holds the Pokemon itself, so both must match).
+fn attacker_key(side: Side, idx: u8) -> u8 {
+    ((side as u8) << 4) | idx
+}
+
 fn sorted_actives(state: &DoublesState, rng: &mut Gen5Rng, label: &'static str) -> Vec<(Side, usize)> {
     // Actives in slot order; a pokemon that fainted in the current hit loop
     // still counts until faints are resolved (`unresolved_faints`).

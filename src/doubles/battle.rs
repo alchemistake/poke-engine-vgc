@@ -1004,7 +1004,9 @@ pub fn run_battle_fuzz(
     for (side, slot) in lead_order {
         if apply_on_switch_abilities(state, side, slot, rng) {
             // Terrain just set (e.g. Grassy Surge): `eachEvent("TerrainChange")`.
-            let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+            // Labelled switch-in like PS (`runSwitch` is on its stack); no
+            // pokemon has fainted yet, so the sort is the same.
+            let _ = sorted_actives(state, rng, "speed tie (switch-in)");
         }
     }
     each_event_update(state, rng);
@@ -2216,6 +2218,9 @@ thread_local! {
     /// The running move found no targets (PS useMoveInner `!targets.length`):
     /// it returns false without `MoveFail`, so no crash / Steel Beam fail damage.
     static NO_TARGET_FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The running move stopped in its BeforeMove handlers (PS runMove
+    /// `!willTryMove`), so `runEvent('MoveAborted')` follows.
+    static BEFORE_MOVE_ABORTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// PS `runMove` -> `runEvent('AfterMove', pokemon)`: the handlers are the
@@ -2307,7 +2312,17 @@ fn execute_action_body(
     let mold_breaker = mold_breaker_suppress(state, action);
     AFTER_MOVE_TIE_DRAWN.with(|c| c.set(false));
     NO_TARGET_FAIL.with(|c| c.set(false));
+    BEFORE_MOVE_ABORTED.with(|c| c.set(false));
     execute_action_inner(state, rng, action, move_order, will_act, queue);
+    // PS runMove: a failed BeforeMove runs `runEvent('MoveAborted')` (charge,
+    // twoturnmove, destinybond handlers: a sort). PS sim/battle-actions.ts runMove.
+    // TODO(PS parity): Destiny Bond is cleared before the move here, so its
+    // handler is not in this sort.
+    if BEFORE_MOVE_ABORTED.with(|c| c.replace(false)) {
+        if let Some(sl) = (0..2).find(|&sl| state.side(action.side).active[sl].pokemon_index == Some(action.pokemon_index)) {
+            crate::doubles::events::run_event_ties(state, rng, "MoveAborted", (action.side, sl), None);
+        }
+    }
     if mold_breaker {
         mold_breaker_restore(state);
     }
@@ -2350,9 +2365,10 @@ fn execute_action_body(
     }
     if move_order.len() > order_len && !std::mem::take(&mut state.copy_called) {
         state.last_move = Some(action.choice.move_id);
-        // PS `pokemon.moveUsed`: `lastMove` (Encore).
-        if state.side(action.side).active[action.slot].pokemon_index.is_some() {
-            state.side_mut(action.side).active[action.slot].last_move = Some(action.choice.move_id);
+        // PS `pokemon.moveUsed`: `lastMove` (Encore). The user may have moved
+        // slots during its own action (Ally Switch), so find it by index.
+        if let Some(sl) = (0..2).find(|&sl| state.side(action.side).active[sl].pokemon_index == Some(action.pokemon_index)) {
+            state.side_mut(action.side).active[sl].last_move = Some(action.choice.move_id);
         }
     }
     // PS runMove `runEvent('AfterMove')`: the handlers are sorted before any of
@@ -2618,14 +2634,13 @@ fn execute_action_inner(
 
     // `useMove` (external) skips the BeforeMove step entirely.
     if !external {
-    // PS `runEvent('BeforeMove')` speed-sorts every holder's BeforeMove handlers
-    // before any callback runs. Heal Block and Throat Chop are both priority 6 on
-    // the same holder (same speed), so when both are up they tie and one shuffle
-    // draw happens, whether or not the move is blocked. TODO(PS parity): the
-    // `|cant|` message names the handler that ran first (order not modelled).
-    if state.side(side).active[slot].heal_block > 0 && state.side(side).active[slot].throat_chop > 0 {
-        let _ = rng.label("speed tie (move order)").random(2);
-    }
+    // PS `runEvent('BeforeMove', pokemon, target)` speed-sorts every holder's
+    // BeforeMove handlers before any callback runs (Heal Block + Throat Chop on
+    // the user, two foes' Imprison, ...), whether or not the move is blocked.
+    // PS sim/battle-actions.ts runMove. TODO(PS parity): the `|cant|` message
+    // names the handler that ran first (order not modelled).
+    crate::doubles::events::run_event_ties(state, rng, "BeforeMove", (side, slot), resolved);
+    BEFORE_MOVE_ABORTED.with(|c| c.set(true));
     // A pokemon that must recharge (Hyper Beam / Solar Beam) cannot act.
     // No PRNG draw (PS `mustrecharge.onBeforeMove` returns false).
     if state.side(side).active[slot].recharging {
@@ -2782,6 +2797,7 @@ fn execute_action_inner(
         return;
     }
 
+    BEFORE_MOVE_ABORTED.with(|c| c.set(false));
     // Focus Punch `beforeMoveCallback` (after the BeforeMove checks): it
     // fails with `|cant|` if the user was hit by a damaging move this turn.
     if action.choice.move_id == Choices::FOCUSPUNCH && state.side(side).active[slot].lost_focus {
@@ -3191,6 +3207,12 @@ fn execute_action_inner(
                     | ChargeSetup::OnlySnow { turns } => turns,
                     ChargeSetup::None => 0,
                 };
+                // `attacker.addVolatile('twoturnmove')`, whose `onStart` runs
+                // `attacker.addVolatile(move.id)`: two TryAddVolatile sorts.
+                // PS data/moves.ts (dig, solarbeam, ...) onTryMove,
+                // data/conditions.ts twoturnmove.onStart.
+                try_add_volatile_ties(state, rng, side, slot);
+                try_add_volatile_ties(state, rng, side, slot);
                 state.side_mut(side).active[slot].charging =
                     Some((choice.move_id, turns.saturating_sub(1)));
                 // `twoturnmove.onStart` runs `runEvent('PrepareHit')` on the charge
@@ -4188,6 +4210,21 @@ fn execute_action_inner(
             .slot_pokemon(target_slot)
             .map(|d| d.item == crate::engine::items::Items::NONE)
             .unwrap_or(true)
+    {
+        state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+        push_order(move_order);
+        return;
+    }
+
+    // Yawn `onTryHit`: a target with a status fails in `hitStepTryHitEvent`,
+    // before the hit loop (no hit-loop `eachEvent` sorts). PS data/moves.ts yawn.
+    if choice.move_id == Choices::YAWN
+        && !is_self
+        && !is_field
+        && state
+            .side(target_side)
+            .slot_pokemon(target_slot)
+            .is_some_and(|d| d.hp > 0 && d.status != PokemonStatus::NONE)
     {
         state.side_mut(side).active[slot].move_result_this_turn = Some(false);
         push_order(move_order);
@@ -5285,6 +5322,13 @@ fn execute_action_inner(
 
         }
 
+        // `selfDrops` -> `moveHit(source, source, move.self)`: a recharge move's
+        // `self.volatileStatus: 'mustrecharge'` is `addVolatile`d here, so its
+        // TryAddVolatile handlers are sorted now (the flag itself is set after
+        // the move). PS sim/battle-actions.ts selfDrops, sim/pokemon.ts addVolatile.
+        if ti == 0 && choice.flags.recharge && !state.side(side).active[slot].recharging {
+            try_add_volatile_ties(state, rng, side, slot);
+        }
         // Self boosts (Swords Dance, ...). PS `selfDrops` consumes the
         // `random(100)` roll even when there is no chance gate.
         if let (true, Some(b)) = (ti == 0, &choice.self_boosts) {
@@ -6426,7 +6470,12 @@ fn execute_action_inner(
                             choice,
                             &p.ability,
                         );
-                    if p.ability == Abilities::SOUNDPROOF || gag_blocks {
+                    // PS `runEvent('Invulnerability')` first: a semi-invulnerable
+                    // pokemon is `-miss`ed (still a result). PS data/moves.ts
+                    // perishsong.onHitField.
+                    if semi_invulnerable_blocks(state, side, idx, choice.move_id, sd, sl) {
+                        result = true;
+                    } else if p.ability == Abilities::SOUNDPROOF || gag_blocks {
                         result = true;
                     } else if state.side(sd).active[sl].perish == 0 {
                         state.side_mut(sd).active[sl].perish = 4;
@@ -8817,6 +8866,9 @@ fn try_add_volatile_ties(state: &DoublesState, rng: &mut Gen5Rng, ts: Side, tslo
     if !state.side(ts).slot_pokemon(tslot).is_some_and(|p| p.hp > 0) {
         return;
     }
+    // `runStatusImmunity(status.id)` first: `runEvent('Immunity')` (Dig / Dive +
+    // Magnet Rise tie). PS sim/pokemon.ts addVolatile.
+    crate::doubles::events::run_event_ties(state, rng, "Immunity", (ts, tslot), None);
     crate::doubles::events::run_event_ties(state, rng, "TryAddVolatile", (ts, tslot), None);
 }
 
@@ -11827,11 +11879,49 @@ fn end_turn_disable_moves(state: &DoublesState, rng: &mut Gen5Rng) {
         let Some(idx) = state.side(s).active[sl].pokemon_index else { continue };
         run_event_ties(state, rng, "DisableMove", (s, sl), None);
         run_event_ties(state, rng, "TrapPokemon", (s, sl), None);
+        // Every TrapPokemon handler that calls `pokemon.tryTrap()` runs
+        // `runStatusImmunity('trapped')` -> `runEvent('Immunity')` (a sort; Dig /
+        // Dive + Magnet Rise tie). Ghost types stop at `getImmunity`, no event.
+        // PS sim/pokemon.ts tryTrap / runStatusImmunity.
+        if !state.side(s).team_member(idx).has_type(&PokemonType::GHOST) {
+            for _ in 0..try_trap_calls(state, s, sl) {
+                run_event_ties(state, rng, "Immunity", (s, sl), None);
+            }
+        }
         // `getImmunity('trapped')`: Ghost types are immune.
         if state.side(s).team_member(idx).has_type(&PokemonType::GHOST) {
             run_event_ties(state, rng, "MaybeTrapPokemon", (s, sl), None);
         }
     }
+}
+
+/// How many of a pokemon's end-of-turn TrapPokemon handlers call `tryTrap`:
+/// the `trapped` volatile, `partiallytrapped` / Octolock while the binder is
+/// active, Ingrain, Fairy Lock, and the foes' Arena Trap (grounded target),
+/// Magnet Pull (Steel target) and Shadow Tag (target without it).
+/// PS data/conditions.ts trapped / partiallytrapped, data/moves.ts ingrain /
+/// fairylock / octolock, data/abilities.ts arenatrap / magnetpull / shadowtag.
+fn try_trap_calls(state: &DoublesState, s: Side, sl: usize) -> usize {
+    let a = &state.side(s).active[sl];
+    let Some(idx) = a.pokemon_index else { return 0 };
+    let p = state.side(s).team_member(idx);
+    let is_active = |bs: Side, bi: PokemonIndex| (0..2).any(|k| state.side(bs).active[k].pokemon_index == Some(bi));
+    let mut n = 0;
+    n += a.trapped as usize;
+    n += a.partial_trap.as_ref().is_some_and(|t| is_active(t.source_side, t.source_idx)) as usize;
+    n += a.octolock.is_some_and(|(bs, bi)| is_active(bs, bi)) as usize;
+    n += a.ingrain as usize;
+    n += state.fairy_lock.active as usize;
+    for k in 0..2 {
+        let Some(f) = state.side(s.other()).slot_pokemon(k).filter(|f| f.hp > 0) else { continue };
+        n += match f.ability {
+            Abilities::ARENATRAP => slot_grounded(p, a, state.gravity.active) as usize,
+            Abilities::MAGNETPULL => p.has_type(&PokemonType::STEEL) as usize,
+            Abilities::SHADOWTAG => (p.ability != Abilities::SHADOWTAG) as usize,
+            _ => 0,
+        };
+    }
+    n
 }
 
 /// PS `pokemon.getMoves()` is empty (every known move has no PP, is disabled,

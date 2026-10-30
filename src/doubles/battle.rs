@@ -2950,6 +2950,14 @@ fn execute_action_inner(
             {
                 continue;
             }
+            // Powder moves (PS `hitStepTryImmunity`, 'natural powder immunity'):
+            // a Grass / Overcoat target is skipped before the accuracy roll.
+            if choice.flags.powder
+                && (ts, tsl) != (side, slot)
+                && crate::engine::mechanics::powder_immune(&d)
+            {
+                continue;
+            }
             if damaging
                 && crate::doubles::damage::type_mod_with_added(
                     state.side(side).team_member(idx),
@@ -3121,6 +3129,18 @@ fn execute_action_inner(
             if let Some(p) = state.side(side).slot_pokemon(slot) {
                 if p.hp > 0 {
                     let dmg = (p.maxhp / 2).max(1);
+                    apply_damage(state, side, slot, dmg);
+                }
+            }
+        }
+        // Steel Beam `onMoveFail` (PS data/moves.ts steelbeam): a blocked move
+        // is a failed move, so the user loses round(maxhp / 2) (Magic Guard
+        // blocks it). Mind Blown's `onMoveFail` is the same, but it is allAdjacent
+        // and takes the spread path. TODO(PS parity): spread Mind Blown.
+        if choice.move_id == Choices::STEELBEAM {
+            if let Some(p) = state.side(side).slot_pokemon(slot) {
+                if p.hp > 0 && p.ability != Abilities::MAGICGUARD {
+                    let dmg = ((p.maxhp as f32 / 2.0).round() as i16).max(1);
                     apply_damage(state, side, slot, dmg);
                 }
             }
@@ -6015,6 +6035,10 @@ fn execute_action_inner(
         hit_pi_by[ti] = hit_target_pi;
       }
       // DamagingHit pass (PS `spreadMoveHit`, after the secondaries of every target).
+      // PS collects the DamagingHit handlers once, before any of them runs, so the
+      // attacker's Poison Touch still fires after a target's Mummy has already
+      // changed the attacker's ability (PS `runEvent` keeps the captured handler).
+      let attacker_poison_touch = state.side(side).team_member(idx).ability == Abilities::POISONTOUCH;
       for (ti, &(hts, htsl)) in hit_targets.iter().enumerate() {
         target_side = hts;
         target_slot = htsl;
@@ -6044,7 +6068,7 @@ fn execute_action_inner(
             contact_abilities(state, rng, side, slot, idx, target_side, target_slot, choice);
             // Poison Touch `onSourceDamagingHit`: a contact hit has a 3/10 chance to
             // poison the target (Shield Dust blocks). PS data/abilities.ts poisontouch.
-            if state.side(side).team_member(idx).ability == Abilities::POISONTOUCH
+            if attacker_poison_touch
                 && choice.flags.contact
                 && (side, slot) != (target_side, target_slot)
             {
@@ -6169,10 +6193,20 @@ fn execute_action_inner(
         state.side_mut(side).active[slot].move_result_this_turn = Some(false);
     }
 
-    // Scale Shot & co.: the user's stat change after all hits.
+    // Scale Shot & co.: the user's stat change after all hits. PS resolves the
+    // hit loop's faints first (`hitStepMoveHitLoop` -> `resolveFaints`), then
+    // `useMoveInner` runs `selfBoost`, whose `boost` fails once the foe side has
+    // no Pokemon left (`foePokemonLeft`).
     if choice.multihit != 0 && is_attack && hits_done > 0 {
         if let Some(b) = choice.boost.as_ref().filter(|b| b.target == MoveTarget::User) {
-            apply_boosts(state, side, idx, &b.boosts, false);
+            let foe_left = state
+                .side(side.other())
+                .team
+                .iter()
+                .any(|m| m.id != crate::pokemon::PokemonName::NONE && m.hp > 0);
+            if foe_left {
+                apply_boosts(state, side, idx, &b.boosts, false);
+            }
         }
     }
 
@@ -7366,6 +7400,9 @@ fn compute_hit_damage(
             } else {
                 m
             };
+            // Solar Power `onModifySpA` (priority 5, exclusive with Plus / Minus).
+            let sun = matches!(state.weather.weather_type, Weather::SUN | Weather::HARSHSUN);
+            let m = (m * crate::engine::mechanics::solar_power_spa_modifier(attacker, choice, sun) + 2048) >> 12;
             // Stakeout `onModifyAtk` / `onModifySpA`: x2 against a target that
             // switched in this turn (`!defender.activeTurns`).
             if attacker.ability == Abilities::STAKEOUT
@@ -8059,6 +8096,23 @@ fn apply_boosts(
     b: &StatBoosts,
     source_is_foe: bool,
 ) {
+    // PS `boost` (sim/battle.ts): `if (this.gen > 5 && !target.side.foePokemonLeft())
+    // return false`. Once the other side has no Pokemon left, nothing is boosted
+    // (a self-boost after the last KO, e.g. Scale Shot's selfBoost).
+    // `pokemonLeft` drops when a faint is processed (`faintMessages`), so a
+    // pokemon that fainted this turn but is still unresolved still counts.
+    let other = side.other();
+    let left = state.side(other).team.iter().enumerate().any(|(i, m)| {
+        m.id != crate::pokemon::PokemonName::NONE
+            && (m.hp > 0
+                || state
+                    .unresolved_faints
+                    .iter()
+                    .any(|&(fs, _, pi)| fs == other && pi as usize == i))
+    });
+    if !left {
+        return;
+    }
     // PS `boost`: stat by stat; `AfterEachBoost` (Defiant / Competitive, shared
     // `mechanics::stat_drop_reaction`) fires after each stat that actually
     // changed by a drop.

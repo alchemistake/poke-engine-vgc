@@ -617,6 +617,17 @@ pub fn attacker_stat_modifier(attacker: &Pokemon, choice: &Choice) -> i64 {
     }
 }
 
+/// Solar Power `onModifySpA` (priority 5): x1.5 on special moves while Sun
+/// (`sunnyday` / `desolateland`) is the effective weather. PS data/abilities.ts
+/// solarpower. 4096 = none.
+pub fn solar_power_spa_modifier(attacker: &Pokemon, choice: &Choice, sun: bool) -> i64 {
+    if attacker.ability == Abilities::SOLARPOWER && choice.category == MoveCategory::Special && sun {
+        6144
+    } else {
+        4096
+    }
+}
+
 /// The defender's `onSourceModifyAtk` / `onSourceModifySpA` ability modifier
 /// (4096 = none): Thick Fat (Fire / Ice), Heatproof and Water Bubble (Fire),
 /// Purifying Salt (Ghost). PS data/abilities.ts (priority 6, before the

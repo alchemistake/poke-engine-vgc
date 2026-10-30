@@ -653,9 +653,12 @@ fn champions_move_category(_move_id: Choices) -> Option<MoveCategory> {
 }
 
 /// PS `move.ignoreEvasion`: Keen Eye / Illuminate / Mind's Eye
-/// (`onModifyMove`), Chip Away, Darkest Lariat, Sacred Sword.
+/// (`onModifyMove`), Chip Away, Darkest Lariat, Sacred Sword. The attacker's
+/// own Unaware (`unaware` `onAnyModifyBoost`, data/abilities.ts: the target's
+/// evasion is zeroed when `activePokemon` holds it) also reads the target's
+/// evasion as 0 in `hitStepAccuracy`.
 fn ignores_evasion(ability: Abilities, mv: Choices) -> bool {
-    matches!(ability, Abilities::KEENEYE | Abilities::ILLUMINATE | Abilities::MINDSEYE)
+    matches!(ability, Abilities::KEENEYE | Abilities::ILLUMINATE | Abilities::MINDSEYE | Abilities::UNAWARE)
         || matches!(
             mv,
             Choices::CHIPAWAY | Choices::DARKESTLARIAT | Choices::SACREDSWORD
@@ -832,6 +835,17 @@ fn instruct_action(
 }
 
 /// Applies a planned queue change to `actions[from..]`.
+/// PS `setAbility` (Skill Swap, Trace, Role Play, Entrainment, Simple Beam,
+/// Worry Seed): the holder's ability effect state is new, so Protean / Libero
+/// may change its type again (`protean_done`).
+fn reset_protean_effect(state: &mut DoublesState, side: Side, idx: PokemonIndex) {
+    for sl in 0..2 {
+        if state.side(side).active[sl].pokemon_index == Some(idx) {
+            state.side_mut(side).active[sl].protean_done = false;
+        }
+    }
+}
+
 fn apply_queue_plan(actions: &mut Vec<Action>, from: usize, plan: QueuePlan) {
     actions.remove(from + plan.remove);
     actions.insert(from + plan.insert, plan.action);
@@ -3229,7 +3243,7 @@ fn execute_action_inner(
     if matches!(
         state.side(side).team_member(idx).ability,
         Abilities::LIBERO | Abilities::PROTEAN
-    ) && state.side(side).active[slot].type_change.is_none()
+    ) && !state.side(side).active[slot].protean_done
         && choice.move_type != PokemonType::TYPELESS
         && choice.move_id != Choices::STRUGGLE
         // `move.callsMove` moves (Copycat, Metronome, ...) don't trigger it: the
@@ -3249,7 +3263,11 @@ fn execute_action_inner(
         if pm.types != (choice.move_type, PokemonType::TYPELESS) {
             let orig = pm.types;
             pm.types = (choice.move_type, PokemonType::TYPELESS);
-            state.side_mut(side).active[slot].type_change = Some(orig);
+            let a = &mut state.side_mut(side).active[slot];
+            if a.type_change.is_none() {
+                a.type_change = Some(orig);
+            }
+            a.protean_done = true;
         }
     }
 
@@ -5568,6 +5586,7 @@ fn execute_action_inner(
                         && !crate::engine::mechanics::cant_suppress(src_ability) =>
                 {
                     state.side_mut(ts).team_member_mut(ti).ability = src_ability;
+                    reset_protean_effect(state, ts, ti);
                     ability_update_cures(state, ts, tsl);
                     // The new ability's Start event (Intimidate, Drought, ...).
                     let _ = apply_on_switch_abilities(state, ts, tsl, rng);
@@ -5813,6 +5832,7 @@ fn execute_action_inner(
             match (user_idx, target_ability) {
                 (Some(u), Some(ta)) if state.side(side).team_member(u).ability != ta => {
                     state.side_mut(side).team_member_mut(u).ability = ta;
+                    reset_protean_effect(state, side, u);
                     // PS `setAbility` runs the new ability's Start event
                     // (Sand Stream, Drought, ...), as Skill Swap does.
                     let _ = apply_on_switch_abilities(state, side, slot, rng);
@@ -6336,6 +6356,7 @@ fn execute_action_inner(
                     move_failed = true;
                 } else {
                     state.side_mut(target_side).team_member_mut(tidx).ability = Abilities::SIMPLE;
+                    reset_protean_effect(state, target_side, tidx);
                 }
             }
         }
@@ -6361,6 +6382,8 @@ fn execute_action_inner(
                     move_failed = true;
                 } else {
                     pm.ability = Abilities::INSOMNIA;
+                    reset_protean_effect(state, target_side, tidx);
+                    let pm = state.side_mut(target_side).team_member_mut(tidx);
                     if pm.status == PokemonStatus::SLEEP {
                         pm.status = PokemonStatus::NONE;
                     }
@@ -9281,6 +9304,8 @@ fn skill_swap(
     }
     state.side_mut(src_side).team_member_mut(si).ability = tgt_ability;
     state.side_mut(tgt_side).team_member_mut(ti).ability = src_ability;
+    reset_protean_effect(state, src_side, si);
+    reset_protean_effect(state, tgt_side, ti);
     // The new abilities' Start events (Trace's draw included) run through
     // `apply_on_switch_abilities`.
     // TODO(PS parity): the TerrainChange speed sort after a swapped-in Surge.
@@ -9418,6 +9443,13 @@ fn apply_boosts_from(
     source_is_foe: bool,
     source_is_other: bool,
 ) -> bool {
+    // PS `boost` (sim/battle.ts): `if (!target?.hp) return 0`. The engine
+    // resolves a Destiny Bond KO of the user at once, while PS queues it after
+    // the move's boosts and then clears them (`clearVolatile`). Skipping the
+    // boost here leaves the same result.
+    if state.side(side).team_member(idx).hp == 0 {
+        return false;
+    }
     // PS `boost` (sim/battle.ts): `if (this.gen > 5 && !target.side.foePokemonLeft())
     // return false`. Once the other side has no Pokemon left, nothing is boosted
     // (a self-boost after the last KO, e.g. Scale Shot's selfBoost).
@@ -9715,6 +9747,7 @@ fn apply_on_switch_abilities(
             let copied = state.side(foe).team_member(pick).ability;
             if let Some(idx) = state.side(side).active[slot].pokemon_index {
                 state.side_mut(side).team_member_mut(idx).ability = copied;
+                reset_protean_effect(state, side, idx);
             }
             ability = copied;
         }
@@ -10031,6 +10064,33 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
                     }
                     _ => {}
                 }
+            }
+        }
+        // Zero to Hero `onSwitchOut` (PS data/abilities.ts zerotohero): a
+        // Palafin leaving the field becomes Palafin-Hero for good
+        // (`formeChange(..., true)`), with the Hero stats.
+        if state.side(side).team_member(old).id == crate::pokemon::PokemonName::PALAFIN
+            && state.side(side).team_member(old).ability == Abilities::ZEROTOHERO
+        {
+            if let Some(data) = crate::doubles::species_types::species_data("palafinhero") {
+                let pm = state.side(side).team_member(old);
+                let (e, lvl, nat) = (pm.evs, pm.level as u8, pm.nature.clone());
+                let evs = crate::doubles::state::Evs {
+                    hp: e.0 as u16,
+                    atk: e.1 as u16,
+                    def: e.2 as u16,
+                    spa: e.3 as u16,
+                    spd: e.4 as u16,
+                    spe: e.5 as u16,
+                };
+                let (_, atk, def, spa, spd, _) =
+                    crate::doubles::state::compute_stats(data.base_stats, &evs, lvl, nat);
+                let pm = state.side_mut(side).team_member_mut(old);
+                pm.id = crate::pokemon::PokemonName::PALAFINHERO;
+                pm.attack = atk;
+                pm.defense = def;
+                pm.special_attack = spa;
+                pm.special_defense = spd;
             }
         }
         // PS `clearVolatile`: boosts reset, ability back to the base one.
@@ -11163,9 +11223,10 @@ fn end_of_turn(
                 let sc = &mut state.side_mut(sd).side_conditions;
                 if sc.tailwind > 0 {
                     sc.tailwind -= 1;
-                    if sc.tailwind == 0 {
-                        update_speed(state);
-                    }
+                    // PS tailwind `onSideEnd` only logs `-sideend`: the cached
+                    // speeds (`pokemon.speed`) stay doubled until the next
+                    // `updateSpeed` (`runAction('residual')` or `commitChoices`),
+                    // so the residual's `eachEvent` sorts still use them.
                 }
             }
             ResidualKind::Taunt(side, slot) => {

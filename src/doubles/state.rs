@@ -246,6 +246,10 @@ pub struct ActiveSlot {
     /// Libero / Protean already used this switch-in (PS `effectState.libero`);
     /// holds the original types, restored on switch-out.
     pub type_change: Option<(crate::state::PokemonType, crate::state::PokemonType)>,
+    /// PS `effectState.protean` / `effectState.libero`: the holder's type change
+    /// already happened for its current ability. A new ability (Skill Swap,
+    /// Trace, Role Play, ...) makes a fresh `effectState`, so it resets.
+    pub protean_done: bool,
 }
 
 /// PS `partiallytrapped` effectState (data/conditions.ts).
@@ -363,6 +367,7 @@ impl ActiveSlot {
             charge_aborted: false,
             yawn_source: None,
             type_change: None,
+            protean_done: false,
         }
     }
 

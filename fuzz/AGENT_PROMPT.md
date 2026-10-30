@@ -29,8 +29,8 @@ cargo build --release --features champions --no-default-features
 
 **The cycle:**
 1. **Find the first failure.**
-   `node fuzz/fuzz.js --seed 0 --count 10000` (about a second; see "Sweep
-   speed" below). No output and exit 0 means all 10000 pass: stop and report.
+   `node fuzz/fuzz.js --seed 0 --count 50000` (see "Sweep speed" below). No
+   output and exit 0 means all 50000 pass: stop and report.
    Otherwise copy the `reproduce:` line (e.g. `--seed 2 --count 1`). That
    seed is the score.
 2. **Fix only that battle.** Work on its `reproduce:` command. Re-running the
@@ -45,10 +45,14 @@ cargo build --release --features champions --no-default-features
    It checks the build, `cargo test`, the protected files, and that the
    score did not drop; it raises `fuzz/SCORE`. If it prints `GUARD: FAILED`,
    fix what it says before anything else.
-4. **Commit** (section 6 lists the files): one commit per fixed battle,
-   message `fuzz: seed <N> passes (<mechanic>)`. The body lists, for each
-   mechanic, the PS file and function you copied it from. The hook re-runs
-   the guard.
+4. **Commit only at the end of the run, never after each battle.** Keep doing
+   steps 1–3 until the run's goal is reached (the fix limit, or you are running
+   out of context). Then run `fuzz/guard.sh --update` once more, stage the files
+   by name (section 6), and make ONE commit with the message
+   `fuzz: seeds <first>-<last> pass (<mechanics>)`. The body lists, for each
+   fixed battle, the mechanic and the PS file and function you copied it from.
+   The hook re-runs the guard. A battle that passes is not a reason to commit;
+   leave the work uncommitted until this step is reached.
 5. Go back to step 1.
 
 **Stop and ask the user** (use the notify skill) when:

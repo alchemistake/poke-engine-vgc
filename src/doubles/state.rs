@@ -118,6 +118,9 @@ pub struct ActiveSlot {
     /// `magnetrise` volatile: remaining duration (0 = none). Makes the holder
     /// ungrounded (PS `isGrounded`) until it ends (PS data/moves.ts magnetrise).
     pub magnet_rise: u8,
+    /// `smackdown` volatile (no duration): the holder is grounded (PS
+    /// `isGrounded`) until it switches out (PS data/moves.ts smackdown).
+    pub smackdown: bool,
     /// PS `activeTurns`: end-of-turn count since switch-in.
     pub active_turns: u8,
     /// Illusion ended (hit by a damaging move): the log shows the real species.
@@ -289,6 +292,7 @@ impl ActiveSlot {
             fallen: 0,
             taunt: 0,
             magnet_rise: 0,
+            smackdown: false,
             active_turns: 0,
             illusion_broken: false,
             illusion_target: None,

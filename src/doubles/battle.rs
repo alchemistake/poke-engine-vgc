@@ -4471,6 +4471,36 @@ fn execute_action_inner(
                         Some((c, _)) => Some((if c < 729 { c * 3 } else { c }, 2)),
                     };
                 }
+                PokemonVolatileStatus::SMACKDOWN => {
+                    // PS data/moves.ts smackdown.condition.onStart / onRestart.
+                    // TODO(PS parity): Fly / Bounce charges (`cancelMove` of the
+                    // holder's queued action) and Telekinesis are not modelled.
+                    if let Some(tidx) = state.side(ts).active[tslot].pokemon_index {
+                        let sd = state.side(ts);
+                        let p = sd.team_member(tidx);
+                        let a = &sd.active[tslot];
+                        if a.smackdown {
+                            // onRestart: no further effect.
+                        } else {
+                            let mut applies = p.has_type(&PokemonType::FLYING)
+                                || matches!(p.ability, Abilities::LEVITATE | Abilities::EELEVATE);
+                            if p.item == crate::engine::items::Items::IRONBALL
+                                || a.ingrain
+                                || state.gravity.active
+                            {
+                                applies = false;
+                            }
+                            if a.magnet_rise > 0 {
+                                applies = true;
+                            }
+                            if applies {
+                                let sd = state.side_mut(ts);
+                                sd.active[tslot].magnet_rise = 0;
+                                sd.active[tslot].smackdown = true;
+                            }
+                        }
+                    }
+                }
                 PokemonVolatileStatus::MAGNETRISE => {
                     // PS data/moves.ts magnetrise.onTry: fails with Ingrain or
                     // Gravity (`cant`). TODO(PS parity): Smack Down.
@@ -6648,7 +6678,7 @@ fn base_power_with_modifiers(
 /// makes the holder airborne; the item / ability / type checks are on `Pokemon`.
 fn slot_grounded(p: &crate::state::Pokemon, a: &ActiveSlot) -> bool {
     // PS `isGrounded`: the `smackdown` volatile grounds the holder first.
-    a.magnet_rise == 0 && p.is_grounded()
+    a.smackdown || (a.magnet_rise == 0 && p.is_grounded())
 }
 
 /// Grassy Glide `onModifyPriority`: +1 in Grassy Terrain for a grounded user

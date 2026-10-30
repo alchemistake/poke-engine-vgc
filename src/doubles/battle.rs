@@ -47,6 +47,10 @@ struct Action {
     /// The user's queued action is the `recharge` pseudo-move (no target
     /// type). Kept on the action so it survives the user fainting.
     recharge: bool,
+    /// The ability / Grassy Glide priority boost folded into `priority` (PS
+    /// `getActionSpeed` `ModifyPriority`). Re-sorts recompute it with the
+    /// current ability (Skill Swap / Trace can give Prankster mid-turn).
+    boost: i8,
 }
 
 impl Action {
@@ -617,6 +621,7 @@ fn plan_queue_change(
         side,
         slot,
         pokemon_index: idx,
+        boost,
         priority: choice.priority + boost,
         choice,
         speed: effective_speed(state, side, slot).unwrap_or(0),
@@ -712,6 +717,7 @@ fn instruct_action(
         side,
         slot,
         pokemon_index: idx,
+        boost,
         priority: choice.priority + boost,
         choice,
         speed: effective_speed(state, side, slot).unwrap_or(0),
@@ -736,6 +742,22 @@ fn apply_queue_plan(actions: &mut Vec<Action>, from: usize, plan: QueuePlan) {
 /// (x5325), and the target's Sand Veil / Snow Cloak (x3277 in sand / snow) and
 /// Tangled Feet (x0.5 while confused) unless the attacker ignores its ability.
 /// PS data/abilities.ts.
+/// PS `unaware` `onAnyModifyBoost` (data/abilities.ts): an Unaware target zeroes
+/// the attacker's accuracy stage (`ModifyBoost` in `hitStepAccuracy`). Breakable.
+fn unaware_zeroes_accuracy(
+    state: &DoublesState,
+    side: Side,
+    idx: PokemonIndex,
+    tside: Side,
+    tslot: usize,
+    choice: &Choice,
+) -> bool {
+    let attacker = state.side(side).team_member(idx);
+    state.side(tside).slot_pokemon(tslot).is_some_and(|d| {
+        d.ability == Abilities::UNAWARE && !crate::engine::abilities::ignores_target_ability(attacker, choice, &d.ability)
+    })
+}
+
 fn accuracy_ability_mods(
     state: &DoublesState,
     side: Side,
@@ -941,6 +963,11 @@ pub fn run_battle_fuzz(
                                 side,
                                 slot,
                                 pokemon_index: idx,
+                                boost: if s.active[slot].recharging || uproar_lock {
+                                    0
+                                } else {
+                                    ability_priority_boost(p, &mv) + grassy_glide_boost(state, p, &mv)
+                                },
                                 choice: mv,
                                 priority: prio,
                                 speed: effective_speed(state, side, slot).unwrap_or(0),
@@ -1658,6 +1685,15 @@ fn resort_queue(state: &mut DoublesState, rng: &mut Gen5Rng, queue: &mut [Action
     }
     update_speed(state);
     for a in queue.iter_mut() {
+        // PS `getActionSpeed` (every re-sort) recomputes the priority from the
+        // current ability: a Skill Swap'd Prankster boosts a queued Status move.
+        // Fixed-priority actions (recharge, locked copy, After You) keep theirs.
+        if !a.recharge && !a.no_pp && !a.prioritized {
+            let p = state.side(a.side).team_member(a.pokemon_index);
+            let now = ability_priority_boost(p, &a.choice) + grassy_glide_boost(state, p, &a.choice);
+            a.priority += now - a.boost;
+            a.boost = now;
+        }
         if state.side(a.side).active[a.slot].pokemon_index == Some(a.pokemon_index) {
             if let Some(sp) = effective_speed(state, a.side, a.slot) {
                 a.speed = sp;
@@ -2725,6 +2761,13 @@ fn execute_action_inner(
 
     // PS `runEvent('TryMove')` (useMove, before any `onTry`): Damp's handler.
     damp_handler_ties(state, rng);
+    // Damp `onAnyTryMove` (data/abilities.ts damp): an active Damp holder fails
+    // explosion / mindblown / mistyexplosion / selfdestruct (`cant`). No draw.
+    if damp_blocks_explosion(state, side, idx, choice) {
+        state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+        push_order();
+        return;
+    }
 
     // Steel Roller (gen 9): fails when no terrain is active (PS `onTry`).
     // No PRNG draw; PP is already spent.
@@ -2850,6 +2893,19 @@ fn execute_action_inner(
         }
     }
 
+    // Fling `onPrepareHit`: fails without an item (no draw). PS runs the move's own
+    // `PrepareHit` before the user's ability, so a failed Fling also stops Libero /
+    // Protean below (sim/battle-actions.ts `singleEvent('PrepareHit', move)` &&
+    // `runEvent('PrepareHit', pokemon)`).
+    // TODO(PS parity): item base power table, item removal, item effects.
+    if choice.move_id == Choices::FLING
+        && state.side(side).team_member(idx).item == crate::engine::items::Items::NONE
+    {
+        state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+        push_order();
+        return;
+    }
+
     // Libero / Protean (`onPrepareHit`, after the move's `onTry` and before the hit
     // steps): once per switch-in, become the move's type. PS sim/battle-actions.ts
     // `Try` then `PrepareHit`, so a failed `onTry` (Counter, Rest, ...) changes nothing.
@@ -2922,16 +2978,6 @@ fn execute_action_inner(
     // Belch `onTry`: needs `ateBerry` (berries are never eaten here).
     // TODO(PS parity): `ateBerry` once berries are modeled.
     if choice.move_id == Choices::BELCH {
-        state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-        push_order();
-        return;
-    }
-
-    // Fling `onPrepareHit`: fails without an item (no draw).
-    // TODO(PS parity): item base power table, item removal, item effects.
-    if choice.move_id == Choices::FLING
-        && state.side(side).team_member(idx).item == crate::engine::items::Items::NONE
-    {
         state.side_mut(side).active[slot].move_result_this_turn = Some(false);
         push_order();
         return;
@@ -3390,6 +3436,16 @@ fn execute_action_inner(
     // so the Good as Gold `onTryHit` below never sees the ally. Check it here:
     // PS data/abilities.ts goodasgold.onTryHit (Status move, target !== source).
     if choice.move_id == Choices::HELPINGHAND {
+        // PS data/moves.ts helpinghand.onTryHit: fails unless the ally is newly
+        // switched in or still has a queued move (`queue.willMove(target)`).
+        let ally_idx = state.side(side).active[ally_slot].pokemon_index;
+        let ally_ok = state.side(side).active[ally_slot].newly_switched
+            || queue.iter().any(|q| q.side == side && Some(q.pokemon_index) == ally_idx);
+        if !ally_ok {
+            state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+            push_order();
+            return;
+        }
         let immune = state
             .side(side)
             .slot_pokemon(ally_slot)
@@ -3673,6 +3729,7 @@ fn execute_action_inner(
                 } else {
                     st.side(ts).slot_boosts(tsl).map(|b| b.eva).unwrap_or(0)
                 };
+                let ab = if unaware_zeroes_accuracy(st, side, idx, ts, tsl, choice) { 0 } else { ab };
                 roll_accuracy_boosted(choice.accuracy, ab, eb, accuracy_ability_mods(st, side, idx, ts, tsl, choice), rng)
             });
         }
@@ -3702,7 +3759,11 @@ fn execute_action_inner(
                 .map(|p| p.ability == Abilities::NOGUARD)
                 .unwrap_or(false))
     {
-        let ab = state.side(side).slot_boosts(slot).map(|b| b.acc).unwrap_or(0);
+        let ab = if unaware_zeroes_accuracy(state, side, idx, target_side, target_slot, choice) {
+            0
+        } else {
+            state.side(side).slot_boosts(slot).map(|b| b.acc).unwrap_or(0)
+        };
         let eb = if ignores_evasion(state.side(side).team_member(idx).ability, choice.move_id) {
             0
         } else {
@@ -9832,6 +9893,27 @@ fn end_turn_disable_moves(state: &DoublesState, rng: &mut Gen5Rng) {
 /// equal speed tie and shuffle (PS `findEventHandlers` -> `speedSort`). Called
 /// at `TryMove` and at each `Damage` event. Mold Breaker only suppresses the
 /// handler later, so it does not change the draws.
+/// Damp `onAnyTryMove`: any active Damp holder (not ignored by the user's
+/// breakable-ability check) blocks Explosion, Mind Blown, Misty Explosion and
+/// Self-Destruct before accuracy. PS data/abilities.ts damp.
+fn damp_blocks_explosion(state: &DoublesState, side: Side, idx: PokemonIndex, choice: &Choice) -> bool {
+    if !matches!(
+        choice.move_id,
+        Choices::EXPLOSION | Choices::MINDBLOWN | Choices::MISTYEXPLOSION | Choices::SELFDESTRUCT
+    ) {
+        return false;
+    }
+    let attacker = state.side(side).team_member(idx);
+    [Side::One, Side::Two].iter().any(|&sd| {
+        (0..2).any(|sl| {
+            let Some(hidx) = state.side(sd).active[sl].pokemon_index else { return false };
+            state.side(sd).slot_pokemon(sl).is_some_and(|p| p.hp > 0)
+                && real_ability(state, sd, hidx) == Abilities::DAMP
+                && !crate::engine::abilities::ignores_target_ability(attacker, choice, &Abilities::DAMP)
+        })
+    })
+}
+
 fn damp_handler_ties(state: &DoublesState, rng: &mut Gen5Rng) {
     let mut hs: Vec<(i64, i32, i64)> = Vec::new();
     for (sd, sl) in [(Side::One, 0usize), (Side::One, 1), (Side::Two, 0), (Side::Two, 1)] {
@@ -10731,6 +10813,7 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
                             pokemon_index: idx,
                             choice,
                             priority: 0,
+                            boost: 0,
                             speed: effective_speed(state, side, slot).unwrap_or(0),
                             target: 0,
                             target_loc: 0,

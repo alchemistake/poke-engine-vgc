@@ -2239,6 +2239,10 @@ thread_local! {
     /// The running move found no targets (PS useMoveInner `!targets.length`):
     /// it returns false without `MoveFail`, so no crash / Steel Beam fail damage.
     static NO_TARGET_FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// PS `battle.activeTarget` while a spread move's Substitute `onTryPrimaryHit`
+    /// computes its damage (set only then): the last target of the previous
+    /// per-target loop, not the substitute holder. Unaware reads it.
+    static SUB_ACTIVE_TARGET: std::cell::Cell<Option<(Side, usize)>> = const { std::cell::Cell::new(None) };
 }
 
 /// PS `runMove` -> `runEvent('AfterMove', pokemon)`: the handlers are the
@@ -3270,6 +3274,9 @@ fn execute_action_inner(
         Choices::STOCKPILE => {
             let a = &state.side(side).active[slot];
             if a.stockpile < 3 {
+                // `onTry` passed: `trySpreadMoveHit` runs PrepareHit (Protean /
+                // Libero) before the hit. PS sim/battle-actions.ts trySpreadMoveHit.
+                prepare_hit(state, side, slot, idx, choice);
                 let before = state.side(side).team_boosts[idx as usize].clone();
                 apply_boosts(
                     state,
@@ -3291,6 +3298,9 @@ fn execute_action_inner(
                 // and once more after the loop.
                 each_event_update(state, rng);
                 each_event_update(state, rng);
+            } else {
+                // `onTry` returns false at 3 layers: `-fail`, moveThisTurnResult false.
+                state.side_mut(side).active[slot].move_result_this_turn = Some(false);
             }
             push_order(move_order);
             return;
@@ -3383,6 +3393,7 @@ fn execute_action_inner(
             return;
         }
         Choices::SWALLOW => {
+            prepare_hit(state, side, slot, idx, choice);
             let layers = state.side(side).active[slot].stockpile;
             let s = state.side_mut(side);
             let p = s.team_member_mut(idx);
@@ -4049,6 +4060,10 @@ fn execute_action_inner(
             execute_action_inner(state, rng, &sub, move_order, will_act, queue);
             state.side_mut(target_side).active[target_slot].external_call = false;
             state.side_mut(target_side).active[target_slot].bounced = false;
+            // `onTryHit` returned null, which `hitStepTryHitEvent` turns into
+            // `false`: the user's move failed (Stomping Tantrum doubles).
+            // PS sim/battle-actions.ts hitStepTryHitEvent / useMove.
+            state.side_mut(side).active[slot].move_result_this_turn = Some(false);
             return;
         }
     }
@@ -4463,6 +4478,10 @@ fn execute_action_inner(
     {
         accuracy_event_ties(state, rng, side, slot, target_side, target_slot);
     }
+    // PS `hitStepAccuracy` sets `battle.activeTarget` to each target in turn
+    // (all of them, hit or miss): the last one is still set when the first
+    // hit's Substitute `onTryPrimaryHit` runs.
+    let mut ps_active_target: Option<(Side, usize)> = spread_list.last().copied();
     if is_spread {
         // PS `hitStepAccuracy`: one roll per target, in target order.
         if !choice.always_hit && !toxic_hits && !weather_guaranteed && !flash_fire_used && roll_accuracy_of(choice) > 0.0 {
@@ -4891,7 +4910,16 @@ fn execute_action_inner(
               if state.side(ts).slot_pokemon(tsl).is_none() {
                   continue;
               }
+              let has_sub = !bypass && state.side(ts).active[tsl].substitute_health > 0;
+              // PS substitute.onTryPrimaryHit -> `getDamage` with the stale
+              // `activeTarget`; `getSpreadDamage` then sets it per target.
+              // data/abilities.ts unaware.onAnyModifyBoost reads it.
+              SUB_ACTIVE_TARGET.with(|c| c.set(if has_sub { ps_active_target } else { None }));
               out[i] = compute_hit_damage(state, rng, side, slot, idx, ts, tsl, choice, ate_boosted, sp);
+              SUB_ACTIVE_TARGET.with(|c| c.set(None));
+              if !has_sub {
+                  ps_active_target = Some((ts, tsl));
+              }
           }
           // PS `spreadDamage`: every target's `Damage` event (Damp) runs after
           // all the rolls and before any secondary.
@@ -9326,14 +9354,20 @@ fn compute_hit_damage(
         // Foul Play included: PS `calculateStat(..., statUser = source)` runs
         // `ModifyBoost` with the user as `pokemon`, so the Unaware target zeroes
         // the user's Atk stage even though the stat comes from the target.
-        let atk_boost_stat = if defender.ability == Abilities::UNAWARE
+        // Both branches need the hit pokemon to be `battle.activeTarget`; a
+        // spread move's Substitute damage runs with a stale one (SUB_ACTIVE_TARGET).
+        let is_active_target = SUB_ACTIVE_TARGET
+            .with(|c| c.get())
+            .map_or(true, |t| t == (target_side, target_slot));
+        let atk_boost_stat = if is_active_target
+            && defender.ability == Abilities::UNAWARE
             && !crate::engine::abilities::ignores_target_ability(attacker, choice, &defender.ability)
         {
             0
         } else {
             atk_boost_stat
         };
-        let def_boost_stat = if attacker.ability == Abilities::UNAWARE { 0 } else { def_boost_stat };
+        let def_boost_stat = if is_active_target && attacker.ability == Abilities::UNAWARE { 0 } else { def_boost_stat };
         // PS `move.ignoreDefensive` (data/moves.ts chipaway, darkestlariat,
         // sacredsword): `getDamage` sets `defBoosts = 0` (any sign).
         let def_boost_stat = if matches!(

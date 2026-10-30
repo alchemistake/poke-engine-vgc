@@ -187,6 +187,10 @@ pub struct ActiveSlot {
     /// `trapped` volatile (Block, Mean Look, Spider Web, Jaw Lock): no switching;
     /// ends with the volatiles. PS data/conditions.ts trapped.
     pub trapped: bool,
+    /// The pokemon whose `trapped` link (`linkedPokemon`, PS `addVolatile`
+    /// `linkedStatus` = 'trapper') holds this slot: released when it leaves the
+    /// field (PS `removeLinkedVolatiles` on faint / `clearVolatile`).
+    pub trapper: Option<(Side, PokemonIndex)>,
     /// PS `pokemon.hurtThisTurn`: lost HP earlier this turn (Assurance).
     pub hurt_this_turn: bool,
     /// PS `pokemon.newlySwitched`: switched in since the turn started (Payback).
@@ -346,6 +350,7 @@ impl ActiveSlot {
             syrup_bomb: None,
             octolock: None,
             trapped: false,
+            trapper: None,
             hurt_this_turn: false,
             newly_switched: false,
             twoturn_fired: false,
@@ -559,6 +564,10 @@ pub struct DoublesState {
     /// resolves faints after the loop, so its per-hit `eachEvent` still sorts
     /// them: (side, slot, team index).
     pub unresolved_faints: Vec<(crate::doubles::state::Side, usize, PokemonIndex)>,
+    /// The `disabled` volatile each pokemon had when it fainted. PS keeps the
+    /// volatiles until `faintMessages`, so a DamagingHit handler that runs after
+    /// a Destiny Bond KO of its attacker still sees the attacker's Disable.
+    pub faint_disabled: Vec<(Side, PokemonIndex, Option<(Choices, u8)>)>,
     /// Disguise holders whose hit was absorbed by a spread move. PS busts the
     /// forme in `onUpdate`, i.e. inside the next `eachEvent('Update')` after
     /// its speed sort (the sort still sees the stale speed).
@@ -1169,6 +1178,7 @@ impl DoublesState {
             },
             turn: 1,
             unresolved_faints: Vec::new(),
+            faint_disabled: Vec::new(),
             pending_disguise: Vec::new(),
             faint_log: Vec::new(),
             pending_after_faint: None,

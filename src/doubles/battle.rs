@@ -238,6 +238,21 @@ pub fn effective_speed(state: &DoublesState, side: Side, slot: usize) -> Option<
     }
 }
 
+/// PS `removeLinkedVolatiles` when `(side, idx)` leaves the field (faint or
+/// `clearVolatile` on switch-out): every slot whose `trapped` link it holds
+/// loses `trapped` (Block / Mean Look / Jaw Lock). No draw.
+fn release_trapped_by(state: &mut DoublesState, side: Side, idx: PokemonIndex) {
+    for s in [Side::One, Side::Two] {
+        for sl in 0..2 {
+            let a = &mut state.side_mut(s).active[sl];
+            if a.trapper == Some((side, idx)) {
+                a.trapped = false;
+                a.trapper = None;
+            }
+        }
+    }
+}
+
 /// Remove a pokemon from its active slot, clearing per-pokemon state the way
 /// pokemon-showdown does on faint (boosts cleared; the slot stays empty until
 /// the end-of-turn switch).
@@ -245,6 +260,9 @@ fn faint_pokemon(state: &mut DoublesState, side: Side, slot: usize) {
     if let Some(idx) = state.side(side).active[slot].pokemon_index {
         state.unresolved_faints.push((side, slot, idx));
         state.faint_log.push(side);
+        let disabled = state.side(side).active[slot].disabled;
+        state.faint_disabled.push((side, idx, disabled));
+        release_trapped_by(state, side, idx);
     }
     // Destiny Bond `onAfterFaint`: the last attacker also faints.
     // PS data/conditions.ts destinybond.onAfterFaint.
@@ -1781,7 +1799,11 @@ fn ps_get_target_inner(
             return Some((ts, tsl));
         }
         if !is_foe {
-            // Fainted ally: no retarget.
+            // PS `getTarget`: a fainted ally is not retargeted, except that
+            // `adjacentAllyOrSelf` (gen != 5) returns the user (no draw).
+            if ty == "adjacentAllyOrSelf" {
+                return Some((side, slot));
+            }
             return Some((ts, tsl));
         }
     }
@@ -5397,7 +5419,10 @@ fn execute_action_inner(
                 // (`-fail` / `[still]`), whatever the move's status. No draw.
                 let already = state.side(ts).team_member(tidx).status != PokemonStatus::NONE;
                 // Already in a status, or immune: the move fails.
-                if already || status_immune(state, ts, tslot, st.status, ts != side, side, slot) {
+                // PS `substitute.onTryPrimaryHit`: `bypasssub` moves (Sing, and the
+                // list in `bypasses_substitute`) skip the Substitute.
+                let sub_blocks = !bypasses_substitute(choice);
+                if already || status_immune_ex(state, ts, tslot, st.status, ts != side, side, slot, sub_blocks, true, false) {
                     move_failed = true;
                 } else {
                     set_status(state, rng, ts, tidx, st.status);
@@ -5654,7 +5679,11 @@ fn execute_action_inner(
                     if a.trapped || ghost || !state.side(ts).slot_pokemon(tslot).map(|p| p.hp > 0).unwrap_or(false) {
                         move_failed = true;
                     } else {
-                        state.side_mut(ts).active[tslot].trapped = true;
+                        // PS `addVolatile('trapped', source, move, 'trapper')`: the
+                        // user holds the link (released when the user leaves).
+                        let a = &mut state.side_mut(ts).active[tslot];
+                        a.trapped = true;
+                        a.trapper = Some((side, idx));
                     }
                 }
                 PokemonVolatileStatus::OCTOLOCK => {
@@ -7493,11 +7522,22 @@ fn execute_action_inner(
     // Jaw Lock `onHit` (PS data/moves.ts jawlock): the user and the target both
     // gain the `trapped` volatile (no-op while present; the target must be alive).
     if choice.move_id == Choices::JAWLOCK && hits_done > 0 {
-        if state.side(side).slot_pokemon(slot).map(|p| p.hp > 0).unwrap_or(false) {
-            state.side_mut(side).active[slot].trapped = true;
+        let user_idx = state.side(side).active[slot].pokemon_index;
+        let target_pi = state.side(target_side).active[target_slot].pokemon_index;
+        // Each side gains `trapped` (no-op while present), linked to the other.
+        if let (Some(_), true) = (user_idx, state.side(side).slot_pokemon(slot).map(|p| p.hp > 0).unwrap_or(false)) {
+            let a = &mut state.side_mut(side).active[slot];
+            if !a.trapped {
+                a.trapped = true;
+                a.trapper = target_pi.map(|ti| (target_side, ti));
+            }
         }
-        if state.side(target_side).slot_pokemon(target_slot).map(|p| p.hp > 0).unwrap_or(false) {
-            state.side_mut(target_side).active[target_slot].trapped = true;
+        if let (Some(_), true) = (target_pi, state.side(target_side).slot_pokemon(target_slot).map(|p| p.hp > 0).unwrap_or(false)) {
+            let a = &mut state.side_mut(target_side).active[target_slot];
+            if !a.trapped {
+                a.trapped = true;
+                a.trapper = user_idx.map(|ui| (side, ui));
+            }
         }
     }
 
@@ -8431,7 +8471,14 @@ fn protect_contact_penalty(
 ) {
     let kind = state.side(target_side).active[target_slot].protect_kind;
     match kind {
-        1 => apply_boosts(state, side, idx, &StatBoosts { attack: -1, ..Default::default() }, true),
+        1 => {
+            // PS King's Shield `onTryHit`: `this.boost({atk: -1}, source, target)`,
+            // so the drop comes from the protecting pokemon and Mirror Armor
+            // (`onTryBoost`) bounces it back onto the protector.
+            let drop = StatBoosts { attack: -1, ..Default::default() };
+            let drop = mirror_armor_bounce(state, target_side, target_slot, side, idx, &drop);
+            apply_boosts(state, side, idx, &drop, true);
+        }
         2 => {
             let maxhp = state.side(side).team_member(idx).maxhp;
             apply_damage(state, side, slot, (maxhp / 8).max(1));
@@ -9375,7 +9422,15 @@ fn cursed_body(
     if state.side(target_side).team_member(def_idx).ability != Abilities::CURSEDBODY {
         return;
     }
-    if state.side(side).active[slot].disabled.is_some() || choice.move_id == Choices::STRUGGLE {
+    // PS `source.volatiles['disable']`: the attacker's Disable as it was before
+    // any faint in this hit (the slot is already empty if the attacker fainted).
+    let att_idx = slot_index_or_unresolved(state, side, slot);
+    let att_disabled = state.side(side).active[slot].disabled.or_else(|| {
+        att_idx.and_then(|ai| state.faint_disabled.iter().rev().find(|e| e.0 == side && e.1 == ai).and_then(|e| e.2))
+    });
+    // PS `addVolatile` fails on a fainted pokemon: no Disable for a KO'd attacker.
+    let att_alive = att_idx.is_some_and(|ai| state.side(side).team_member(ai).hp > 0);
+    if att_disabled.is_some() || choice.move_id == Choices::STRUGGLE {
         return;
     }
     let hit = rng.label("ability").random_chance(3, 10);
@@ -9402,7 +9457,7 @@ fn cursed_body(
         }
         None => false,
     };
-    if hit && !aroma_veil && !out_of_pp {
+    if hit && !aroma_veil && !out_of_pp && att_alive {
         state.side_mut(side).active[slot].disabled = Some((choice.move_id, 4));
     }
 }
@@ -10261,6 +10316,7 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
         }
     }
     if let Some(old) = state.side(side).active[slot].pokemon_index {
+        release_trapped_by(state, side, old);
         if state.side(side).active[slot].power_trick {
             let pm = state.side_mut(side).team_member_mut(old);
             std::mem::swap(&mut pm.attack, &mut pm.defense);

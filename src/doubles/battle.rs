@@ -952,7 +952,7 @@ fn accuracy_ability_mods(
 
 /// PS `getLastDamagedBy(true)`: the last attacker from the other side that
 /// damaged `(side, idx)` — (attacker side, attacker slot, damage, turn).
-fn last_damaged_by(state: &DoublesState, side: Side, idx: PokemonIndex) -> Option<(Side, usize, i16, u32)> {
+fn last_damaged_by(state: &DoublesState, side: Side, idx: PokemonIndex) -> Option<(Side, usize, i16, u32, usize)> {
     state.side(side).damaged_by[idx as usize]
         .iter()
         .rev()
@@ -2339,6 +2339,14 @@ fn execute_action_body(
     if move_order.len() > order_len && !AFTER_MOVE_TIE_DRAWN.with(|c| c.get()) {
         after_move_handler_ties(state, rng, action.side, action.pokemon_index, false);
     }
+    // Opportunist `onAnyAfterMove` (every holder, after the move).
+    if move_order.len() > order_len {
+        for sd in [Side::One, Side::Two] {
+            for sl in 0..2 {
+                flush_opportunist(state, sd, sl);
+            }
+        }
+    }
     // charge `onAfterMove` / `onMoveAborted`: an Electric move uses it up.
     if action.choice.move_type == PokemonType::ELECTRIC && action.choice.move_id != Choices::CHARGE {
         state.side_mut(action.side).active[action.slot].charge = false;
@@ -2919,7 +2927,7 @@ fn execute_action_inner(
         // `getRandomTarget` draws in `getMoveTargets`, then `scripted` misses).
         let scripted = if matches!(choice.move_id, Choices::METALBURST | Choices::COMEUPPANCE) {
             last_damaged_by(state, side, idx)
-                .map(|(s_, sl_, _, _)| (s_, sl_))
+                .map(|(s_, sl_, _, _, _)| (s_, sl_))
                 .filter(|&(s_, sl_)| slot_alive(state, s_, sl_))
         } else {
             None
@@ -3380,10 +3388,7 @@ fn execute_action_inner(
     // this turn (`getLastDamagedBy(true)?.thisTurn`). No draw.
     if matches!(choice.move_id, Choices::METALBURST | Choices::COMEUPPANCE) {
         let last = last_damaged_by(state, side, idx);
-        // PS `getMoveTargets` (before `TryMove`): the scripted target's slot
-        // holds a fainted pokemon, so the move retargets with a random foe
-        // draw. The hit still goes to `resolved` (`scripted` misses).
-        if let Some((ls, lsl, _, _)) = last {
+        if let Some((ls, lsl, _, _, _)) = last {
             if !slot_alive(state, ls, lsl) {
                 let foes: Vec<usize> = (0..2).filter(|&s| slot_alive(state, side.other(), s)).collect();
                 if !foes.is_empty() {
@@ -3391,7 +3396,7 @@ fn execute_action_inner(
                 }
             }
         }
-        if !matches!(last, Some((_, _, _, t)) if t == state.turn) {
+        if !matches!(last, Some((_, _, _, t, _)) if t == state.turn) {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
             push_order(move_order);
             return;
@@ -5020,7 +5025,7 @@ fn execute_action_inner(
                         .push((attacker_key(side, idx as u8), turn_now));
                     // PS `gotAttacked`: `attackedBy` entry with damage / slot
                     // (Metal Burst / Comeuppance `getLastDamagedBy`).
-                    state.side_mut(target_side).damaged_by[tidx as usize].push((side, slot, damage, turn_now));
+                    state.side_mut(target_side).damaged_by[tidx as usize].push((side, slot, damage, turn_now, idx as usize));
                     // Fire-type damaging move `onDamagingHit` (data/conditions.ts
                     // frz): a frozen target thaws. No draw.
                     // PS `cureStatus` returns when `!this.hp`: this hook runs after the
@@ -9046,7 +9051,7 @@ fn compute_hit_damage(
     } else if matches!(choice.move_id, Choices::METALBURST | Choices::COMEUPPANCE) {
         // damageCallback: `(lastDamagedBy.damage * 1.5) || 1`.
         damage = last_damaged_by(state, side, idx)
-            .map(|(_, _, d, _)| ((d as f32) * 1.5) as i16)
+            .map(|(_, _, d, _, _)| ((d as f32) * 1.5) as i16)
             .filter(|&d| d > 0)
             .unwrap_or(1);
     } else if matches!(choice.move_id, Choices::COUNTER | Choices::MIRRORCOAT) {
@@ -9441,21 +9446,8 @@ fn contact_abilities(
     // PS data/abilities.ts mummy / lingeringaroma.
     if matches!(ability, Abilities::MUMMY | Abilities::LINGERINGAROMA) {
         let a = state.side(side).team_member(idx).ability;
-        let cantsuppress = matches!(
-            a,
-            Abilities::MULTITYPE
-                | Abilities::STANCECHANGE
-                | Abilities::DISGUISE
-                | Abilities::ZENMODE
-                | Abilities::SCHOOLING
-                | Abilities::SHIELDSDOWN
-                | Abilities::POWERCONSTRUCT
-                | Abilities::COMATOSE
-                | Abilities::ICEFACE
-                | Abilities::GULPMISSILE
-                | Abilities::HUNGERSWITCH
-                | Abilities::BATTLEBOND
-        );
+        // PS `sourceAbility.flags['cantsuppress']` (Zero to Hero included).
+        let cantsuppress = crate::engine::mechanics::cant_suppress(a);
         if !cantsuppress && a != ability {
             state.side_mut(side).team_member_mut(idx).ability = ability;
         }
@@ -9472,7 +9464,14 @@ fn contact_abilities(
                 (att_gender.as_deref(), def_gender.as_deref()),
                 (Some("M"), Some("F")) | (Some("F"), Some("M"))
             );
+            // PS `addVolatile('attract')` -> `onAllyTryAddVolatile` (data/abilities.ts
+            // aromaveil): an Aroma Veil on the holder's side (itself or its ally)
+            // stops it. The Cute Charm roll above still happens.
+            let aroma_veil = (0..2).any(|sl| {
+                state.side(side).slot_pokemon(sl).is_some_and(|p| p.hp > 0 && p.ability == Abilities::AROMAVEIL)
+            });
             if opposite
+                && !aroma_veil
                 && state.side(side).team_member(idx).ability != Abilities::OBLIVIOUS
                 && state.side(side).active[slot].attract.is_none()
             {
@@ -9707,6 +9706,18 @@ fn resolve_future_move(
     };
     if damage > 0 {
         apply_damage(state, ts, tslot, damage);
+        // PS `DamagingHit` (trySpreadMoveHit) also runs for the delayed hit: the
+        // target's damaging-hit boosts (Weak Armor, Justified, ...) and Stamina.
+        // PS data/abilities.ts stamina / sim/battle-actions.ts spreadMoveHit.
+        if let Some(didx) = state.side(ts).active[tslot].pokemon_index {
+            let ability = state.side(ts).team_member(didx).ability;
+            if let Some(b) = crate::engine::mechanics::on_damaging_hit_boosts(ability, &choice) {
+                apply_boosts(state, ts, didx, &b, false);
+            }
+            if ability == Abilities::STAMINA && state.side(ts).team_member(didx).hp > 0 {
+                apply_boosts(state, ts, didx, &StatBoosts { defense: 1, ..Default::default() }, false);
+            }
+        }
     }
     // PS trySpreadMoveHit: the hit loop's `eachEvent('Update')`, then
     // `resolveFaints` (the target's faint is printed here), then the closing
@@ -10033,6 +10044,39 @@ fn mirror_armor_bounce(
     }
 }
 
+thread_local! {
+    /// Set while Opportunist applies its own copied boosts (PS `effect.name ===
+    /// 'Opportunist'`): those raises are not copied again.
+    static OPPORTUNIST_BUSY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// PS data/abilities.ts opportunist `onAnyAfterMove` / `onAnySwitchIn` /
+/// `onResidual`: apply the boosts the holder copied from its foes, then clear
+/// them. Only a living holder with the ability applies them (`onEnd` clears).
+fn flush_opportunist(state: &mut DoublesState, side: Side, slot: usize) {
+    let pending = state.side(side).active[slot].opportunist_boosts;
+    if pending == [0; 7] {
+        return;
+    }
+    state.side_mut(side).active[slot].opportunist_boosts = [0; 7];
+    let Some(idx) = state.side(side).active[slot].pokemon_index else { return };
+    if !state.side(side).slot_pokemon(slot).is_some_and(|p| p.hp > 0 && p.ability == Abilities::OPPORTUNIST) {
+        return;
+    }
+    let copy = StatBoosts {
+        attack: pending[0],
+        defense: pending[1],
+        special_attack: pending[2],
+        special_defense: pending[3],
+        speed: pending[4],
+        accuracy: pending[5],
+        evasion: pending[6],
+    };
+    OPPORTUNIST_BUSY.with(|b| b.set(true));
+    apply_boosts(state, side, idx, &copy, false);
+    OPPORTUNIST_BUSY.with(|b| b.set(false));
+}
+
 fn apply_boosts(
     state: &mut DoublesState,
     side: Side,
@@ -10170,9 +10214,19 @@ fn apply_boosts_from(
         lowered |= changed && req < 0;
         if changed && req < 0 {
             if let Some((stat, amount)) = reaction {
+                // The reaction is its own PS `boost` (effect Competitive / Defiant):
+                // a raise it makes is copied by Opportunist like any other.
                 match stat {
-                    PokemonBoostableStat::Attack => tb.atk = (tb.atk + amount).clamp(-6, 6),
-                    PokemonBoostableStat::SpecialAttack => tb.spa = (tb.spa + amount).clamp(-6, 6),
+                    PokemonBoostableStat::Attack => {
+                        let before = tb.atk;
+                        tb.atk = (tb.atk + amount).clamp(-6, 6);
+                        gained[0] += (tb.atk - before).max(0);
+                    }
+                    PokemonBoostableStat::SpecialAttack => {
+                        let before = tb.spa;
+                        tb.spa = (tb.spa + amount).clamp(-6, 6);
+                        gained[2] += (tb.spa - before).max(0);
+                    }
                     _ => {}
                 }
             }
@@ -10187,29 +10241,19 @@ fn apply_boosts_from(
             }
         }
     }
-    // Opportunist `onFoeAfterBoost`: foes with the ability copy the stat raises
-    // (not for boosts it caused itself). PS data/abilities.ts opportunist.
-    thread_local! {
-        static OPPORTUNIST_BUSY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    }
+    // Opportunist `onFoeAfterBoost`: each foe holder adds the positive raises to
+    // its `effectState.boosts` (not for boosts it caused itself). They are
+    // applied later by `flush_opportunist`. PS data/abilities.ts opportunist.
     if gained.iter().any(|&g| g > 0) && !OPPORTUNIST_BUSY.with(|b| b.get()) {
         let foe = side.other();
-        let copy = StatBoosts {
-            attack: gained[0],
-            defense: gained[1],
-            special_attack: gained[2],
-            special_defense: gained[3],
-            speed: gained[4],
-            accuracy: gained[5],
-            evasion: gained[6],
-        };
         for fsl in 0..2 {
             let holder = state.side(foe).slot_pokemon(fsl).filter(|p| p.hp > 0 && p.ability == Abilities::OPPORTUNIST);
             if holder.is_some() {
-                if let Some(fidx) = state.side(foe).active[fsl].pokemon_index {
-                    OPPORTUNIST_BUSY.with(|b| b.set(true));
-                    apply_boosts(state, foe, fidx, &copy, false);
-                    OPPORTUNIST_BUSY.with(|b| b.set(false));
+                let pending = &mut state.side_mut(foe).active[fsl].opportunist_boosts;
+                for (i, &g) in gained.iter().enumerate() {
+                    if g > 0 {
+                        pending[i] = pending[i].saturating_add(g);
+                    }
                 }
             }
         }
@@ -10630,6 +10674,12 @@ fn switch_in(state: &mut DoublesState, side: Side, slot: usize, position: usize)
     switch_in_inner(state, side, slot, position);
     entry_hazards(state, side, slot);
     refresh_mimicry_slot(state, side, slot);
+    // Opportunist `onAnySwitchIn` (priority -3): every holder flushes.
+    for sd in [Side::One, Side::Two] {
+        for sl in 0..2 {
+            flush_opportunist(state, sd, sl);
+        }
+    }
 }
 
 /// Healing Wish / Lunar Dance `slotCondition` `onSwitchIn` -> `onSwap`: a hurt
@@ -10937,6 +10987,8 @@ enum ResidualKind {
     /// A handler with no modeled effect (duration countdowns, ...): it only
     /// takes part in the sort, where ties still consume PRNG draws.
     Marker,
+    /// Opportunist `onResidual` (order 29): flush the copied boosts.
+    OpportunistFlush(Side, usize),
     /// A side condition with a duration (reflect, light screen, safeguard, mist,
     /// lucky chant, aurora veil, quick guard, wide guard). PS `fieldEvent`
     /// drops the duration when this handler is reached, so a battle that ends
@@ -11124,10 +11176,9 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
                 if matches!(p.ability, Abilities::CUDCHEW | Abilities::PICKUP) {
                     push(28, speed, 2, ResidualKind::Marker);
                 }
-                // Opportunist `onResidual` (order 29): its copied boosts are
-                // applied at once (`onAnyAfterMove`), so only the sort slot.
+                // Opportunist `onResidual` (order 29): flushes the copied boosts.
                 if p.ability == Abilities::OPPORTUNIST {
-                    push(29, speed, 7, ResidualKind::Marker);
+                    push(29, speed, 7, ResidualKind::OpportunistFlush(side, slot));
                 }
                 if p.ability == Abilities::MOODY {
                     push(28, speed, 2, ResidualKind::Moody(side, slot));
@@ -11273,7 +11324,7 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
                 push(28, speed, 2, ResidualKind::Marker);
             }
             if p.ability == Abilities::OPPORTUNIST {
-                push(29, speed, 7, ResidualKind::Marker);
+                push(29, speed, 7, ResidualKind::OpportunistFlush(side, slot));
             }
             if p.ability == Abilities::MOODY {
                 push(28, speed, 2, ResidualKind::Moody(side, slot));
@@ -11767,6 +11818,7 @@ fn end_of_turn(
         }
         match h.kind {
             ResidualKind::Marker => {}
+            ResidualKind::OpportunistFlush(side, slot) => flush_opportunist(state, side, slot),
             ResidualKind::SideDuration(side, which) => {
                 let d = side_condition_duration_mut(state, side, which);
                 if *d > 0 {
@@ -12624,9 +12676,15 @@ fn end_of_turn(
             if !state.side(side).slot_pokemon(sl).map(|p| p.hp > 0).unwrap_or(false) {
                 continue;
             }
-            let kept: Vec<(Side, usize, i16, u32)> = state.side(side).damaged_by[pidx as usize]
+            let kept: Vec<(Side, usize, i16, u32, usize)> = state.side(side).damaged_by[pidx as usize]
                 .iter()
-                .filter(|e| state.side(e.0).slot_pokemon(e.1).map(|p| p.hp > 0).unwrap_or(false))
+                .filter(|e| {
+                    // PS `source.isActive`: the attacker itself is on the field and alive.
+                    (0..2).any(|asl| {
+                        state.side(e.0).active[asl].pokemon_index.map(|x| x as usize) == Some(e.4)
+                            && state.side(e.0).slot_pokemon(asl).map(|p| p.hp > 0).unwrap_or(false)
+                    })
+                })
                 .copied()
                 .collect();
             state.side_mut(side).damaged_by[pidx as usize] = kept;

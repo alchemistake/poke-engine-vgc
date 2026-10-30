@@ -138,6 +138,10 @@ pub struct ActiveSlot {
     pub active_move_actions: u8,
     /// Illusion ended (hit by a damaging move): the log shows the real species.
     pub illusion_broken: bool,
+    /// Opportunist `effectState.boosts`: stat raises copied from the foes
+    /// (PS `onFoeAfterBoost`), applied when the holder's `onAnyAfterMove`,
+    /// `onAnySwitchIn` or `onResidual` runs. Indexed like `StatBoosts`.
+    pub opportunist_boosts: [i8; 7],
     /// Illusion's disguise, fixed at switch-in (`onBeforeSwitchIn`): the last
     /// unfainted pokemon after the holder then. `Some(None)` = no disguise.
     pub illusion_target: Option<Option<usize>>,
@@ -333,6 +337,7 @@ impl ActiveSlot {
             active_turns: 0,
             active_move_actions: 0,
             illusion_broken: false,
+            opportunist_boosts: [0; 7],
             illusion_target: None,
             cursed: false,
             bp_double: false,
@@ -454,7 +459,10 @@ pub struct DoublesSide {
     pub moves_used: [[bool; 4]; 6],
     /// PS `pokemon.attackedBy` entries with damage (`getLastDamagedBy`), per
     /// team member: (attacker side, attacker slot, damage, turn).
-    pub damaged_by: [Vec<(Side, usize, i16, u32)>; 6],
+    /// PS `attackedBy`: (attacker side, attacker slot at the hit, damage, turn,
+    /// attacker team index). Pruned at end of turn unless the attacker is still
+    /// on the field and alive (PS `endTurn`: `source.isActive`).
+    pub damaged_by: [Vec<(Side, usize, i16, u32, usize)>; 6],
     /// Original (atk, def, spa, spd) of a team member whose `storedStats` were
     /// changed (Guard / Power Split); restored by `setSpecies` on switch-in.
     pub saved_stats: [Option<[i16; 4]>; 6],

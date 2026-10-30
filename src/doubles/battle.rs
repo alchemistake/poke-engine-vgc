@@ -1584,6 +1584,7 @@ pub fn run_battle_fuzz(
             update_forecast(state);
             state.side_one.sync_sc_order();
             state.side_two.sync_sc_order();
+            sync_vol_order(state);
             each_event_update(state, rng);
             // PS `runAction` case 'beforeTurnMove' (the Encore-inserted
             // Counter / Mirror Coat): `beforeTurnCallback` adds the volatile,
@@ -1812,6 +1813,8 @@ pub fn run_battle_fuzz(
                             a.stall = old.stall;
                             a.electrify = old.electrify;
                             a.ally_switch = old.ally_switch;
+                            // PS copyVolatileFrom adds them in the source's key order.
+                            a.vol_order = old.vol_order.clone();
                             if old.power_trick {
                                 a.power_trick = true;
                                 if let Some(ni) = a.pokemon_index {
@@ -1954,6 +1957,7 @@ pub fn run_battle_fuzz(
             update_forecast(state);
             state.side_one.sync_sc_order();
             state.side_two.sync_sc_order();
+            sync_vol_order(state);
         }
 
         turn_states.push(fuzz_snapshot(state, move_order));
@@ -12459,6 +12463,31 @@ enum ResidualKind {
     GrassyHeal(Side, usize),
 }
 
+/// Keep each slot's `vol_order` in PS `pokemon.volatiles` key order: drop
+/// the volatiles that ended, append the ones added since the last call.
+/// Called at the end of every action (PS `runAction`), so volatiles added
+/// by different actions keep the order they were added in; ones added within
+/// one action follow `pokemon_effects`' fixed order.
+// TODO(PS parity): order of volatiles added within the same action.
+fn sync_vol_order(state: &mut DoublesState) {
+    for side in [Side::One, Side::Two] {
+        for slot in 0..2 {
+            let present: Vec<String> = crate::doubles::events::pokemon_effects(state, side, slot)
+                .into_iter()
+                .filter(|(_, k)| *k == crate::doubles::event_handlers::HandlerKind::Volatile)
+                .map(|(id, _)| id)
+                .collect();
+            let order = &mut state.side_mut(side).active[slot].vol_order;
+            order.retain(|o| present.contains(o));
+            for id in present {
+                if !order.contains(&id) {
+                    order.push(id);
+                }
+            }
+        }
+    }
+}
+
 /// Build the Residual handler list in pokemon-showdown's `fieldEvent`
 /// collection order: field (weather, terrain, pseudo-weather), then per side
 /// its side conditions followed by each active's status, volatiles (in
@@ -12592,11 +12621,15 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
                 }
                 continue;
             }
-            // Volatiles with a duration (Conditions: subOrder 2, no order).
+            // Volatiles with a duration (Conditions: subOrder 2, no order),
+            // collected in PS `pokemon.volatiles` key (insertion) order: the
+            // order tied handlers enter `speedSort`. PS sim/battle.ts
+            // findPokemonEventHandlers (`for (const id in pokemon.volatiles)`).
+            let mut vols: Vec<(String, i64, i32, ResidualKind)> = Vec::new();
             // An aborted charge lost `twoturnmove` (`onMoveAborted`), whose
             // `onEnd` also removed the move's own volatile (Dig, Fly, ...).
             if let Some((m, _)) = a.charging.filter(|_| !a.charge_aborted) {
-                push(NO_ORDER, speed, 2, ResidualKind::Marker); // twoturnmove
+                vols.push(("twoturnmove".to_string(), NO_ORDER, 2, ResidualKind::Marker)); // twoturnmove
                 if matches!(
                     m,
                     Choices::DIG
@@ -12609,111 +12642,116 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
                 ) {
                     // Gone with an aborted charge: `twoturnmove.onEnd` removes the
                     // move's volatile. PS data/conditions.ts twoturnmove.
-                    push(NO_ORDER, speed, 2, ResidualKind::Marker); // the move's own condition
+                    vols.push((m.to_string().to_lowercase(), NO_ORDER, 2, ResidualKind::Marker)); // the move's own condition
                 }
             }
             if a.twoturn_fired && a.charging.is_none() {
-                push(NO_ORDER, speed, 2, ResidualKind::Marker); // twoturnmove (duration 2, last turn)
+                vols.push(("twoturnmove".to_string(), NO_ORDER, 2, ResidualKind::Marker)); // twoturnmove (duration 2, last turn)
             }
             if a.protected || a.endure {
-                push(NO_ORDER, speed, 2, ResidualKind::Marker); // protect / endure
+                vols.push((if a.protected { crate::doubles::events::PROTECT_IDS[(a.protect_kind as usize).min(5)] } else { "endure" }.to_string(), NO_ORDER, 2, ResidualKind::Marker)); // protect / endure
             }
             if a.stall.is_some() {
-                push(NO_ORDER, speed, 2, ResidualKind::Stall(side, slot));
+                vols.push(("stall".to_string(), NO_ORDER, 2, ResidualKind::Stall(side, slot)));
             }
             if a.flinched {
-                push(NO_ORDER, speed, 2, ResidualKind::Marker);
+                vols.push(("flinch".to_string(), NO_ORDER, 2, ResidualKind::Marker));
             }
             if a.helping_hand_mult > 1.0 {
-                push(NO_ORDER, speed, 2, ResidualKind::Marker);
+                vols.push(("helpinghand".to_string(), NO_ORDER, 2, ResidualKind::Marker));
             }
             if a.focus_punch {
-                push(NO_ORDER, speed, 2, ResidualKind::Marker); // focuspunch (duration 1)
+                vols.push(("focuspunch".to_string(), NO_ORDER, 2, ResidualKind::Marker)); // focuspunch (duration 1)
             }
             if a.chilly_reception {
-                push(NO_ORDER, speed, 2, ResidualKind::Marker); // chillyreception (duration 1)
+                vols.push(("chillyreception".to_string(), NO_ORDER, 2, ResidualKind::Marker)); // chillyreception (duration 1)
             }
             // PS data/moves.ts electrify.condition / beakblast.condition: duration 1.
             if a.electrify {
-                push(NO_ORDER, speed, 2, ResidualKind::Marker);
+                vols.push(("electrify".to_string(), NO_ORDER, 2, ResidualKind::Marker));
             }
             if a.beak_blast {
-                push(NO_ORDER, speed, 2, ResidualKind::Marker);
+                vols.push(("beakblast".to_string(), NO_ORDER, 2, ResidualKind::Marker));
             }
             if a.recharging {
-                push(NO_ORDER, speed, 2, ResidualKind::Marker); // mustrecharge
+                vols.push(("mustrecharge".to_string(), NO_ORDER, 2, ResidualKind::Marker)); // mustrecharge
             }
             if a.salt_cure {
-                push(13, speed, 2, ResidualKind::SaltCure(side, slot));
+                vols.push(("saltcure".to_string(), 13, 2, ResidualKind::SaltCure(side, slot)));
             }
             if a.partial_trap.is_some() {
-                push(13, speed, 2, ResidualKind::PartialTrap(side, slot));
+                vols.push(("partiallytrapped".to_string(), 13, 2, ResidualKind::PartialTrap(side, slot)));
             }
             if a.yawn > 0 {
-                push(23, speed, 2, ResidualKind::Yawn(side, slot));
+                vols.push(("yawn".to_string(), 23, 2, ResidualKind::Yawn(side, slot)));
             }
             if a.throat_chop > 0 {
-                push(22, speed, 2, ResidualKind::ThroatChop(side, slot));
+                vols.push(("throatchop".to_string(), 22, 2, ResidualKind::ThroatChop(side, slot)));
             }
             if a.taunt > 0 {
-                push(15, speed, 2, ResidualKind::Taunt(side, slot));
+                vols.push(("taunt".to_string(), 15, 2, ResidualKind::Taunt(side, slot)));
             }
             if a.magnet_rise > 0 {
-                push(18, speed, 2, ResidualKind::MagnetRise(side, slot));
+                vols.push(("magnetrise".to_string(), 18, 2, ResidualKind::MagnetRise(side, slot)));
             }
             if a.cursed {
-                push(12, speed, 2, ResidualKind::Curse(side, slot));
+                vols.push(("curse".to_string(), 12, 2, ResidualKind::Curse(side, slot)));
             }
             if a.encore.is_some() {
-                push(16, speed, 2, ResidualKind::Encore(side, slot));
+                vols.push(("encore".to_string(), 16, 2, ResidualKind::Encore(side, slot)));
             }
             if a.ingrain {
-                push(7, speed, 2, ResidualKind::Ingrain(side, slot));
+                vols.push(("ingrain".to_string(), 7, 2, ResidualKind::Ingrain(side, slot)));
             }
             if a.syrup_bomb.is_some() {
-                push(14, speed, 2, ResidualKind::SyrupBomb(side, slot));
+                vols.push(("syrupbomb".to_string(), 14, 2, ResidualKind::SyrupBomb(side, slot)));
             }
             if a.octolock.is_some() {
-                push(14, speed, 2, ResidualKind::Octolock(side, slot));
+                vols.push(("octolock".to_string(), 14, 2, ResidualKind::Octolock(side, slot)));
             }
             if a.heal_block > 0 {
-                push(20, speed, 2, ResidualKind::HealBlock(side, slot));
+                vols.push(("healblock".to_string(), 20, 2, ResidualKind::HealBlock(side, slot)));
             }
             if a.roost_orig.is_some() {
-                push(25, speed, 2, ResidualKind::Roost(side, slot));
+                vols.push(("roost".to_string(), 25, 2, ResidualKind::Roost(side, slot)));
             }
             if a.leech_seed.is_some() {
-                push(8, speed, 2, ResidualKind::LeechSeed(side, slot));
+                vols.push(("leechseed".to_string(), 8, 2, ResidualKind::LeechSeed(side, slot)));
             }
             if a.perish > 0 {
-                push(24, speed, 2, ResidualKind::Perish(side, slot));
+                vols.push(("perishsong".to_string(), 24, 2, ResidualKind::Perish(side, slot)));
             }
             if a.follow_me > 0 {
-                push(NO_ORDER, speed, 2, ResidualKind::Marker); // followme / ragepowder (duration 1)
+                vols.push(("followme".to_string(), NO_ORDER, 2, ResidualKind::Marker)); // followme / ragepowder (duration 1)
             }
             if a.aqua_ring {
-                push(6, speed, 2, ResidualKind::AquaRing(side, slot));
+                vols.push(("aquaring".to_string(), 6, 2, ResidualKind::AquaRing(side, slot)));
             }
             if a.counter_vol.is_some() {
-                push(NO_ORDER, speed, 2, ResidualKind::Marker); // counter (duration 1)
+                vols.push(("counter".to_string(), NO_ORDER, 2, ResidualKind::Marker)); // counter (duration 1)
             }
             if a.mirror_coat_vol.is_some() {
-                push(NO_ORDER, speed, 2, ResidualKind::Marker); // mirrorcoat (duration 1)
+                vols.push(("mirrorcoat".to_string(), NO_ORDER, 2, ResidualKind::Marker)); // mirrorcoat (duration 1)
             }
             if a.ally_switch.is_some() {
-                push(NO_ORDER, speed, 2, ResidualKind::AllySwitch(side, slot));
+                vols.push(("allyswitch".to_string(), NO_ORDER, 2, ResidualKind::AllySwitch(side, slot)));
             }
             if a.lock_on.is_some() {
-                push(NO_ORDER, speed, 2, ResidualKind::LockOn(side, slot));
+                vols.push(("lockon".to_string(), NO_ORDER, 2, ResidualKind::LockOn(side, slot)));
             }
             if a.uproar > 0 {
-                push(28, speed, 1, ResidualKind::Uproar(side, slot));
+                vols.push(("uproar".to_string(), 28, 1, ResidualKind::Uproar(side, slot)));
             }
             if a.locked_move.is_some() {
-                push(NO_ORDER, speed, 2, ResidualKind::Locked(side, slot));
+                vols.push(("lockedmove".to_string(), NO_ORDER, 2, ResidualKind::Locked(side, slot)));
             }
             if a.disabled.is_some() {
-                push(17, speed, 2, ResidualKind::Disable(side, slot));
+                vols.push(("disable".to_string(), 17, 2, ResidualKind::Disable(side, slot)));
+            }
+            let rank = |id: &String| a.vol_order.iter().position(|o| o == id).unwrap_or(usize::MAX);
+            vols.sort_by_key(|v| rank(&v.0));
+            for (_, order, sub, kind) in vols {
+                push(order, speed, sub, kind);
             }
             // Grassy Terrain heal (`onResidualOrder` 5, subOrder 2).
             if state.terrain.terrain_type == crate::engine::state::Terrain::GRASSYTERRAIN {

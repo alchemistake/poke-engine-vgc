@@ -3118,6 +3118,9 @@ fn execute_action_inner(
         }
         // Double Shock / Burn Up `onTryMove`: fail unless the user still has
         // the move's type (no draw). PS data/moves.ts doubleshock / burnup.
+        // `return null` (not false), so `moveThisTurnResult` is null and
+        // Stomping Tantrum's `=== false` doubling stays off: the result is left
+        // unset here (the end-of-action step records it as not false).
         Choices::DOUBLESHOCK | Choices::BURNUP
             if {
                 let t = state.side(side).team_member(idx).types;
@@ -3125,7 +3128,7 @@ fn execute_action_inner(
                 t.0 != need && t.1 != need
             } =>
         {
-            state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+            state.side_mut(side).active[slot].move_result_this_turn = None;
             push_order(move_order);
             return;
         }
@@ -4118,19 +4121,6 @@ fn execute_action_inner(
         let user_hp = state.side(side).team_member(idx).hp;
         let target_hp = state.side(target_side).slot_pokemon(target_slot).map(|p| p.hp).unwrap_or(0);
         if user_hp >= target_hp {
-            state.side_mut(side).active[slot].move_result_this_turn = Some(false);
-            push_order(move_order);
-            return;
-        }
-    }
-
-    // Disable `onTryHit`: fails (before the accuracy roll) unless the target has
-    // used a (non-Struggle) move. PS data/moves.ts disable.
-    if choice.move_id == Choices::DISABLE && !is_self && !is_field {
-        let last = state.side(target_side).active[target_slot].last_move;
-        // Observed in PS: a target that has not moved yet still rolls accuracy and
-        // fails in `onStart` ("Pokemon hasn't moved yet"), so only Struggle stops here.
-        if matches!(last, Some(Choices::STRUGGLE)) {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
             push_order(move_order);
             return;
@@ -6408,7 +6398,10 @@ fn execute_action_inner(
                 }
                 _ => false,
             };
-            if t.disabled.is_some() || last.is_none() || no_pp {
+            // PS data/moves.ts disable `onTryHit` (Struggle / no last move) runs
+            // in `spreadMoveHit`, after the accuracy roll, like `onStart`.
+            let struggle = last == Some(Choices::STRUGGLE);
+            if t.disabled.is_some() || last.is_none() || no_pp || struggle {
                 move_failed = true;
             } else {
                 let will_move = queue
@@ -6488,6 +6481,12 @@ fn execute_action_inner(
         // ability until it switches out (modelled as No Ability, which the
         // switch-out reset undoes). Fails on unsuppressable abilities.
         // PS data/moves.ts gastroacid. TODO(PS parity): Ability Shield.
+        // PS addVolatile fails when the `gastroacid` volatile already exists.
+        if choice.move_id == Choices::GASTROACID && ti == 0 && !move_failed
+            && state.side(target_side).active[target_slot].gastro_acid
+        {
+            move_failed = true;
+        }
         if choice.move_id == Choices::GASTROACID && ti == 0 && !move_failed {
             if let Some(tidx) = state.side(target_side).active[target_slot].pokemon_index {
                 let a = real_ability(state, target_side, tidx);
@@ -6507,9 +6506,12 @@ fn execute_action_inner(
                         | Abilities::BATTLEBOND
                 ) {
                     move_failed = true;
-                } else if a != Abilities::NONE {
-                    mold_breaker_forget(target_side, tidx);
-                    state.side_mut(target_side).team_member_mut(tidx).ability = Abilities::NONE;
+                } else {
+                    if a != Abilities::NONE {
+                        mold_breaker_forget(target_side, tidx);
+                        state.side_mut(target_side).team_member_mut(tidx).ability = Abilities::NONE;
+                    }
+                    state.side_mut(target_side).active[target_slot].gastro_acid = true;
                 }
             }
         }
@@ -7455,16 +7457,11 @@ fn execute_action_inner(
                     && choice.flags.contact
                     && state.side(side).team_member(idx).ability != Abilities::LONGREACH
                 {
-                    apply_boosts(
-                        state,
-                        side,
-                        idx,
-                        &StatBoosts {
-                            speed: -1,
-                            ..Default::default()
-                        },
-                        true,
-                    );
+                    // Mirror Armor on the attacker bounces the drop back onto the
+                    // holder (PS `this.boost` goes through TryBoost).
+                    let drop = StatBoosts { speed: -1, ..Default::default() };
+                    let drop = mirror_armor_bounce(state, target_side, target_slot, side, idx, &drop);
+                    apply_boosts(state, side, idx, &drop, true);
                 }
             }
             maybe_wandering_spirit(state, side, slot, target_side, target_slot, choice, rng);
@@ -9441,7 +9438,10 @@ fn resolve_future_move(
     };
     let eb = state.side(ts).slot_boosts(tslot).map(|b| b.eva).unwrap_or(0);
     let mods = accuracy_ability_mods(state, ss, si, ts, tslot, &choice);
-    if !roll_accuracy_boosted(choice.accuracy, ab, eb, mods, rng) {
+    // No Guard `onAnyAccuracy` (either side): no roll, the delayed hit always lands.
+    let no_guard = state.side(ss).team_member(si).ability == Abilities::NOGUARD
+        || state.side(ts).slot_pokemon(tslot).is_some_and(|p| p.ability == Abilities::NOGUARD);
+    if !no_guard && !roll_accuracy_boosted(choice.accuracy, ab, eb, mods, rng) {
         return;
     }
     let (damage, _) = compute_hit_damage(state, rng, ss, sslot, si, ts, tslot, &choice, false, false);

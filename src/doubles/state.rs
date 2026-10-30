@@ -79,6 +79,10 @@ pub struct ActiveSlot {
     /// Beak Blast volatile (`beakblast`, set by its priority charge, removed
     /// after its own move): a contact hit on this slot burns the attacker.
     pub beak_blast: bool,
+    /// `gastroacid` volatile (Gastro Acid landed on this slot): a second
+    /// Gastro Acid fails (PS addVolatile on an existing volatile). Cleared on
+    /// switch-out.
+    pub gastro_acid: bool,
     /// Chilly Reception volatile (`chillyreception`, duration 1, set by its
     /// priority charge): only takes part in the residual sort.
     pub chilly_reception: bool,
@@ -304,6 +308,7 @@ impl ActiveSlot {
             drag_out: false,
             focus_punch: false,
             beak_blast: false,
+            gastro_acid: false,
             chilly_reception: false,
             lost_focus: false,
             stockpile_def: 0,

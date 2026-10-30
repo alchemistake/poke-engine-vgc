@@ -80,6 +80,24 @@ pub fn type_mod_by(attacker: &Pokemon, attacking_type: &PokemonType, defender: &
     type_mod(attacking_type, defender)
 }
 
+/// `type_mod_by` plus the target's `addedType` (Trick-or-Treat Ghost, Forest's
+/// Curse Grass). PS `runEffectiveness` / `runImmunity` multiply the added type's
+/// chart entry in as a second type (Normal vs Ghost-added: immune).
+pub fn type_mod_with_added(
+    attacker: &Pokemon,
+    attacking_type: &PokemonType,
+    defender: &Pokemon,
+    added_type: PokemonType,
+) -> Option<i32> {
+    let mut tm = type_mod_by(attacker, attacking_type, defender)?;
+    if added_type != PokemonType::TYPELESS {
+        let mut with_added = defender.clone();
+        with_added.types = (added_type, PokemonType::TYPELESS);
+        tm += type_mod_by(attacker, attacking_type, &with_added)?;
+    }
+    Some(tm)
+}
+
 pub fn type_mod(attacking_type: &PokemonType, defender: &Pokemon) -> Option<i32> {
     let mult = crate::engine::damage_calc::type_effectiveness_modifier(attacking_type, defender);
     if mult == 0.0 {
@@ -182,14 +200,8 @@ pub fn calculate_damage(
     }
 
     // Type immunity is checked in getDamage BEFORE any draws.
-    let mut tm = type_mod_by(attacker, &choice.move_type, defender)?;
-    // PS `runEffectiveness` / `runImmunity` also check `addedType`: its chart
-    // entry is multiplied in as a second type (Normal vs Trick-or-Treat Ghost: immune).
-    if ctx.added_type != PokemonType::TYPELESS {
-        let mut with_added = defender.clone();
-        with_added.types = (ctx.added_type, PokemonType::TYPELESS);
-        tm += type_mod_by(attacker, &choice.move_type, &with_added)?;
-    }
+    // PS `runEffectiveness` / `runImmunity` also check `addedType`.
+    let mut tm = type_mod_with_added(attacker, &choice.move_type, defender, ctx.added_type)?;
     // PS data/moves.ts freezedry.onEffectiveness: `if (type === 'Water') return 1;`
     // Each Water defender type is x2 (+1 step) whatever the chart says. Ice vs
     // Water is resisted (-1 step), so the Water part moves from -1 to +1: +2.

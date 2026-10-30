@@ -2687,6 +2687,15 @@ fn execute_action_inner(
                 continue;
             }
             let d = state.side(ts).slot_pokemon(tsl).unwrap().clone();
+            // Psychic Terrain `onTryHit` per target: a priority move skips a
+            // grounded foe (no accuracy roll). PS trySpreadMoveHit.
+            if ts != side
+                && action.priority > 0
+                && state.terrain.terrain_type == crate::engine::state::Terrain::PSYCHICTERRAIN
+                && (slot_grounded(&d, &state.side(ts).active[tsl]) || state.gravity.active)
+            {
+                continue;
+            }
             // Semi-invulnerable target, minus the moves that still hit it
             // (Earthquake vs Dig, ...; PS `onInvulnerability`).
             if let Some((m, _)) = state.side(ts).active[tsl].charging.filter(|_| !state.side(ts).active[tsl].charge_aborted) {
@@ -2744,7 +2753,15 @@ fn execute_action_inner(
             {
                 continue;
             }
-            if damaging && crate::doubles::damage::type_mod_by(state.side(side).team_member(idx), &choice.move_type, &d).is_none() {
+            if damaging
+                && crate::doubles::damage::type_mod_with_added(
+                    state.side(side).team_member(idx),
+                    &choice.move_type,
+                    &d,
+                    state.side(ts).active[tsl].added_type,
+                )
+                .is_none()
+            {
                 continue;
             }
             spread_list.push((ts, tsl));
@@ -2837,8 +2854,8 @@ fn execute_action_inner(
     }
 
     // Psychic Terrain `onTryHit`: priority moves aimed at a grounded foe fail.
-    // PS data/moves.ts psychicterrain.condition.
-    // TODO(PS parity): semi-invulnerable targets, spread moves.
+    // PS data/moves.ts psychicterrain.condition (spread moves: per target above).
+    // TODO(PS parity): semi-invulnerable targets.
     if !is_self
         && !is_field
         && action.priority > 0
@@ -3119,7 +3136,8 @@ fn execute_action_inner(
         && !is_field
     {
         if let Some(def) = state.side(target_side).slot_pokemon(target_slot) {
-            if crate::doubles::damage::type_mod_by(state.side(side).team_member(idx), &choice.move_type, def).is_none() {
+            let added = state.side(target_side).active[target_slot].added_type;
+            if crate::doubles::damage::type_mod_with_added(state.side(side).team_member(idx), &choice.move_type, def, added).is_none() {
                 state.side_mut(side).active[slot].move_result_this_turn = Some(false);
                 push_order();
                 return;

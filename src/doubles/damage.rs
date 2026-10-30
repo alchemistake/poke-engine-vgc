@@ -394,11 +394,6 @@ pub fn calculate_damage(
         base = modify(base, 0.5, 1.0);
     }
 
-    // Minimum 1 damage (gen 6+): checked before the final ModifyDamage
-    // modifiers (Reflect / Light Screen) and the 16-bit truncation.
-    if base == 0 {
-        base = 1;
-    }
     // PS `runEvent('ModifyDamage')`: every handler's modifier is chained
     // (`chainModify`) and applied once. Screens are x2732/4096 in doubles
     // and do nothing on a critical hit.
@@ -433,6 +428,12 @@ pub fn calculate_damage(
     }
     if chain != 4096 {
         base = (base * chain + 2047) / 4096;
+    }
+    // Minimum 1 damage (gen 6+): after the final ModifyDamage modifiers
+    // (Multiscale, screens), before the 16-bit truncation.
+    // PS data/mods/champions/scripts.ts modifyDamage (`gen !== 5 && !baseDamage`).
+    if base == 0 {
+        base = 1;
     }
 
     // 16-bit trunc

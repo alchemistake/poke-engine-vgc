@@ -345,10 +345,9 @@ fn resolve_faints(state: &mut DoublesState, rng: &mut Gen5Rng, pick: impl Fn(Sid
         }
         let s = state.side_mut(side);
         // PS `clearVolatile` -> `setSpecies(baseSpecies)` restores the base
-        // `storedStats`, so a Speed Swap is undone when the pokemon faints.
-        if let Some(sp) = s.saved_speed[idx as usize].take() {
-            s.team_member_mut(idx).speed = sp;
-        }
+        // `storedStats`, so a Speed Swap (or Guard / Power Split) is undone
+        // when the pokemon faints.
+        restore_stored_stats(s, idx);
         s.speed_cache[idx as usize] = s.team_member(idx).speed;
         resolved.push((side, idx));
     }
@@ -2771,6 +2770,7 @@ fn execute_action_inner(
             let disguised = state.side(side).team_member(idx).id == crate::pokemon::PokemonName::MIMIKYU
                 && state.side(side).team_member(idx).ability == Abilities::DISGUISE;
             if disguised {
+                restore_stored_stats(state.side_mut(side), idx);
                 let pm = state.side_mut(side).team_member_mut(idx);
                 pm.id = crate::pokemon::PokemonName::MIMIKYUBUSTED;
                 let bust = (pm.maxhp / 8).max(1);
@@ -2914,6 +2914,7 @@ fn execute_action_inner(
                     };
                     let (_, atk, def, spa, spd, _) =
                         crate::doubles::state::compute_stats(data.base_stats, &evs, lvl, nat);
+                    restore_stored_stats(state.side_mut(side), idx);
                     let pm = state.side_mut(side).team_member_mut(idx);
                     pm.id = target_id;
                     pm.attack = atk;
@@ -3082,6 +3083,23 @@ fn execute_action_inner(
         modify_move_user_tie(state, rng, side, slot);
         push_order(move_order);
         return;
+    }
+    // An adjacentAlly move (Coaching, Helping Hand, ...) whose ally fainted
+    // earlier this turn: `getTarget` returns the fainted ally (no retarget),
+    // `getMoveTargets` lists no target, and `useMoveInner` prints `-fail` and
+    // returns false, so `moveThisTurnResult` is false (Stomping Tantrum).
+    // PS sim/battle.ts getTarget; sim/pokemon.ts getMoveTargets; sim/battle-actions.ts useMoveInner.
+    if is_ally && !is_self && !is_field {
+        if let Some((ts, sl)) = resolved {
+            if ts == side && !slot_alive(state, ts, sl) {
+                state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+                NO_TARGET_FAIL.with(|c| c.set(true));
+                modify_move_field_tie(state, rng);
+                modify_move_user_tie(state, rng, side, slot);
+                push_order(move_order);
+                return;
+            }
+        }
     }
 
     // Expanding Force `onModifyMove` (PS data/moves.ts expandingforce): in Psychic
@@ -6445,14 +6463,18 @@ fn execute_action_inner(
                     // PS `runEvent('TryHit')` per pokemon: Good as Gold's
                     // `onTryHit` returns null for a Status move from another pokemon
                     // (Mold Breaker ignores it), which still counts as a result.
-                    let gag_blocks = (sd, sl) != (side, slot)
-                        && p.ability == Abilities::GOODASGOLD
+                    // Soundproof and the absorbing abilities (Dry Skin / Water
+                    // Absorb on a Liquid Voice Perish Song) are `onTryHit` too,
+                    // all with `target !== source`. PS data/abilities.ts.
+                    let other_breakable = (sd, sl) != (side, slot)
                         && !crate::engine::abilities::ignores_target_ability(
                             state.side(side).team_member(idx),
                             choice,
                             &p.ability,
                         );
-                    if p.ability == Abilities::SOUNDPROOF || gag_blocks {
+                    let gag_blocks = other_breakable
+                        && matches!(p.ability, Abilities::GOODASGOLD | Abilities::SOUNDPROOF);
+                    if gag_blocks || (other_breakable && try_absorb(state, sd, sl, choice.move_type)) {
                         result = true;
                     } else if state.side(sd).active[sl].perish == 0 {
                         state.side_mut(sd).active[sl].perish = 4;
@@ -8926,8 +8948,10 @@ fn protect_contact_penalty(
             apply_boosts_from(state, side, idx, &drop, target_side != side, true);
         }
         2 => {
+            // PS spikyshield.condition.onTryHit: `this.damage(...)` from a
+            // Condition, so Magic Guard (`onDamage`, non-Move effect) blocks it.
             let maxhp = state.side(side).team_member(idx).maxhp;
-            apply_damage(state, side, slot, (maxhp / 8).max(1));
+            apply_indirect_damage(state, side, slot, (maxhp / 8).max(1));
         }
         3 | 5 => {
             if let Some(tidx) = state.side(target_side).active[target_slot].pokemon_index {
@@ -9898,11 +9922,29 @@ fn resolve_future_move(
     each_event_update(state, rng);
 }
 
+/// PS sim/pokemon.ts setSpecies (switch-in, `formeChange`): `storedStats` are
+/// rebuilt from the species' base stats and the set, which undoes a Guard /
+/// Power Split (Def/SpD, Atk/SpA) and a Speed Swap. Formes whose base stats
+/// differ (Aegislash, Palafin) then overwrite the recomputed stats.
+fn restore_stored_stats(s: &mut crate::doubles::state::DoublesSide, idx: PokemonIndex) {
+    if let Some(st) = s.saved_stats[idx as usize].take() {
+        let p = s.team_member_mut(idx);
+        p.attack = st[0];
+        p.defense = st[1];
+        p.special_attack = st[2];
+        p.special_defense = st[3];
+    }
+    if let Some(sp) = s.saved_speed[idx as usize].take() {
+        s.team_member_mut(idx).speed = sp;
+    }
+}
+
 /// Disguise busts (PS data/abilities.ts disguise `onDamage` / `onUpdate`): the
 /// forme changes to Busted, the holder takes 1/8 max HP, and the cached speed
 /// becomes the raw stat (`formeChange` -> `setSpecies`).
 fn disguise_bust(state: &mut DoublesState, side: Side, slot: usize) {
     let Some(idx) = state.side(side).active[slot].pokemon_index else { return };
+    restore_stored_stats(state.side_mut(side), idx);
     let pm = state.side_mut(side).team_member_mut(idx);
     pm.id = crate::pokemon::PokemonName::MIMIKYUBUSTED;
     let dmg = (pm.maxhp / 8).max(1);
@@ -10863,8 +10905,11 @@ fn update_forecast(state: &mut DoublesState) {
                     };
                     let changed = pm.id != forme;
                     pm.id = forme;
-                    let raw = pm.speed;
                     let s = state.side_mut(sd);
+                    if changed {
+                        restore_stored_stats(s, idx);
+                    }
+                    let raw = s.team_member(idx).speed;
                     s.active[sl].forecast_weather = Some(weather);
                     if changed {
                         s.speed_cache[idx as usize] = raw as _;
@@ -11010,6 +11055,7 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
                 };
                 let (_, atk, def, spa, spd, _) =
                     crate::doubles::state::compute_stats(data.base_stats, &evs, lvl, nat);
+                restore_stored_stats(state.side_mut(side), old);
                 let pm = state.side_mut(side).team_member_mut(old);
                 pm.id = crate::pokemon::PokemonName::PALAFINHERO;
                 pm.attack = atk;
@@ -11022,6 +11068,9 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
         // `setSpecies(baseSpecies)` (a Forecast forme reverts).
         let s = state.side_mut(side);
         s.clear_member_boosts(old);
+        // `setSpecies(baseSpecies)`: Guard / Power Split and Speed Swap end
+        // when the pokemon leaves (PS sim/battle-actions.ts switchIn -> clearVolatile).
+        restore_stored_stats(s, old);
         let p = s.team_member_mut(old);
         p.ability = p.base_ability;
         if matches!(
@@ -11059,16 +11108,7 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
         // of the incoming pokemon (Last Resort's `onTry` reads it).
         s.moves_used[idx as usize] = [false; 4];
         // `setSpecies`: `storedStats` back to the base stats (Guard / Power Split).
-        if let Some(st) = s.saved_stats[idx as usize].take() {
-            let p = s.team_member_mut(idx);
-            p.attack = st[0];
-            p.defense = st[1];
-            p.special_attack = st[2];
-            p.special_defense = st[3];
-        }
-        if let Some(sp) = s.saved_speed[idx as usize].take() {
-            s.team_member_mut(idx).speed = sp;
-        }
+        restore_stored_stats(s, idx);
         // PS `clearVolatile` -> `setSpecies`: `pokemon.speed = storedStats.spe`
         // (the raw stat). A drag-in never calls `updateSpeed` before its
         // `runSwitch` sort (sim/battle.ts dragIn path), so this raw speed is
@@ -12289,7 +12329,6 @@ fn end_of_turn(
                     crate::pokemon::PokemonName::MORPEKOHANGRY => crate::pokemon::PokemonName::MORPEKO,
                     _ => continue,
                 };
-                let raw = p.speed;
                 let s = state.side_mut(side);
                 s.team_member_mut(idx).id = new_id;
                 // PS `formeChange` -> `setSpecies` -> `setType(species.types)`: a type
@@ -12300,13 +12339,8 @@ fn end_of_turn(
                 // base stats, so an averaged Atk / SpA (Power Split) or Def / SpD
                 // (Guard Split) is undone, as on switch-in.
                 // PS sim/pokemon.ts setSpecies.
-                if let Some(st) = s.saved_stats[idx as usize].take() {
-                    let p = s.team_member_mut(idx);
-                    p.attack = st[0];
-                    p.defense = st[1];
-                    p.special_attack = st[2];
-                    p.special_defense = st[3];
-                }
+                restore_stored_stats(s, idx);
+                let raw = s.team_member(idx).speed;
                 s.speed_cache[idx as usize] = raw as _;
             }
             ResidualKind::Harvest(side, slot) => {

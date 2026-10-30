@@ -223,6 +223,11 @@ pub struct DamageCtx {
     /// Effective base power after multiplier effects (Helping Hand);
     /// 0.0 = use `choice.base_power`.
     pub base_power_override: f32,
+    /// `getDamage`'s handler sorts after the crit roll (`BasePower`, then
+    /// `Modify<Atk|SpA>`, `Modify<Def|SpD>`): their tie draws as
+    /// `random_range(lo, hi)` ranges ((0, 0) = unused), from
+    /// `events::event_tie_ranges`. PS sim/battle-actions.ts getDamage.
+    pub post_crit_ties: [(u8, u8); 8],
 }
 
 /// Compute the damage a single-target (or one hit of a spread) move deals to
@@ -285,6 +290,7 @@ pub fn calculate_damage(
         // disguise / shellarmor onCriticalHit returns false (the roll is still drawn).
         crit = false;
     }
+    crate::doubles::events::draw_tie_ranges(rng, &ctx.post_crit_ties);
 
     // Effective stats. A crit ignores negative offensive boosts and positive
     // defensive boosts (PS `getDamage`: `ignoreNegativeOffensive` /

@@ -3248,6 +3248,18 @@ fn execute_action_inner(
         state.queue_round = true;
     }
 
+    // PS `runEvent('TryMove', pokemon, target)` (useMoveInner): after the move's
+    // own `onTryMove` singleEvent (Double Shock / Burn Up fail there, and the
+    // runEvent is skipped), before every `onTry` / `onTryHit` below.
+    let try_move_fails = matches!(choice.move_id, Choices::DOUBLESHOCK | Choices::BURNUP) && {
+        let t = state.side(side).team_member(idx).types;
+        let need = if choice.move_id == Choices::DOUBLESHOCK { PokemonType::ELECTRIC } else { PokemonType::FIRE };
+        t.0 != need && t.1 != need
+    };
+    if !try_move_fails {
+        crate::doubles::events::run_event_ties(state, rng, "TryMove", (side, slot), Some((target_side, target_slot)));
+    }
+
     // Stockpile family (PS `onTry` / `stockpile` condition). No PRNG draws.
     match choice.move_id {
         Choices::STOCKPILE => {
@@ -3386,8 +3398,6 @@ fn execute_action_inner(
         _ => {}
     }
 
-    // PS `runEvent('TryMove', pokemon, target)` (useMoveInner, before any `onTry`).
-    crate::doubles::events::run_event_ties(state, rng, "TryMove", (side, slot), Some((target_side, target_slot)));
     // Damp `onAnyTryMove` (data/abilities.ts damp): an active Damp holder fails
     // explosion / mindblown / mistyexplosion / selfdestruct (`cant`). No draw.
     if damp_blocks_explosion(state, side, idx, choice) {
@@ -8900,7 +8910,13 @@ fn try_confuse(state: &mut DoublesState, rng: &mut Gen5Rng, ts: Side, tslot: usi
 /// data/conditions.ts confusion.onStart), 2 otherwise.
 fn try_confuse_from(state: &mut DoublesState, rng: &mut Gen5Rng, ts: Side, tslot: usize, min: usize) {
     let Some(p) = state.side(ts).slot_pokemon(tslot) else { return };
-    if p.hp <= 0 || p.ability == Abilities::OWNTEMPO || state.side(ts).active[tslot].confusion > 0 {
+    if p.hp <= 0 || state.side(ts).active[tslot].confusion > 0 {
+        return;
+    }
+    // `addVolatile('confusion')`: the Immunity / TryAddVolatile sorts run before
+    // Own Tempo's / Misty Terrain's `onTryAddVolatile` block it. PS sim/pokemon.ts addVolatile.
+    try_add_volatile_ties(state, rng, ts, tslot);
+    if state.side(ts).slot_pokemon(tslot).is_some_and(|p| p.ability == Abilities::OWNTEMPO) {
         return;
     }
     if misty_terrain_blocks_confusion(state, ts, tslot) {
@@ -9591,8 +9607,26 @@ fn compute_hit_damage(
                 slot_grounded(defender, &state.side(target_side).active[target_slot], state.gravity.active),
                 state,
             ),
+            post_crit_ties: [(0, 0); 8],
         };
         let mut ctx = ctx;
+        // `getDamage` handler sorts after the crit roll: BasePower (source),
+        // then the attacker's Modify<Atk|SpA> and the defender's Modify<Def|SpD>
+        // (`statTable` names: the category's stat, and the move's defensive stat).
+        // PS sim/battle-actions.ts getDamage.
+        {
+            use crate::doubles::events::event_tie_ranges;
+            let (atk_ev, def_ev) = (
+                if is_physical { "ModifyAtk" } else { "ModifySpA" },
+                if names_def { "ModifyDef" } else { "ModifySpD" },
+            );
+            let mut ranges = event_tie_ranges(state, "BasePower", (side, slot), Some((target_side, target_slot)));
+            ranges.extend(event_tie_ranges(state, atk_ev, (side, slot), Some((target_side, target_slot))));
+            ranges.extend(event_tie_ranges(state, def_ev, (target_side, target_slot), Some((side, slot))));
+            for (k, &(lo, hi)) in ranges.iter().take(8).enumerate() {
+                ctx.post_crit_ties[k] = (lo as u8, hi as u8);
+            }
+        }
         if let Some(outcome) = calculate_damage(attacker, defender, choice, rng, spread, &ctx) {
             damage = outcome.damage;
             crit = outcome.crit;
@@ -13221,6 +13255,7 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
                     disguise: false,
                     defense_mod: 4096,
                     base_power_override: 0.0,
+                    post_crit_ties: [(0, 0); 8],
                 };
                 let outcome: DamageOutcome = calculate_damage(attacker, defender, &action.choice, rng, false, &ctx)
                     .unwrap_or(DamageOutcome { damage: 0, crit: false });

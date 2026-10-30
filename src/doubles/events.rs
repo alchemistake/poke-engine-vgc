@@ -265,8 +265,59 @@ pub fn run_event_ties(
     target: (Side, usize),
     source: Option<(Side, usize)>,
 ) {
+    let mut hs = collect_event_keys(state, event, target, source);
+    speed_sort_keys(&mut hs, rng);
+}
+
+/// The `random_range(lo, hi)` draws `run_event_ties` would make for this event,
+/// in order, without drawing. The ranges only depend on the sort keys, so a
+/// caller that cannot reach the state at the draw point (the damage formula)
+/// can compute them first and draw them later (`draw_tie_ranges`).
+pub fn event_tie_ranges(
+    state: &DoublesState,
+    event: &str,
+    target: (Side, usize),
+    source: Option<(Side, usize)>,
+) -> Vec<(u32, u32)> {
+    let mut hs = collect_event_keys(state, event, target, source);
+    let mut out = Vec::new();
+    let cmp = |a: &Key, b: &Key| {
+        a.order
+            .cmp(&b.order)
+            .then(b.priority.cmp(&a.priority))
+            .then(b.speed.cmp(&a.speed))
+            .then(a.sub_order.cmp(&b.sub_order))
+    };
+    hs.sort_by(cmp);
+    let mut i = 0;
+    while i < hs.len() {
+        let mut end = i + 1;
+        while end < hs.len() && cmp(&hs[i], &hs[end]) == std::cmp::Ordering::Equal {
+            end += 1;
+        }
+        for k in i..end.saturating_sub(1) {
+            out.push((k as u32, end as u32));
+        }
+        i = end;
+    }
+    out
+}
+
+/// Draw tie ranges from `event_tie_ranges` (label as `run_event_ties`).
+pub fn draw_tie_ranges(rng: &mut Gen5Rng, ranges: &[(u8, u8)]) {
+    for &(lo, hi) in ranges.iter().filter(|r| r.1 > 0) {
+        let _ = rng.label("speed tie (move order)").random_range(lo as usize, hi as usize);
+    }
+}
+
+fn collect_event_keys(
+    state: &DoublesState,
+    event: &str,
+    target: (Side, usize),
+    source: Option<(Side, usize)>,
+) -> Vec<Key> {
     if LEFT_TO_RIGHT.contains(&event) {
-        return;
+        return Vec::new();
     }
     let prefixed = !UNPREFIXED.contains(&event);
     let mut hs: Vec<Key> = Vec::new();
@@ -313,7 +364,7 @@ pub fn run_event_ties(
     if std::env::var("PE_DEBUG_EVENTS").is_ok() && hs.len() > 1 {
         eprintln!("EVENT {} target={:?}{} handlers: {}", event, ts, tsl, dbg.join(", "));
     }
-    speed_sort_keys(&mut hs, rng);
+    hs
 }
 
 /// PS `speedSort` (selection sort, shuffling each group of equal keys).

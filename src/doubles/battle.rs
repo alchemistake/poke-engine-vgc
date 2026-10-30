@@ -218,17 +218,50 @@ fn faint_pokemon(state: &mut DoublesState, side: Side, slot: usize) {
 /// then a fainted pokemon keeps its cached speed (it still counts in
 /// `eachEvent` sorts). `clearVolatile` -> `setSpecies` then resets
 /// `pokemon.speed` to the raw stat, which later sorts read.
-fn resolve_faints(state: &mut DoublesState, pick: impl Fn(Side, usize) -> bool) {
+fn resolve_faints(state: &mut DoublesState, rng: &mut Gen5Rng, pick: impl Fn(Side, usize) -> bool) {
     let mut faints = std::mem::take(&mut state.unresolved_faints);
+    let mut resolved = Vec::new();
     faints.retain(|&(side, slot, idx)| {
         if !pick(side, slot) {
             return true;
         }
         let s = state.side_mut(side);
         s.speed_cache[idx as usize] = s.team_member(idx).speed;
+        resolved.push((side, idx));
         false
     });
     state.unresolved_faints = faints;
+    // PS `Faint` event: `onAllyFaint` of the fainted pokemon's active allies.
+    for (side, idx) in resolved {
+        ally_faint_copy(state, rng, side, idx);
+    }
+}
+
+/// Receiver / Power of Alchemy `onAllyFaint` (PS data/abilities.ts receiver,
+/// powerofalchemy): an active ally with hp copies the fainted pokemon's
+/// ability through `setAbility`, then its Start effects run. Abilities with
+/// the `noreceiver` flag (the same set as `notrace`) cannot be copied.
+fn ally_faint_copy(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, fainted_idx: PokemonIndex) {
+    let ability = real_ability(state, side, fainted_idx);
+    if has_notrace(ability) || ability == Abilities::NOABILITY {
+        return;
+    }
+    for slot in 0..2 {
+        let Some(hidx) = state.side(side).active[slot].pokemon_index else { continue };
+        if hidx == fainted_idx {
+            continue;
+        }
+        let holder = state.side(side).team_member(hidx);
+        if holder.hp <= 0 || !matches!(holder.ability, Abilities::RECEIVER | Abilities::POWEROFALCHEMY) {
+            continue;
+        }
+        if crate::engine::mechanics::cant_suppress(ability) {
+            continue;
+        }
+        state.side_mut(side).team_member_mut(hidx).ability = ability;
+        ability_update_cures(state, side, slot);
+        let _ = apply_on_switch_abilities(state, side, slot, rng);
+    }
 }
 
 /// Apply damage to a specific slot; returns true if the pokemon fainted.
@@ -1092,7 +1125,7 @@ pub fn run_battle_fuzz(
             // Phazing (PS `runAction`: `forceSwitchFlag` -> `dragIn`) happens
             // before faints are resolved.
             drag_in_all(state, rng);
-            resolve_faints(state, |_, _| true);
+            resolve_faints(state, rng, |_, _| true);
             if state.battle_is_over() != 0.0 {
                 break;
             }
@@ -1928,7 +1961,7 @@ fn execute_action_inner(
         return;
     }
 
-    resolve_faints(state, |_, _| true);
+    resolve_faints(state, rng, |_, _| true);
 
     // PS `runMove` resolves the target before the BeforeMove checks.
     // Stalwart / Propeller Tail set `tracksTarget` (`getTarget` with an active
@@ -6094,7 +6127,7 @@ fn execute_action_inner(
     }
 
     // PS `resolveFaints` right after the hit loop (before the recoil).
-    resolve_faints(state, |_, _| true);
+    resolve_faints(state, rng, |_, _| true);
 
     // Recoil (after all hits): round(damage * fraction), min 1.
     if total_damage > 0 && choice.move_id == Choices::STRUGGLE {
@@ -6148,7 +6181,7 @@ fn execute_action_inner(
         // ...and resolved right after the loop, before its closing `eachEvent`.
         // (Healing Wish / Lunar Dance keep the user: their one `eachEvent` comes first.)
         if !matches!(choice.move_id, Choices::HEALINGWISH | Choices::LUNARDANCE) {
-            resolve_faints(state, |fs, fsl| (fs, fsl) == (side, slot));
+            resolve_faints(state, rng, |fs, fsl| (fs, fsl) == (side, slot));
         }
     }
 
@@ -9861,7 +9894,7 @@ fn end_of_turn(
     }
 
     // End of the `residual` action (faints are resolved before its eachEvent).
-    resolve_faints(state, |_, _| true);
+    resolve_faints(state, rng, |_, _| true);
     if state.battle_is_over() == 0.0 {
         each_event_update(state, rng);
     }

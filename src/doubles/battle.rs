@@ -590,7 +590,9 @@ fn plan_queue_change(
 ) -> Option<QueuePlan> {
     let idx = state.side(side).active[slot].pokemon_index?;
     let j = queue.iter().position(|a| a.side == side && a.pokemon_index == idx)?;
-    if queue[j].choice.move_id == mv {
+    // A recharging pokemon's queued action is the `recharge` pseudo-move, which is
+    // not the locked move: PS `changeAction` replaces it (PS sim/pokemon.ts getMoves).
+    if queue[j].choice.move_id == mv && !queue[j].recharge {
         return None;
     }
     let p = state.side(side).team_member(idx);
@@ -3325,6 +3327,43 @@ fn execute_action_inner(
             })
             .unwrap_or(false);
         if immune && !is_spread {
+            state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+            push_order();
+            return;
+        }
+    }
+
+    // Destiny Bond `onPrepareHit` (PS data/moves.ts destinybond): `!removeVolatile`
+    // fails the move when the volatile is already up. PS `useMoveInner` returns
+    // before accuracy and the hit loop, so the only draw left is runAction's
+    // `eachEvent`. The volatile itself is cleared by the caller.
+    if choice.move_id == Choices::DESTINYBOND
+        && state.side(side).active[slot].destinybond
+        && state.side(side).active[slot].pokemon_index == Some(idx)
+    {
+        state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+        push_order();
+        return;
+    }
+
+    // Helping Hand is `target: adjacentAlly` in PS (the table stores it as User),
+    // so the Good as Gold `onTryHit` below never sees the ally. Check it here:
+    // PS data/abilities.ts goodasgold.onTryHit (Status move, target !== source).
+    if choice.move_id == Choices::HELPINGHAND {
+        let immune = state
+            .side(side)
+            .slot_pokemon(ally_slot)
+            .map(|d| {
+                d.hp > 0
+                    && d.ability == Abilities::GOODASGOLD
+                    && !crate::engine::abilities::ignores_target_ability(
+                        state.side(side).team_member(idx),
+                        choice,
+                        &d.ability,
+                    )
+            })
+            .unwrap_or(false);
+        if immune {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
             push_order();
             return;
@@ -6565,6 +6604,22 @@ fn run_copied_move(
     sub.choice = mc;
     sub.target = 0;
     sub.target_loc = 0;
+    // PS `useMoveInner` (called by Copycat's `onHit`) has no chosen target, so
+    // `getRandomTarget` runs on the move's base data before `onModifyMove`.
+    // Curse's `onModifyMove` then sets 'self' for a non-Ghost user, but the
+    // random foe was already drawn. PS data/moves.ts curse.onModifyMove.
+    if m == Choices::CURSE {
+        let user_types = state.side(action.side).team_member(action.pokemon_index).types;
+        if user_types.0 != PokemonType::GHOST && user_types.1 != PokemonType::GHOST {
+            let foes: Vec<usize> = (0..2)
+                .filter(|&sl| state.side(action.side.other()).slot_pokemon(sl).is_some_and(|p| p.hp > 0))
+                .collect();
+            if !foes.is_empty() {
+                let _ = rng.label("retarget").random(foes.len() as u32);
+            }
+            sub.target_loc = -(action.slot as i8 + 1);
+        }
+    }
     state.side_mut(action.side).active[action.slot].external_call = true;
     execute_action_inner(state, rng, &sub, copy_order, will_act, queue);
     state.side_mut(action.side).active[action.slot].external_call = false;
@@ -7972,6 +8027,13 @@ fn resolve_future_move(
     let damage = match state.side(ts).slot_pokemon(tslot) {
         Some(d) => damage.min(d.hp.max(0)),
         None => damage,
+    };
+    // Endure / Sturdy `onDamage` apply to the delayed hit too (its effect is a
+    // `Move`): a KO leaves 1 HP. PS data/moves.ts endure, data/abilities.ts sturdy.
+    let damage = match state.side(ts).slot_pokemon(tslot) {
+        Some(d) if state.side(ts).active[tslot].endure && damage >= d.hp && d.hp > 0 => d.hp - 1,
+        Some(d) if d.ability == Abilities::STURDY && d.hp == d.maxhp && damage >= d.hp && d.hp > 0 => d.hp - 1,
+        _ => damage,
     };
     if damage > 0 {
         apply_damage(state, ts, tslot, damage);

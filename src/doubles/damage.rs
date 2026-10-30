@@ -36,7 +36,7 @@ fn trunc(x: f64) -> i64 {
 }
 
 /// `battle.modify(value, numerator, denominator = 1)`.
-fn modify(value: i64, numerator: f64, denominator: f64) -> i64 {
+pub fn modify(value: i64, numerator: f64, denominator: f64) -> i64 {
     let modifier = trunc(numerator * 4096.0 / denominator);
     let inner = trunc(value as f64 * modifier as f64);
     (inner + 2047) / 4096
@@ -501,6 +501,40 @@ pub fn roll_accuracy_boosted_labeled(
         acc = acc * 3 / (3 - boost);
     }
     rng.label(label).random_chance(acc.max(0) as u32, 100)
+}
+
+/// `multiaccuracy` roll (Triple Axel / Triple Kick / Population Bomb, hits 2+).
+/// PS sim/battle-actions.ts hitStepMoveHitLoop: the boost tables are applied as
+/// floats (`accuracy *= boostTable[n]`, no truncation), so the float accuracy
+/// goes to `randomChance` unrounded. Without ability / Gravity modifiers this is
+/// exact; otherwise it falls back to `roll_accuracy_boosted_labeled`.
+// TODO(PS parity): ModifyAccuracy handlers (abilities, Gravity) in PS's float chain.
+pub fn roll_multiaccuracy(
+    accuracy: f32,
+    acc_boost: i8,
+    eva_boost: i8,
+    ability_mods: (i32, i32),
+    rng: &mut Gen5Rng,
+) -> bool {
+    if GRAVITY.with(|g| g.get()) || ability_mods != (4096, 4096) {
+        return roll_accuracy_boosted_labeled("multiaccuracy", accuracy, acc_boost, eva_boost, ability_mods, rng);
+    }
+    const TABLE: [f64; 7] = [1.0, 4.0 / 3.0, 5.0 / 3.0, 2.0, 7.0 / 3.0, 8.0 / 3.0, 3.0];
+    let mut acc = accuracy as f64;
+    let b = acc_boost.clamp(-6, 6) as i32;
+    if b > 0 {
+        acc *= TABLE[b as usize];
+    } else {
+        acc /= TABLE[(-b) as usize];
+    }
+    let e = eva_boost.clamp(-6, 6) as i32;
+    if e > 0 {
+        acc /= TABLE[e as usize];
+    } else if e < 0 {
+        acc *= TABLE[(-e) as usize];
+    }
+    // PS `randomChance(accuracy, 100)` = `random(100) < accuracy` (float compare).
+    (rng.label("multiaccuracy").random(100) as f64) < acc
 }
 
 pub fn roll_accuracy(accuracy: f32, rng: &mut Gen5Rng) -> bool {

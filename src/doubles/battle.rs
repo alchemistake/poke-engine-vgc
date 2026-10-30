@@ -1698,6 +1698,16 @@ fn ps_get_target_inner(
 ) -> Option<(Side, usize)> {
     let (side, slot) = (action.side, action.slot);
     let a = &state.side(side).active[slot];
+    // Curse chosen while the user was not Ghost (queued as 'self', stored as the
+    // user's own loc). A Ghost-type change during the turn (Trick-or-Treat) does
+    // not redo the target: PS keeps the stored target, and the Ghost `onTryHit`
+    // then fails or applies to the user. PS data/moves.ts curse.onModifyMove.
+    if !action.recharge
+        && action.choice.move_id == Choices::CURSE
+        && action.target_loc == -(slot as i8 + 1)
+    {
+        return Some((side, slot));
+    }
     // A recharging pokemon's locked action is the `recharge` pseudo-move,
     // which has no target type.
     let move_id = action.choice.move_id.to_string().to_lowercase();
@@ -3148,11 +3158,13 @@ fn execute_action_inner(
             let layers = state.side(side).active[slot].stockpile;
             let s = state.side_mut(side);
             let p = s.team_member_mut(idx);
-            let heal = match layers {
-                1 => p.maxhp / 4,
-                2 => p.maxhp / 2,
-                _ => p.maxhp,
+            // PS data/moves.ts swallow.onHit: `heal(modify(maxhp, [0.25, 0.5, 1][layers - 1]))`.
+            let fraction = match layers {
+                1 => 0.25,
+                2 => 0.5,
+                _ => 1.0,
             };
+            let heal = crate::doubles::damage::modify(p.maxhp as i64, fraction, 1.0) as i16;
             p.hp = (p.hp + heal).min(p.maxhp);
             end_stockpile(state, side, slot);
             each_event_update(state, rng);
@@ -3866,10 +3878,12 @@ fn execute_action_inner(
         choice.base_power
     };
     // Soundproof / Bulletproof `onTryHit`: immune to sound / ball moves (no draw).
-    if !is_self && !is_field && (side, slot) != (target_side, target_slot) {
+    // An ally-targeted move (Dragon Cheer, ...) checks the ally, not the foe slot.
+    let (imm_side, imm_slot) = if is_ally { (side, ally_slot) } else { (target_side, target_slot) };
+    if !is_self && !is_field && (side, slot) != (imm_side, imm_slot) {
         let immune = state
-            .side(target_side)
-            .slot_pokemon(target_slot)
+            .side(imm_side)
+            .slot_pokemon(imm_slot)
             .map(|d| {
                 (d.ability == Abilities::SOUNDPROOF && choice.flags.sound)
                     || (d.ability == Abilities::BULLETPROOF && choice.flags.bullet)
@@ -4348,7 +4362,9 @@ fn execute_action_inner(
         && !is_field
         && !is_spread
         && (side, slot) != (target_side, target_slot)
-        && state.side(target_side).active[target_slot].charging.is_none()
+        // PS `target.isSemiInvulnerable()`: a non-semi-invulnerable charge (Solar
+        // Beam, Razor Wind, ...) still rolls.
+        && !ally_semi_invulnerable(state, target_side, target_slot)
     {
         let (alevel, atypes) = {
             let a = state.side(side).team_member(idx);
@@ -4549,7 +4565,7 @@ fn execute_action_inner(
               || state.side(target_side).slot_pokemon(target_slot).map(|p| p.ability == Abilities::NOGUARD).unwrap_or(false)
               || state.side(target_side).active[target_slot].glaive_rush
               || lock_on_hits(state, side, slot, target_side, target_slot);
-          if !no_guard_hit && !roll_accuracy_boosted_labeled("multiaccuracy", choice.accuracy, ab, eb, mods, rng) {
+          if !no_guard_hit && !crate::doubles::damage::roll_multiaccuracy(choice.accuracy, ab, eb, mods, rng) {
               break;
           }
       }

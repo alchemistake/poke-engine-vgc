@@ -2356,21 +2356,29 @@ fn execute_action_body(
     }
     // Destiny Bond `onBeforeMove` (any other move) / `onMoveAborted` (a `cant`)
     // remove the volatile. PS data/conditions.ts destinybond.
-    let had_db = state.side(action.side).active[action.slot].destinybond;
+    // The user may have moved slots during its own action (Ally Switch swaps the
+    // whole slot, volatiles included), so find it by pokemon index.
+    let db_slot = state
+        .side(action.side)
+        .active
+        .iter()
+        .position(|a| a.pokemon_index == Some(action.pokemon_index))
+        .unwrap_or(action.slot);
+    let had_db = state.side(action.side).active[db_slot].destinybond;
     if action.choice.move_id != Choices::DESTINYBOND || move_order.len() == order_len {
-        state.side_mut(action.side).active[action.slot].destinybond = false;
+        state.side_mut(action.side).active[db_slot].destinybond = false;
     }
     // Destiny Bond itself: `volatileStatus: 'destinybond'` is added when the
     // move executes (PS data/moves.ts destinybond; no `beforeTurnCallback`).
     if action.choice.move_id == Choices::DESTINYBOND
         && move_order.len() > order_len
         && !had_db // onPrepareHit: `!pokemon.removeVolatile('destinybond')` fails the move
-        && state.side(action.side).active[action.slot].pokemon_index == Some(action.pokemon_index)
+        && state.side(action.side).active[db_slot].pokemon_index == Some(action.pokemon_index)
     {
-        state.side_mut(action.side).active[action.slot].destinybond = true;
+        state.side_mut(action.side).active[db_slot].destinybond = true;
     }
     if action.choice.move_id == Choices::DESTINYBOND && had_db && move_order.len() > order_len {
-        state.side_mut(action.side).active[action.slot].destinybond = false;
+        state.side_mut(action.side).active[db_slot].destinybond = false;
     }
     if move_order.len() > order_len && !std::mem::take(&mut state.copy_called) {
         state.last_move = Some(action.choice.move_id);
@@ -3647,6 +3655,16 @@ fn execute_action_inner(
                 continue;
             }
             let d = state.side(ts).slot_pokemon(tsl).unwrap().clone();
+            // PS sim/battle-actions.ts hitStepTryImmunity (gen >= 7): a Prankster-boosted
+            // Status move skips each Dark foe on its own (no draw); the other
+            // targets still get their accuracy roll.
+            if ts != side
+                && choice.category == MoveCategory::Status
+                && state.side(side).slot_pokemon(slot).map(|p| p.ability) == Some(Abilities::PRANKSTER)
+                && (d.types.0 == PokemonType::DARK || d.types.1 == PokemonType::DARK)
+            {
+                continue;
+            }
             // Psychic Terrain `onTryHit` per target: a priority move skips a
             // grounded foe (no accuracy roll). PS trySpreadMoveHit.
             if ts != side
@@ -3817,7 +3835,12 @@ fn execute_action_inner(
             == "adjacentAllyOrSelf"
         && matches!(resolved, Some((rs, rl)) if rs == side && rl != slot);
     if (is_ally && !is_self || ally_or_self_picked_ally) && !is_field && choice.move_id != Choices::HELPINGHAND {
-        if ally_semi_invulnerable(state, side, ally_slot) {
+        // PS data/moves.ts noguard `onAnyInvulnerability` (priority 1) returns 0
+        // when the user or the target has No Guard: the hit lands, and the
+        // dig / fly handlers never run. Coaching from a No Guard user hits a Dig ally.
+        let ally_no_guard = state.side(side).team_member(idx).ability == Abilities::NOGUARD
+            || state.side(side).slot_pokemon(ally_slot).is_some_and(|p| p.ability == Abilities::NOGUARD);
+        if ally_semi_invulnerable(state, side, ally_slot) && !ally_no_guard {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
             push_order(move_order);
             return;
@@ -4244,6 +4267,7 @@ fn execute_action_inner(
         && !is_self
         && !is_ally
         && !is_field
+        && !is_spread
         && target_side != side
         && state.side(side).slot_pokemon(slot).map(|p| p.ability) == Some(Abilities::PRANKSTER)
         && state
@@ -5514,6 +5538,11 @@ fn execute_action_inner(
                             choice.move_id,
                             Choices::SYNTHESIS | Choices::MORNINGSUN | Choices::MOONLIGHT
                         );
+                        // PS sim/battle-actions.ts hitStepMoveHitLoop: NOT_FAIL leaves
+                        // `moveThisTurnResult` null, not false (Stomping Tantrum / Temper Flare).
+                        if heal_fail_event {
+                            not_fail_result = true;
+                        }
                     }
                     pm.hp = (pm.hp + amount).min(pm.maxhp);
                 }
@@ -9061,6 +9090,13 @@ fn yawn_volatile_blocked(state: &DoublesState, ts: Side, tslot: usize, src_side:
         return true;
     }
     if (0..2).any(|sl| state.side(ts).slot_pokemon(sl).is_some_and(|p| p.hp > 0 && p.ability == Abilities::SWEETVEIL)) {
+        return true;
+    }
+    // Flower Veil `onAllyTryAddVolatile` (PS data/abilities.ts flowerveil): a
+    // Grass-type target (the holder included, `alliesAndSelf`) blocks yawn.
+    if target.has_type(&PokemonType::GRASS)
+        && (0..2).any(|sl| state.side(ts).slot_pokemon(sl).is_some_and(|p| p.hp > 0 && p.ability == Abilities::FLOWERVEIL))
+    {
         return true;
     }
     // Electric Terrain `onTryAddVolatile` (PS data/moves.ts electricterrain):

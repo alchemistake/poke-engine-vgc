@@ -335,6 +335,9 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 move_type: PokemonType::FLYING,
                 flags: Flags {
                     protect: true,
+                    // PS data/moves.ts aircutter flags: slicing (Sharpness), wind.
+                    slicing: true,
+                    wind: true,
                     ..Default::default()
                 },
                 pp: 20,

@@ -4456,6 +4456,9 @@ fn execute_action_inner(
     // (`damage` holds no number).
     let mut sub_hit = false;
     let mut real_hit = false;
+    // PS `move.hitTargets` (targets that were not immune / missed), for Magician's
+    // `speedSort(hitTargets)`: the target's side and team index.
+    let mut magician_targets: Vec<(Side, PokemonIndex)> = Vec::new();
     // Cloud Nine / Air Lock `onEnd` (faint): the ability ending triggers
     // `eachEvent('WeatherChange')` — a speed sort. Set when such a holder
     // faints this move; consumed after the per-hit eachEvent.
@@ -4575,6 +4578,9 @@ fn execute_action_inner(
         }
         // The target as it was when the hit started (a KO clears the slot).
         let hit_target_pi = state.side(hts).active[htsl].pokemon_index;
+        // PS keeps a KO'd target's volatiles until the faint is processed after
+        // the move, so the Beak Blast `onHit` still sees the volatile.
+        let hit_target_beak = state.side(hts).active[htsl].beak_blast;
         // Damage this hit dealt (PS `damagedTargets`), for DamagingHit.
         let mut hit_damage: Option<i16> = None;
         if std::env::var("PE_DEBUG_DMG").is_ok() {
@@ -4650,6 +4656,11 @@ fn execute_action_inner(
             {
                 sub_hit = true;
                 hit_landed = true;
+                if let Some(tpi) = hit_target_pi {
+                    if !magician_targets.contains(&(hts, tpi)) {
+                        magician_targets.push((hts, tpi));
+                    }
+                }
                 let d = damage.min(sub_hp);
                 state.side_mut(target_side).active[target_slot].substitute_health = sub_hp - d;
                 total_damage = total_damage.saturating_add(d);
@@ -4753,6 +4764,11 @@ fn execute_action_inner(
                 continue;
             }
             real_hit = true;
+            if let Some(tpi) = hit_target_pi {
+                if !magician_targets.contains(&(hts, tpi)) {
+                    magician_targets.push((hts, tpi));
+                }
+            }
             // Disguise `onDamage` (priority 1): the first damaging hit is absorbed,
             // then `onUpdate` busts the forme and deals 1/8 max HP.
             let damage = {
@@ -7139,8 +7155,8 @@ fn execute_action_inner(
         // Beak Blast `condition.onHit` (PS data/moves.ts beakblast): a contact hit
         // on the charging user burns the attacker (`source.trySetStatus('brn',
         // target)`). The effect is the volatile, not a move; no draw.
-        if hit_damage.is_some() && choice.flags.contact && state.side(target_side).active[target_slot].beak_blast {
-            if let Some(bidx) = state.side(target_side).active[target_slot].pokemon_index {
+        if hit_damage.is_some() && choice.flags.contact && hit_target_beak {
+            if let Some(bidx) = hit_target_pi {
                 let attacker_alive = state.side(side).team_member(idx).hp > 0;
                 if attacker_alive {
                     try_set_status_from_ability(state, rng, side, slot, PokemonStatus::BURN, target_side, bidx);
@@ -7592,6 +7608,24 @@ fn execute_action_inner(
     {
         state.side_mut(side).active[slot].force_switch = true;
         state.side_mut(side).active[slot].baton_passing = baton;
+    }
+    // PS data/abilities.ts magician `onAfterMoveSecondarySelf` (run by useMoveInner
+    // after the secondaries): with no item and no switch flag, a non-Status move
+    // `speedSort`s its `hitTargets` (a draw per speed tie). The item steal
+    // (`takeItem`) is not modeled: the harness gives no items.
+    // TODO(PS parity): Magician item steal from the hit targets.
+    if choice.category != MoveCategory::Status
+        && choice.move_id != Choices::FLING
+        && !self_switch
+        && state.side(side).team_member(idx).ability == Abilities::MAGICIAN
+        && state.side(side).team_member(idx).item == crate::engine::items::Items::NONE
+        && !magician_targets.is_empty()
+    {
+        let mut speeds: Vec<i32> = magician_targets
+            .iter()
+            .map(|&(ts, tpi)| state.side(ts).speed_cache[tpi as usize] as i32)
+            .collect();
+        speed_sort_by(&mut speeds, rng, |a: &i32, b: &i32| b - a);
     }
 
     push_order(move_order);
@@ -8646,8 +8680,10 @@ fn compute_hit_damage(
         // Unaware `onAnyModifyBoost` (PS data/abilities.ts unaware): an
         // Unaware defender ignores the attacker's offensive boosts (breakable);
         // an Unaware attacker ignores the defender's defensive boosts.
+        // Foul Play included: PS `calculateStat(..., statUser = source)` runs
+        // `ModifyBoost` with the user as `pokemon`, so the Unaware target zeroes
+        // the user's Atk stage even though the stat comes from the target.
         let atk_boost_stat = if defender.ability == Abilities::UNAWARE
-            && choice.move_id != Choices::FOULPLAY
             && !crate::engine::abilities::ignores_target_ability(attacker, choice, &defender.ability)
         {
             0
@@ -8667,6 +8703,7 @@ fn compute_hit_damage(
         };
         let ctx = DamageCtx {
             added_type: state.side(target_side).active[target_slot].added_type,
+            attacker_added_type: state.side(side).active[slot].added_type,
             attack_base: base_atk,
             attack_boost: atk_boost_stat,
             defense_base: base_def,
@@ -12257,6 +12294,7 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
                 };
                 let ctx = DamageCtx {
                     added_type: state.side(target_side).active[target_slot].added_type,
+                    attacker_added_type: state.side(action.side).active[action.slot].added_type,
                     attack_base,
                     attack_boost,
                     defense_base,

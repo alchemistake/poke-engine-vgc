@@ -1802,7 +1802,26 @@ fn redirect_move_type(state: &DoublesState, action: &Action) -> PokemonType {
     if state.side(action.side).active[action.slot].electrify && action.choice.move_id != Choices::STRUGGLE {
         return PokemonType::ELECTRIC;
     }
-    action.choice.move_type
+    // Terrain Pulse / Weather Ball `onModifyType` and the -ate abilities'
+    // `onModifyType` also run before `getMoveTargets`, as in `execute_action_inner`.
+    let user = state.side(action.side).team_member(action.pokemon_index);
+    let mut c = action.choice.clone();
+    match c.move_id {
+        Choices::TERRAINPULSE => {
+            let grounded = slot_grounded(user, &state.side(action.side).active[action.slot], state.gravity.active);
+            if let Some(t) = crate::engine::mechanics::terrain_pulse_type(state.terrain.terrain_type, grounded) {
+                c.move_type = t;
+            }
+        }
+        Choices::WEATHERBALL => {
+            let mega_sol = user.ability == Abilities::MEGASOL;
+            if let Some(t) = crate::engine::mechanics::weather_ball_type(effective_weather(state), mega_sol) {
+                c.move_type = t;
+            }
+        }
+        _ => {}
+    }
+    crate::engine::mechanics::ate_type_change(user.ability, &c).unwrap_or(c.move_type)
 }
 
 /// PS `priorityEvent('RedirectTarget')` (sim/pokemon.ts `getMoveTargets`):
@@ -1811,16 +1830,15 @@ fn redirect_move_type(state: &DoublesState, action: &Action) -> PokemonType {
 /// valid target). No draw.
 // TODO(PS parity): speed order / ties between holders, Mold Breaker, tracksTarget.
 fn redirect_target(state: &DoublesState, action: &Action, target: (Side, usize)) -> (Side, usize) {
-    // Counter / Mirror Coat `onRedirectTarget`: the recorded attacker's slot.
+    // Counter / Mirror Coat `onRedirectTarget` (priority -1): the recorded
+    // attacker's slot, unless a higher-priority Follow Me / Rage Powder (1)
+    // returns first (PS `priorityEvent` stops at the first result).
     let a = &state.side(action.side).active[action.slot];
     let rec = match action.choice.move_id {
         Choices::COUNTER => a.counter_vol,
         Choices::MIRRORCOAT => a.mirror_coat_vol,
         _ => None,
     };
-    if let Some((Some(t), _)) = rec {
-        return t;
-    }
     let ty = crate::doubles::move_targets::ps_move_target(&action.choice.move_id.to_string().to_lowercase());
     if !matches!(ty, "normal" | "randomNormal" | "adjacentFoe" | "any" | "scripted") {
         return target;
@@ -1838,6 +1856,9 @@ fn redirect_target(state: &DoublesState, action: &Action, target: (Side, usize))
         if powder_ok {
             return (foe, sl);
         }
+    }
+    if let Some((Some(t), _)) = rec {
+        return t;
     }
     let want = match redirect_move_type(state, action) {
         PokemonType::ELECTRIC => Abilities::LIGHTNINGROD,
@@ -5193,6 +5214,11 @@ fn execute_action_inner(
                         }
                     }
                 }
+                // Glaive Rush `self.volatileStatus` applies on a Substitute hit too
+                // (the target is `null`, not `false`, in PS selfDrops).
+                if choice.move_id == Choices::GLAIVERUSH && ti == 0 && state.side(side).team_member(idx).hp > 0 {
+                    state.side_mut(side).active[slot].glaive_rush = true;
+                }
                 for k in 0..rolls {
                     let r = rng.label("secondary").random(100) as f32;
                     // A secondary with `self` (Flame Charge's +1 Speed) still
@@ -6147,10 +6173,12 @@ fn execute_action_inner(
                     }
                 }
                 PokemonVolatileStatus::OCTOLOCK => {
-                    // PS `addVolatile`: no-op while present; no draw.
-                    if state.side(ts).active[tslot].octolock.is_none()
-                        && state.side(ts).slot_pokemon(tslot).map(|p| p.hp > 0).unwrap_or(false)
-                    {
+                    // PS `addVolatile`: returns false while present (no draw), so
+                    // the move did nothing and fails (`moveThisTurnResult` false:
+                    // Stomping Tantrum). PS sim/battle-actions.ts runMoveEffects.
+                    if state.side(ts).active[tslot].octolock.is_some() {
+                        move_failed = true;
+                    } else if state.side(ts).slot_pokemon(tslot).map(|p| p.hp > 0).unwrap_or(false) {
                         state.side_mut(ts).active[tslot].octolock = Some((side, idx));
                     }
                 }
@@ -10019,8 +10047,10 @@ fn resolve_future_move(
     let eb = state.side(ts).slot_boosts(tslot).map(|b| b.eva).unwrap_or(0);
     let mods = accuracy_ability_mods(state, ss, si, ts, tslot, &choice);
     // No Guard `onAnyAccuracy` (either side): no roll, the delayed hit always lands.
+    // Glaive Rush's drawback (`glaiverush.onAccuracy` returns true) too.
     let no_guard = state.side(ss).team_member(si).ability == Abilities::NOGUARD
-        || state.side(ts).slot_pokemon(tslot).is_some_and(|p| p.ability == Abilities::NOGUARD);
+        || state.side(ts).slot_pokemon(tslot).is_some_and(|p| p.ability == Abilities::NOGUARD)
+        || state.side(ts).active[tslot].glaive_rush;
     if !no_guard && !roll_accuracy_boosted(choice.accuracy, ab, eb, mods, rng) {
         return;
     }

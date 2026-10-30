@@ -3664,6 +3664,23 @@ fn execute_action_inner(
             return;
         }
     }
+    // Acupressure that picked the ally: Good as Gold `onTryHit` (status move,
+    // target !== source) makes the ally immune before any draw. PS
+    // data/abilities.ts goodasgold.onTryHit; the ally's `-immune` line is printed.
+    if ally_or_self_picked_ally
+        && state.side(side).slot_pokemon(ally_slot).is_some_and(|d| {
+            d.ability == Abilities::GOODASGOLD
+                && !crate::engine::abilities::ignores_target_ability(
+                    state.side(side).team_member(idx),
+                    choice,
+                    &d.ability,
+                )
+        })
+    {
+        state.side_mut(side).active[slot].move_result_this_turn = Some(false);
+        push_order(move_order);
+        return;
+    }
     let toxic_hits = crate::engine::mechanics::toxic_always_hits(choice.move_id, state.side(side).team_member(idx));
     if !is_self && !is_ally && !is_field && !toxic_hits {
         // An aborted charge (confusion self-hit, ...) already lost its `twoturnmove`
@@ -4534,6 +4551,9 @@ fn execute_action_inner(
     // faints this move; consumed after the per-hit eachEvent.
     let mut weather_suppress_fainted = false;
     let mut drop_landed = false;
+    // A spread boost-only status move: a target that changed nothing is only a
+    // per-target failure. The move fails when no target changed (see HITEND below).
+    let mut spread_boost_noop = false;
     let mut extra_order: Vec<String> = Vec::new();
     // Moves a Copycat / Sleep Talk `onHit` ran (`useMove`) inside the hit loop.
     let mut copy_order: Vec<String> = Vec::new();
@@ -5144,7 +5164,13 @@ fn execute_action_inner(
                 {
                     // A boost-only status move that changed nothing (stat already
                     // at +/-6) fails: the hit loop ends without an `eachEvent`.
-                    move_failed = true;
+                    // PS `spreadMoveHit`: for a spread move this is one target's
+                    // `false`; the move fails only when every target gave false.
+                    if is_spread {
+                        spread_boost_noop = true;
+                    } else {
+                        move_failed = true;
+                    }
                 }
             }
         }
@@ -6013,11 +6039,18 @@ fn execute_action_inner(
                 .map(|t| real_ability(state, target_side, t));
             match (user_idx, target_ability) {
                 (Some(u), Some(ta)) if state.side(side).team_member(u).ability != ta => {
-                    state.side_mut(side).team_member_mut(u).ability = ta;
-                    reset_protean_effect(state, side, u);
-                    // PS `setAbility` runs the new ability's Start event
-                    // (Sand Stream, Drought, ...), as Skill Swap does.
-                    let _ = apply_on_switch_abilities(state, side, slot, rng);
+                    // A user under Gastro Acid has No Ability here (the engine's
+                    // model of the `gastroacid` volatile). PS `setAbility` still
+                    // sets the copy, but `singleEvent('Start')` is suppressed
+                    // (`suppressingAbility`) and the suppression lasts until the
+                    // user switches out, so the copy is not applied here.
+                    if state.side(side).team_member(u).ability != Abilities::NONE {
+                        state.side_mut(side).team_member_mut(u).ability = ta;
+                        reset_protean_effect(state, side, u);
+                        // PS `setAbility` runs the new ability's Start event
+                        // (Sand Stream, Drought, ...), as Skill Swap does.
+                        let _ = apply_on_switch_abilities(state, side, slot, rng);
+                    }
                 }
                 _ => move_failed = true,
             }
@@ -7397,6 +7430,11 @@ fn execute_action_inner(
         // did something. Field moves (`tryMoveHit`) have no hit loop; neither
         // do `target: 'all'` moves (Haze), which PS runs through `tryMoveHit`
         // (sim/battle-actions.ts useMoveInner).
+        // Spread boost-only status move where no target changed (PS
+        // `hitStepMoveHitLoop`: every `damage[i]` false -> `return`, no eachEvent).
+        if spread_boost_noop && !drop_landed {
+            move_failed = true;
+        }
         if is_field || move_failed || move_ty == "all" {
             break;
         }
@@ -10218,7 +10256,17 @@ fn update_forecast(state: &mut DoublesState) {
         for sl in 0..2 {
             if let Some(idx) = state.side(sd).active[sl].pokemon_index {
                 let pm = state.side_mut(sd).team_member_mut(idx);
-                if pm.ability == Abilities::FORECAST && pm.hp > 0 {
+                // PS data/abilities.ts forecast.onUpdate: only Castform (any forme)
+                // changes type; a Forecast holder of another species (Skill Swap,
+                // Role Play) does nothing.
+                let is_castform = matches!(
+                    pm.id,
+                    crate::pokemon::PokemonName::CASTFORM
+                        | crate::pokemon::PokemonName::CASTFORMSUNNY
+                        | crate::pokemon::PokemonName::CASTFORMRAINY
+                        | crate::pokemon::PokemonName::CASTFORMSNOWY
+                );
+                if pm.ability == Abilities::FORECAST && pm.hp > 0 && is_castform {
                     pm.types = (t, PokemonType::TYPELESS);
                 }
             }
@@ -11984,9 +12032,13 @@ fn end_of_turn(
                     continue;
                 }
                 state.side_mut(side).active[slot].partial_trap = Some(t);
+                // PS `partiallytrapped.onResidual`: the binder must be active, alive
+                // and have `activeTurns` (a binder switched back in this turn, e.g.
+                // by Dragon Tail, ends the trap silently).
                 let src_active = (0..2).any(|sl| {
                     let a = &state.side(t.source_side).active[sl];
                     a.pokemon_index == Some(t.source_idx)
+                        && a.active_turns > 0
                         && state.side(t.source_side).team_member(t.source_idx).hp > 0
                 });
                 if !src_active {

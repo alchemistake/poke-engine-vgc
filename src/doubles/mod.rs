@@ -7,6 +7,8 @@
 
 pub mod battle;
 pub mod damage;
+pub mod event_handlers;
+pub mod events;
 pub mod move_targets;
 pub mod rng;
 pub mod species_types;

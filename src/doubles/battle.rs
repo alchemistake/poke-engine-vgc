@@ -1922,7 +1922,7 @@ fn friend_guard_tie_groups(state: &DoublesState) -> [u8; 4] {
 }
 
 /// The cached PS `pokemon.speed` of a slot's occupant.
-fn cached_speed(state: &DoublesState, side: Side, slot: usize) -> i32 {
+pub(crate) fn cached_speed(state: &DoublesState, side: Side, slot: usize) -> i32 {
     let s = state.side(side);
     s.active[slot].pokemon_index.map(|i| s.speed_cache[i as usize] as i32).unwrap_or(0)
 }
@@ -2208,7 +2208,7 @@ fn mold_breaker_restore(state: &mut DoublesState) {
 
 /// The ability as PS's direct reads (`target.ability`, `getAbility()`) see it,
 /// i.e. ignoring a Mold Breaker blank.
-fn real_ability(state: &DoublesState, side: Side, idx: PokemonIndex) -> Abilities {
+pub(crate) fn real_ability(state: &DoublesState, side: Side, idx: PokemonIndex) -> Abilities {
     MOLD_SAVED
         .with(|m| m.borrow().iter().find(|&&(s, i, _)| s == side && i == idx).map(|&(_, _, a)| a))
         .unwrap_or(state.side(side).team_member(idx).ability)
@@ -3416,8 +3416,8 @@ fn execute_action_inner(
         _ => {}
     }
 
-    // PS `runEvent('TryMove')` (useMove, before any `onTry`): Damp's handler.
-    damp_handler_ties(state, rng);
+    // PS `runEvent('TryMove', pokemon, target)` (useMoveInner, before any `onTry`).
+    crate::doubles::events::run_event_ties(state, rng, "TryMove", (side, slot), Some((target_side, target_slot)));
     // Damp `onAnyTryMove` (data/abilities.ts damp): an active Damp holder fails
     // explosion / mindblown / mistyexplosion / selfdestruct (`cant`). No draw.
     if damp_blocks_explosion(state, side, idx, choice) {
@@ -4917,9 +4917,9 @@ fn execute_action_inner(
           }
           // PS `spreadDamage`: every target's `Damage` event (Damp) runs after
           // all the rolls and before any secondary.
-          for &(d, _) in &out {
+          for (i, &(d, _)) in out.iter().enumerate() {
               if d > 0 {
-                  damp_handler_ties(state, rng);
+                  crate::doubles::events::run_event_ties(state, rng, "Damage", hit_targets[i], Some((side, slot)));
               }
           }
           out
@@ -5197,7 +5197,7 @@ fn execute_action_inner(
             if damage > 0 {
                 // PS `runEvent('Damage')`: Damp's `onAnyDamage` (spread attacks: above).
                 if !(is_spread && is_attack) {
-                    damp_handler_ties(state, rng);
+                    crate::doubles::events::run_event_ties(state, rng, "Damage", (target_side, target_slot), Some((side, slot)));
                 }
                 state.side_mut(target_side).active[target_slot].illusion_broken = true;
                 // PS `gotAttacked`: record the attacker in `attackedBy`
@@ -7197,7 +7197,7 @@ fn execute_action_inner(
         let ps_target = crate::doubles::move_targets::ps_move_target(&choice.move_id.to_string().to_lowercase());
         if ps_target == "allySide" || ps_target == "foeSide" {
             let (ps, pslot) = if ps_target == "allySide" { (side, slot) } else { (target_side, target_slot) };
-            try_hit_side_handler_ties(state, rng, ps);
+            crate::doubles::events::run_event_ties(state, rng, "TryHitSide", (ps, pslot), Some((side, slot)));
         }
 
         // Side conditions (Reflect, Light Screen, Spikes, Tailwind, ...).
@@ -8849,49 +8849,10 @@ fn misty_terrain_blocks_confusion(state: &DoublesState, ts: Side, tslot: usize) 
 // TODO(PS parity): the other `addVolatile` callers (flinch, confusion, ...) do
 // not draw these ties yet.
 fn try_add_volatile_ties(state: &DoublesState, rng: &mut Gen5Rng, ts: Side, tslot: usize) {
-    let Some(tidx) = state.side(ts).active[tslot].pokemon_index else { return };
-    if state.side(ts).team_member(tidx).hp <= 0 {
+    if !state.side(ts).slot_pokemon(tslot).is_some_and(|p| p.hp > 0) {
         return;
     }
-    const ORDER: i64 = 4294967296;
-    let mut hs: Vec<(i64, i32, i64)> = Vec::new();
-    if state.side(ts).active[tslot].focus_punch {
-        hs.push((ORDER, cached_speed(state, ts, tslot), 2));
-    }
-    for sl in 0..2 {
-        let Some(hidx) = state.side(ts).active[sl].pokemon_index else { continue };
-        if state.side(ts).team_member(hidx).hp <= 0 {
-            continue;
-        }
-        let speed = cached_speed(state, ts, sl);
-        if sl == tslot && matches!(
-            real_ability(state, ts, hidx),
-            Abilities::INNERFOCUS
-                | Abilities::INSOMNIA
-                | Abilities::OWNTEMPO
-                | Abilities::VITALSPIRIT
-                | Abilities::LEAFGUARD
-                | Abilities::PURIFYINGSALT
-                | Abilities::SHIELDSDOWN
-        ) {
-            hs.push((ORDER, speed, 7));
-        }
-        if matches!(real_ability(state, ts, hidx), Abilities::AROMAVEIL | Abilities::FLOWERVEIL | Abilities::SWEETVEIL) {
-            hs.push((ORDER, speed, 7));
-        }
-    }
-    if matches!(
-        state.terrain.terrain_type,
-        crate::engine::state::Terrain::ELECTRICTERRAIN | crate::engine::state::Terrain::MISTYTERRAIN
-    ) {
-        hs.push((ORDER, 0, 5));
-    }
-    if state.side(ts).side_conditions.safeguard > 0 {
-        hs.push((ORDER, 0, 4));
-    }
-    if hs.len() >= 2 {
-        sort_handler_ties(&mut hs, rng, "speed tie (move order)");
-    }
+    crate::doubles::events::run_event_ties(state, rng, "TryAddVolatile", (ts, tslot), None);
 }
 
 fn try_confuse(state: &mut DoublesState, rng: &mut Gen5Rng, ts: Side, tslot: usize) {
@@ -9011,7 +8972,6 @@ fn try_set_status(
 /// a type / `Immunity`-event check (Sun vs freeze, Magma Armor) and not blocked
 /// by a foe's Substitute. Misty / Electric Terrain, Safeguard and Uproar are
 /// SetStatus handlers too, but on other keys, so they do not tie here.
-/// TODO(PS parity): Uproar `onAnySetStatus` and foe-side handlers.
 fn set_status_event_tie(
     state: &DoublesState,
     rng: &mut Gen5Rng,
@@ -9043,44 +9003,7 @@ fn set_status_event_tie(
     if crate::engine::mechanics::immune_to_status(target, &st, &raw_ctx) {
         return;
     }
-    let tidx_slot = tslot;
-    let mut hs: Vec<ResidualHandler> = Vec::new();
-    for sl in 0..2 {
-        let Some(p) = state.side(ts).slot_pokemon(sl) else { continue };
-        if p.hp <= 0 {
-            continue;
-        }
-        let speed = cached_speed(state, ts, sl);
-        let own_set_status = sl == tidx_slot
-            && matches!(
-                p.ability,
-                Abilities::COMATOSE
-                    | Abilities::IMMUNITY
-                    | Abilities::INSOMNIA
-                    | Abilities::LEAFGUARD
-                    | Abilities::LIMBER
-                    | Abilities::PASTELVEIL
-                    | Abilities::PURIFYINGSALT
-                    | Abilities::SHIELDSDOWN
-                    | Abilities::THERMALEXCHANGE
-                    | Abilities::VITALSPIRIT
-                    | Abilities::WATERBUBBLE
-                    | Abilities::WATERVEIL
-            );
-        let ally_set_status = matches!(p.ability, Abilities::FLOWERVEIL | Abilities::SWEETVEIL | Abilities::PASTELVEIL);
-        for _ in 0..(own_set_status as u8 + ally_set_status as u8) {
-            hs.push(ResidualHandler {
-                order: 0,
-                priority: 0,
-                speed,
-                sub_order: 7,
-                kind: ResidualKind::Marker,
-            });
-        }
-    }
-    if hs.len() > 1 {
-        let _ = sort_residual_handlers(hs, rng, "speed tie (move order)");
-    }
+    crate::doubles::events::run_event_ties(state, rng, "SetStatus", (ts, tslot), None);
 }
 
 /// Yawn's `onEnd` -> `target.trySetStatus('slp', source)`: the setStatus effect
@@ -12076,40 +11999,6 @@ fn damp_blocks_explosion(state: &DoublesState, side: Side, idx: PokemonIndex, ch
     })
 }
 
-fn damp_handler_ties(state: &DoublesState, rng: &mut Gen5Rng) {
-    let mut hs: Vec<(i64, i32, i64)> = Vec::new();
-    for (sd, sl) in [(Side::One, 0usize), (Side::One, 1), (Side::Two, 0), (Side::Two, 1)] {
-        let Some(hidx) = state.side(sd).active[sl].pokemon_index else { continue };
-        if state.side(sd).slot_pokemon(sl).map(|p| p.hp > 0).unwrap_or(false)
-            && real_ability(state, sd, hidx) == Abilities::DAMP
-        {
-            hs.push((4294967296, cached_speed(state, sd, sl), 7));
-        }
-    }
-    if hs.len() >= 2 {
-        sort_handler_ties(&mut hs, rng, "speed tie (move order)");
-    }
-}
-
-/// PS `tryMoveHit` `runEvent('TryHitSide', pokemon)` (allySide / foeSide moves):
-/// the handlers are `onAllyTryHitSide` of every active holder among the target's
-/// `alliesAndSelf` (Magic Bounce; it returns early for same-side holders, but the
-/// handler is still sorted). Holders with equal speed tie and shuffle.
-/// PS sim/battle.ts findEventHandlers; data/abilities.ts magicbounce.
-fn try_hit_side_handler_ties(state: &DoublesState, rng: &mut Gen5Rng, ps: Side) {
-    let mut hs: Vec<(i64, i32, i64)> = Vec::new();
-    for sl in 0..2 {
-        let Some(hidx) = state.side(ps).active[sl].pokemon_index else { continue };
-        if state.side(ps).slot_pokemon(sl).map(|p| p.hp > 0).unwrap_or(false)
-            && real_ability(state, ps, hidx) == Abilities::MAGICBOUNCE
-        {
-            hs.push((4294967296, cached_speed(state, ps, sl), 7));
-        }
-    }
-    if hs.len() >= 2 {
-        sort_handler_ties(&mut hs, rng, "speed tie (move order)");
-    }
-}
 
 /// PS `afterMoveSecondaryEvent` -> `runEvent('AfterMoveSecondary', targets)`:
 /// `findEventHandlers` collects each hit target's `onAfterMoveSecondary`
@@ -12149,38 +12038,13 @@ fn after_move_secondary_ties(state: &mut DoublesState, rng: &mut Gen5Rng, target
     }
 }
 
-/// PS `runEvent('Accuracy')` in `hitStepAccuracy` speed-sorts its handlers
-/// (shuffling ties): No Guard `onAnyAccuracy` for every active holder (Ability,
-/// subOrder 7), and the target's Glaive Rush / Minimize `onAccuracy` and the
-/// user's Lock-On `onSourceAccuracy` volatiles (Condition, subOrder 2). Two
-/// No Guard holders at the same speed draw here.
-/// PS sim/battle-actions.ts hitStepAccuracy; data/abilities.ts noguard.
-/// TODO(PS parity): `accuracy: true` moves also run this event (Telekinesis too).
+/// PS `runEvent('Accuracy', target, source)` in `hitStepAccuracy`: its handlers
+/// (No Guard `onAnyAccuracy`, Glaive Rush / Minimize `onAccuracy`, Lock-On
+/// `onSourceAccuracy`, ...) are speed-sorted; ties draw.
+/// PS sim/battle-actions.ts hitStepAccuracy.
+/// TODO(PS parity): `accuracy: true` moves also run this event.
 fn accuracy_event_ties(state: &DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize, ts: Side, tsl: usize) {
-    const ORDER: i64 = 4294967296;
-    let mut hs: Vec<(i64, i32, i64)> = Vec::new();
-    for sd in [Side::One, Side::Two] {
-        for sl in 0..2 {
-            let Some(i) = state.side(sd).active[sl].pokemon_index else { continue };
-            let p = state.side(sd).team_member(i);
-            if p.hp > 0 && p.ability == Abilities::NOGUARD {
-                hs.push((ORDER, cached_speed(state, sd, sl), 7));
-            }
-        }
-    }
-    let t = &state.side(ts).active[tsl];
-    if t.glaive_rush {
-        hs.push((ORDER, cached_speed(state, ts, tsl), 2));
-    }
-    if t.minimize {
-        hs.push((ORDER, cached_speed(state, ts, tsl), 2));
-    }
-    if state.side(side).active[slot].lock_on.is_some() {
-        hs.push((ORDER, cached_speed(state, side, slot), 2));
-    }
-    if hs.len() > 1 {
-        sort_handler_ties(&mut hs, rng, "speed tie (move order)");
-    }
+    crate::doubles::events::run_event_ties(state, rng, "Accuracy", (ts, tsl), Some((side, slot)));
 }
 
 fn sort_handler_ties(hs: &mut [(i64, i32, i64)], rng: &mut Gen5Rng, label: &'static str) {

@@ -8,7 +8,8 @@
 # refused when a check fails. Checks:
 #   1. pokemon-showdown is unmodified (it is the spec).
 #   2. Protected files are unchanged (fuzz harness, generated data) unless
-#      ALLOW_HARNESS_EDIT=1 (only the user sets this).
+#      ALLOW_HARNESS_EDIT=1 (only the user sets this). 2b: the generated
+#      event-handler table matches fuzz/gen_event_handlers.js.
 #   3. src/choices.rs is not bulk-rewritten.
 #   4. No build artifacts / fuzz output are staged.
 #   5. The champions build succeeds and `cargo test` is green.
@@ -34,6 +35,7 @@ PROTECTED=(
   fuzz/fuzz.js fuzz/fuzz_purpose.js fuzz/teams.js fuzz/ps_trace.js fuzz/ps_lookup.sh
   fuzz/guard.sh fuzz/install-hooks.sh fuzz/SCORE
   src/doubles/species_types.rs src/doubles/species_weights.rs src/doubles/move_targets.rs
+  src/doubles/event_handlers.rs fuzz/gen_event_handlers.js
 )
 if [ "${ALLOW_HARNESS_EDIT:-0}" != "1" ]; then
   for f in "${PROTECTED[@]}"; do
@@ -44,6 +46,13 @@ if [ "${ALLOW_HARNESS_EDIT:-0}" != "1" ]; then
     fi
   done
   ok "protected files unchanged"
+fi
+
+# 2b. The generated event-handler table matches its generator (PS data).
+if [ -f fuzz/gen_event_handlers.js ] && ! node fuzz/gen_event_handlers.js | cmp -s - src/doubles/event_handlers.rs; then
+  fail "src/doubles/event_handlers.rs is not what fuzz/gen_event_handlers.js generates. Never edit it by hand."
+else
+  ok "event handler table up to date"
 fi
 
 # 3. No bulk rewrite of the shared move table.

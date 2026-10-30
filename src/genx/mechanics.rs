@@ -411,8 +411,8 @@ pub fn powder_immune(p: &Pokemon) -> bool {
 /// Terrain `onBasePower` (priority 6) as a 4096-based modifier: Electric /
 /// Grassy / Psychic Terrain boost a grounded user's matching moves x1.3;
 /// Grassy Terrain halves Earthquake / Bulldoze / Magnitude and Misty Terrain
-/// halves Dragon moves against a grounded target. PS grassyterrain
-/// `onBasePower`: a semi-invulnerable defender is not weakened.
+/// halves Dragon moves against a grounded target. PS grassyterrain /
+/// mistyterrain `onBasePower`: a semi-invulnerable defender is not weakened.
 pub fn terrain_base_power_modifier(
     terrain: super::state::Terrain,
     choice: &Choice,
@@ -433,7 +433,10 @@ pub fn terrain_base_power_modifier(
             Some(2048)
         }
         Terrain::GRASSYTERRAIN if t == PokemonType::GRASS && attacker_grounded => Some(5325),
-        Terrain::MISTYTERRAIN if t == PokemonType::DRAGON && defender_grounded => Some(2048),
+        // PS mistyterrain `onBasePower`: `defender.isGrounded() && !defender.isSemiInvulnerable()`.
+        Terrain::MISTYTERRAIN if t == PokemonType::DRAGON && defender_grounded && !defender_semi_invulnerable => {
+            Some(2048)
+        }
         _ => None,
     }
 }

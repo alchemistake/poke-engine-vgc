@@ -185,6 +185,9 @@ pub struct ActiveSlot {
     pub encore: Option<(crate::choices::Choices, u8)>,
     /// `torment` volatile (no duration): the last move is disabled while it lasts.
     pub torment: bool,
+    /// `imprison` volatile (no duration): the user's moves are blocked for the
+    /// foes (not modelled yet). Set once; a second Imprison fails.
+    pub imprison: bool,
     /// Forest's Curse added Grass to a single-typed pokemon (PS `addedType`):
     /// the second type slot is restored on switch-out / faint.
     pub added_grass: bool,
@@ -321,6 +324,7 @@ impl ActiveSlot {
             twoturn_fired: false,
             encore: None,
             torment: false,
+            imprison: false,
             added_grass: false,
             added_type: PokemonType::TYPELESS,
             roost_orig: None,

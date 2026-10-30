@@ -618,16 +618,15 @@ fn plan_queue_change(
         fractional: 0,
         prioritized: false,
         no_pp: false,
-        recharge: state.side(side).active[slot].recharging,
+        recharge: false,
     };
     // `resolveAction`: no target location -> `getRandomTarget` (a draw), then
-    // `getActionSpeed` -> `getTarget`. The recharge pseudo-move has no
-    // `resolveAction` draw (PS side.ts sets its target location only at runMove).
-    if !a.recharge {
-        if let Some((ts, tsl)) = ps_get_target(state, rng, &a) {
-            a.target_loc = if ts == a.side { -(tsl as i8 + 1) } else { tsl as i8 + 1 };
-            a.target = tsl;
-        }
+    // `getActionSpeed` -> `getTarget`. The new action is a real `move` (not the
+    // recharge pseudo-move, even when the target is recharging), so it resolves
+    // once, and the target location it gets is kept for later re-sorts.
+    if let Some((ts, tsl)) = ps_get_target(state, rng, &a) {
+        a.target_loc = if ts == a.side { -(tsl as i8 + 1) } else { tsl as i8 + 1 };
+        a.target = tsl;
     }
     let _ = ps_get_target(state, rng, &a);
     // `insertChoice`: first / last index among the queue (the target's own
@@ -3233,19 +3232,6 @@ fn execute_action_inner(
     } else {
         choice.base_power
     };
-    // Brick Break / Psychic Fangs / Raging Bull `onTryHit`: shatter the
-    // target side's screens before the hit (even through a Substitute).
-    // TODO(PS parity): Raging Bull's type-dependent variants.
-    if matches!(choice.move_id, Choices::BRICKBREAK | Choices::PSYCHICFANGS | Choices::RAGINGBULL)
-        && !is_self
-        && !is_field
-    {
-        let sc = &mut state.side_mut(target_side).side_conditions;
-        sc.reflect = 0;
-        sc.light_screen = 0;
-        sc.aurora_veil = 0;
-    }
-
     // Soundproof / Bulletproof `onTryHit`: immune to sound / ball moves (no draw).
     if !is_self && !is_field && (side, slot) != (target_side, target_slot) {
         let immune = state
@@ -3629,6 +3615,22 @@ fn execute_action_inner(
             push_order();
             return;
         }
+    }
+
+    // Brick Break / Psychic Fangs / Raging Bull `onTryHit`: shatter the target
+    // side's screens. PS runs it in `moveHit` (sim/battle-actions.ts), after the
+    // type-immunity and accuracy steps (an immune or missed target keeps them),
+    // and before the substitute check (so it shatters through a Substitute).
+    // PS data/moves.ts brickbreak / psychicfangs. TODO(PS parity): Raging Bull's
+    // type-dependent variants.
+    if matches!(choice.move_id, Choices::BRICKBREAK | Choices::PSYCHICFANGS | Choices::RAGINGBULL)
+        && !is_self
+        && !is_field
+    {
+        let sc = &mut state.side_mut(target_side).side_conditions;
+        sc.reflect = 0;
+        sc.light_screen = 0;
+        sc.aurora_veil = 0;
     }
 
     // Substitute `onTryPrimaryHit` (after the accuracy step): a Status move
@@ -4396,6 +4398,21 @@ fn execute_action_inner(
             }
         }
 
+        // PS `moveHit` forceSwitch step: a Status forceSwitch move (Roar,
+        // Whirlwind) gives `hitResult = canSwitch(target.side)`. With no living
+        // reserve on the target's side the move does nothing (`-fail`), so the
+        // hit loop runs no `eachEvent('Update')`. PS sim/battle-actions.ts moveHit.
+        if choice.force_switch
+            && choice.category == MoveCategory::Status
+            && has_target
+            && !is_self
+            && !is_field
+            && possible_switches(state, target_side).is_empty()
+        {
+            move_failed = true;
+            continue;
+        }
+
         // Aroma Veil `onAllyTryAddVolatile`: the holder and its ally can't gain
         // Attract / Disable / Encore / Heal Block / Taunt / Torment from others
         // (after the accuracy roll). PS data/abilities.ts aromaveil.
@@ -4767,19 +4784,31 @@ fn execute_action_inner(
                 } else {
                     (pm.maxhp + 1) / 2
                 };
-                if pm.hp >= pm.maxhp {
-                    move_failed = true;
-                } else {
+                let full = pm.hp >= pm.maxhp;
+                if !full {
                     pm.hp = (pm.hp + amount).min(pm.maxhp);
+                }
+                if full {
+                    // PS `onHit` returns NOT_FAIL on a failed heal (`-fail`): the
+                    // hit still runs its two `eachEvent('Update')`s (spreadMoveHit,
+                    // then hitStepMoveHitLoop). sim/battle-actions.ts.
+                    move_failed = true;
+                    each_event_update(state, rng);
+                    each_event_update(state, rng);
                 }
             }
         }
 
-        // Imprison (data/moves.ts imprison): a self-targeted `volatileStatus`
-        // does not land, so the move fails with no `eachEvent`.
-        // TODO(PS parity): the foe's `onFoeBeforeMove` block (Imprison is not modelled).
-        if choice.move_id == Choices::IMPRISON && ti == 0 && is_self {
-            move_failed = true;
+        // Imprison (PS data/moves.ts imprison, `addVolatile('imprison')` on the
+        // user): fails if the user already has it, else it lands (`-start`) and
+        // the move runs its hit loop.
+        // TODO(PS parity): the foe's `onFoeBeforeMove` / `onFoeDisableMove` blocks.
+        if choice.move_id == Choices::IMPRISON && ti == 0 && is_self && !move_failed {
+            if state.side(side).active[slot].imprison {
+                move_failed = true;
+            } else {
+                state.side_mut(side).active[slot].imprison = true;
+            }
         }
         // Defog `onHit`: -1 evasion (unless behind a Substitute), clear the
         // target side's screens and both sides' hazards, clear the terrain.

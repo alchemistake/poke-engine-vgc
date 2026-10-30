@@ -27,7 +27,10 @@ function psDrawPurpose(fns) {
   if (has('onDamagingHit') || has('onSourceDamagingHit')) return 'ability';
   if (has('onStallMove')) return 'stall';
   if (has('onResidual')) return 'residual roll';
-  return 'other: ' + (fns.find((f) => !['random', 'randomChance', 'sample', 'next'].includes(f)) || '?');
+  const inner = fns.find((f) => !['random', 'randomChance', 'sample', 'next'].includes(f));
+  // Hits 2+ of a `multiaccuracy` move roll accuracy in the hit loop itself.
+  if (inner === 'hitStepMoveHitLoop') return 'multiaccuracy';
+  return 'other: ' + (inner || '?');
 }
 
 module.exports = { psDrawPurpose };

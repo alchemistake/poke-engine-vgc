@@ -375,6 +375,9 @@ const DRAW_HINTS = {
     'src/choices.rs, or the custom-secondary match in `execute_action`.',
   'self boost': 'PS `selfDrops` roll for `self.boosts`. Engine: `self_boosts` in src/choices.rs.',
   multihit: 'Hit-count sample for 2-5 hit moves. Engine: `multihit` in src/choices.rs.',
+  multiaccuracy:
+    'Accuracy roll for hits 2+ of a `multiaccuracy` move (Triple Axel, Triple Kick, Population Bomb) in ' +
+    '`hitStepMoveHitLoop`. Engine: the `multiaccuracy` roll in the hit loop of `execute_action`.',
   retarget: 'The chosen target fainted, so PS picked a random foe (`getRandomTarget`).',
   'status before move':
     'Status `onBeforeMove` roll: full paralysis (champions 1/8) or freeze thaw (1/4), see ' +

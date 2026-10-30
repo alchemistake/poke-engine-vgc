@@ -507,6 +507,10 @@ impl DoublesSide {
 pub struct DoublesState {
     /// PS `battle.lastMove`: the last move used by anyone (Copycat).
     pub last_move: Option<Choices>,
+    /// Set when the current action's `onHit` ran a Copycat / Sleep Talk
+    /// `useMove`: PS's `clearActiveMove` of the copying move is then a no-op,
+    /// so the copied move (not the copier) is `battle.lastMove`.
+    pub copy_called: bool,
     pub side_one: DoublesSide,
     pub side_two: DoublesSide,
     pub weather: StateWeather,
@@ -1083,6 +1087,7 @@ impl DoublesState {
         }
         let state = Self {
             last_move: None,
+            copy_called: false,
             queue_change: None,
             queue_round: false,
             queue_prioritize: None,

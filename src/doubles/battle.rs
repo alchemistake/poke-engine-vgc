@@ -185,8 +185,10 @@ fn faint_pokemon(state: &mut DoublesState, side: Side, slot: usize) {
     // PS data/conditions.ts destinybond.onAfterFaint.
     let db = state.side(side).active[slot].destinybond && state.in_move;
     let la = state.side(side).active[slot].last_attacker;
+    // PS `onFaint`: `target.isAlly(source)` returns (an ally's or the user's own
+    // damage does not take the attacker down).
     if db {
-        if let Some((att_side, att_idx)) = la {
+        if let Some((att_side, att_idx)) = la.filter(|&(a, _)| a != side) {
             if let Some(att_slot) = (0..2).find(|&sl| {
                 state.side(att_side).active[sl].pokemon_index == Some(att_idx)
             }) {
@@ -1970,7 +1972,7 @@ fn execute_action_body(
     if action.choice.move_id == Choices::DESTINYBOND && had_db && move_order.len() > order_len {
         state.side_mut(action.side).active[action.slot].destinybond = false;
     }
-    if move_order.len() > order_len {
+    if move_order.len() > order_len && !std::mem::take(&mut state.copy_called) {
         state.last_move = Some(action.choice.move_id);
         // PS `pokemon.moveUsed`: `lastMove` (Encore).
         if state.side(action.side).active[action.slot].pokemon_index.is_some() {
@@ -2049,6 +2051,7 @@ fn execute_action(
     queue: &[Action],
 ) {
     let before = state.side(action.side).active[action.slot].charging;
+    state.copy_called = false;
     execute_action_body(state, rng, action, move_order, queue);
     // PS `runMove`: a failed BeforeMove runs `MoveAborted`, which removes
     // `twoturnmove` (data/conditions.ts). The charge was not consumed. The body
@@ -2300,6 +2303,13 @@ fn execute_action_inner(
     if action.choice.move_id == Choices::FOCUSPUNCH && state.side(side).active[slot].lost_focus {
         return;
     }
+    }
+
+    // PS `useMove` -> `pokemon.moveUsed` (after `runMove`'s BeforeMove checks,
+    // before `onTry`): `lastMove` is set even when the move then fails (Encore's
+    // `failencore` check reads it, so a failed Copycat blocks Encore).
+    if !external {
+        state.side_mut(side).active[slot].last_move = Some(action.choice.move_id);
     }
 
     // PS `onModifyType` / `onModifyMove` for moves whose type and power
@@ -3183,19 +3193,6 @@ fn execute_action_inner(
         }
     }
 
-    // `hitStepBreakProtect` (PS sim/battle-actions.ts): `breaksProtect` moves
-    // remove the target's protection volatiles (and its `stall` counter).
-    if matches!(
-        choice.move_id,
-        Choices::FEINT | Choices::PHANTOMFORCE | Choices::SHADOWFORCE | Choices::HYPERSPACEFURY | Choices::HYPERSPACEHOLE
-    ) && !is_self
-        && !is_field
-        && state.side(target_side).active[target_slot].protected
-    {
-        let t = &mut state.side_mut(target_side).active[target_slot];
-        t.protected = false;
-        t.stall = None;
-    }
 
     // Psychic Terrain `onTryHit`: priority moves aimed at a grounded foe fail.
     // PS data/moves.ts psychicterrain.condition (spread moves: per target above).
@@ -3704,9 +3701,13 @@ fn execute_action_inner(
     }
     if is_spread {
         // PS `hitStepAccuracy`: one roll per target, in target order.
-        if !choice.always_hit && !toxic_hits && !weather_guaranteed && !flash_fire_used && choice.accuracy > 0.0 {
+        if !choice.always_hit && !toxic_hits && !weather_guaranteed && !flash_fire_used && roll_accuracy_of(choice) > 0.0 {
             let ab = state.side(side).slot_boosts(slot).map(|b| b.acc).unwrap_or(0);
-            let user_no_guard = state.side(side).team_member(idx).ability == Abilities::NOGUARD;
+            // PS useMoveInner: `selfdestruct: 'always'` faints the user before the
+            // hits, and `allies()` / `foes()` skip 0-HP pokemon, so the user's own
+            // No Guard (`onAnyAccuracy`) no longer applies.
+            let user_no_guard = state.side(side).team_member(idx).ability == Abilities::NOGUARD
+                && !matches!(choice.move_id, Choices::EXPLOSION | Choices::MISTYEXPLOSION | Choices::SELFDESTRUCT);
             let ignore_eva = ignores_evasion(state.side(side).team_member(idx).ability, choice.move_id);
             let st = &*state;
             spread_list.retain(|&(ts, tsl)| {
@@ -3730,7 +3731,7 @@ fn execute_action_inner(
                     st.side(ts).slot_boosts(tsl).map(|b| b.eva).unwrap_or(0)
                 };
                 let ab = if unaware_zeroes_accuracy(st, side, idx, ts, tsl, choice) { 0 } else { ab };
-                roll_accuracy_boosted(choice.accuracy, ab, eb, accuracy_ability_mods(st, side, idx, ts, tsl, choice), rng)
+                roll_accuracy_boosted(roll_accuracy_of(choice), ab, eb, accuracy_ability_mods(st, side, idx, ts, tsl, choice), rng)
             });
         }
         smart_hits = smart_target && spread_list.len() == 2;
@@ -3751,8 +3752,9 @@ fn execute_action_inner(
         && !(crate::engine::mechanics::minimize_move(choice.move_id)
             && state.side(target_side).active[target_slot].minimize)
         && !weather_guaranteed
-        && choice.accuracy > 0.0
+        && roll_accuracy_of(choice) > 0.0
         && !(state.side(side).team_member(idx).ability == Abilities::NOGUARD
+            && !matches!(choice.move_id, Choices::EXPLOSION | Choices::MISTYEXPLOSION | Choices::SELFDESTRUCT)
             || state
                 .side(target_side)
                 .slot_pokemon(target_slot)
@@ -3770,11 +3772,28 @@ fn execute_action_inner(
             state.side(target_side).slot_boosts(target_slot).map(|b| b.eva).unwrap_or(0)
         };
         let mods = accuracy_ability_mods(state, side, idx, target_side, target_slot, choice);
-        if !roll_accuracy_boosted(choice.accuracy, ab, eb, mods, rng) {
+        if !roll_accuracy_boosted(roll_accuracy_of(choice), ab, eb, mods, rng) {
             state.side_mut(side).active[slot].move_result_this_turn = Some(false);
             push_order();
             return;
         }
+    }
+
+    // `hitStepBreakProtect` (PS sim/battle-actions.ts, step 5: after TryHit /
+    // Protect, type immunity, TryImmunity and accuracy): `breaksProtect` moves
+    // remove the target's protection volatiles (and its `stall` counter). A
+    // Protect that blocks the move has already returned above.
+    // remove the target's protection volatiles (and its `stall` counter).
+    if matches!(
+        choice.move_id,
+        Choices::FEINT | Choices::PHANTOMFORCE | Choices::SHADOWFORCE | Choices::HYPERSPACEFURY | Choices::HYPERSPACEHOLE
+    ) && !is_self
+        && !is_field
+        && state.side(target_side).active[target_slot].protected
+    {
+        let t = &mut state.side_mut(target_side).active[target_slot];
+        t.protected = false;
+        t.stall = None;
     }
 
     // Uproar `onTryHit` (move-level, so after the immunity and accuracy steps):
@@ -6785,8 +6804,15 @@ fn run_copied_move(
         }
     }
     state.side_mut(action.side).active[action.slot].external_call = true;
+    let n = copy_order.len();
     execute_action_inner(state, rng, &sub, copy_order, will_act, queue);
     state.side_mut(action.side).active[action.slot].external_call = false;
+    // PS `useMoveInner` sets `setActiveMove(copied)`, so the copied move's
+    // `clearActiveMove` records `battle.lastMove` (PS battle.ts clearActiveMove).
+    state.copy_called = true;
+    if copy_order.len() > n {
+        state.last_move = Some(m);
+    }
 }
 
 /// PS `flags.bypasssub` (champions data): the move ignores a Substitute.
@@ -9893,6 +9919,16 @@ fn end_turn_disable_moves(state: &DoublesState, rng: &mut Gen5Rng) {
 /// equal speed tie and shuffle (PS `findEventHandlers` -> `speedSort`). Called
 /// at `TryMove` and at each `Damage` event. Mold Breaker only suppresses the
 /// handler later, so it does not change the draws.
+/// Accuracy of the accuracy roll. Explosion, Mind Blown, Misty Explosion and
+/// Self-Destruct are accuracy 100 in PS (data/moves.ts) but the shared move
+/// table leaves it unset; the doubles roll uses PS's value.
+fn roll_accuracy_of(choice: &Choice) -> f32 {
+    match choice.move_id {
+        Choices::EXPLOSION | Choices::MINDBLOWN | Choices::MISTYEXPLOSION | Choices::SELFDESTRUCT => 100.0,
+        _ => choice.accuracy,
+    }
+}
+
 /// Damp `onAnyTryMove`: any active Damp holder (not ignored by the user's
 /// breakable-ability check) blocks Explosion, Mind Blown, Misty Explosion and
 /// Self-Destruct before accuracy. PS data/abilities.ts damp.

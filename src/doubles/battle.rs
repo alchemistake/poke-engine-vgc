@@ -638,6 +638,15 @@ fn plan_queue_change(
     // `getActionSpeed` -> `getTarget`. The new action is a real `move` (not the
     // recharge pseudo-move, even when the target is recharging), so it resolves
     // once, and the target location it gets is kept for later re-sorts.
+    // A move with `beforeTurnCallback` (Counter, Mirror Coat, Pursuit) first
+    // queues a `beforeTurnMove` resolved with no target location (a draw of
+    // its own), then the move itself draws again (PS `resolveAction`, same
+    // as the turn-start path above).
+    if matches!(a.choice.move_id, Choices::COUNTER | Choices::MIRRORCOAT | Choices::PURSUIT) {
+        let mut charge = a.clone();
+        charge.target_loc = 0;
+        let _ = ps_get_target(state, rng, &charge);
+    }
     if let Some((ts, tsl)) = ps_get_target(state, rng, &a) {
         a.target_loc = if ts == a.side { -(tsl as i8 + 1) } else { tsl as i8 + 1 };
         a.target = tsl;
@@ -2239,6 +2248,12 @@ fn execute_action_inner(
 
     // Throat Chop `onBeforeMove` (priority 6): sound moves are blocked.
     if state.side(side).active[slot].throat_chop > 0 && action.choice.flags.sound {
+        return;
+    }
+
+    // Heal Block `onBeforeMove` (priority 6, data/moves.ts healblock): moves
+    // with the `heal` flag are blocked ("cant ... move: Heal Block"). No draw.
+    if state.side(side).active[slot].heal_block > 0 && action.choice.flags.heal {
         return;
     }
 
@@ -4292,6 +4307,15 @@ fn execute_action_inner(
                     // PS `gotAttacked`: `attackedBy` entry with damage / slot
                     // (Metal Burst / Comeuppance `getLastDamagedBy`).
                     state.side_mut(target_side).damaged_by[tidx as usize].push((side, slot, damage, turn_now));
+                    // Fire-type damaging move `onDamagingHit` (data/conditions.ts
+                    // frz): a frozen target thaws. No draw.
+                    if choice.move_type == PokemonType::FIRE && choice.category != MoveCategory::Status {
+                        let pm = state.side_mut(target_side).team_member_mut(tidx);
+                        if pm.status == PokemonStatus::FREEZE {
+                            pm.status = PokemonStatus::NONE;
+                            pm.sleep_turns = 0;
+                        }
+                    }
                     // Toxic Debris `onDamagingHit`: a physical hit on the
                     // holder adds a Toxic Spikes layer to the attacker's side
                     // (no third layer).
@@ -5031,13 +5055,16 @@ fn execute_action_inner(
         }
 
         // Psych Up (`onHit`): copy the target's stat stages onto the user.
-        // TODO(PS parity): also copies crit-stage volatiles (Focus Energy,
-        // Dragon Cheer).
+        // PS data/moves.ts psychup.onHit: the crit-stage volatiles are removed
+        // from the user, then copied from the target (Focus Energy here).
+        // TODO(PS parity): Dragon Cheer and Laser Focus are not copied yet.
         if choice.move_id == Choices::PSYCHUP {
             if let Some(tidx) = state.side(target_side).active[target_slot].pokemon_index {
                 let copied = state.side(target_side).team_boosts[tidx as usize].clone();
                 state.side_mut(side).team_boosts[idx as usize] = copied;
             }
+            let target_fe = state.side(target_side).active[target_slot].focus_energy;
+            state.side_mut(side).active[slot].focus_energy = target_fe;
         }
 
         // Uproar self volatile (`addVolatile('uproar')`, duration 3).
@@ -6334,6 +6361,18 @@ fn execute_action_inner(
                     Effect::RemoveItem => {
                         // TODO(PS parity): item removal.
                     }
+                }
+            }
+        }
+
+        // `thawsTarget` (Scald, Scorching Sands, ...): `frz.onAfterMoveSecondary`
+        // cures a frozen target after the move's secondaries. No draw.
+        if crate::engine::mechanics::THAWS_TARGET.contains(&choice.move_id) && has_target {
+            if let Some(tidx) = state.side(target_side).active[target_slot].pokemon_index {
+                let pm = state.side_mut(target_side).team_member_mut(tidx);
+                if pm.status == PokemonStatus::FREEZE {
+                    pm.status = PokemonStatus::NONE;
+                    pm.sleep_turns = 0;
                 }
             }
         }
@@ -10378,13 +10417,14 @@ fn end_of_turn(
                     state.side_mut(side).active[slot].octolock = None;
                     continue;
                 }
-                apply_boosts(
-                    state,
-                    side,
-                    tidx,
-                    &StatBoosts { defense: -1, special_defense: -1, ..Default::default() },
-                    ss != side,
-                );
+                // The drop comes from the binder's active slot, so Mirror Armor
+                // (`onTryBoost`) bounces it back onto the binder.
+                let drop = StatBoosts { defense: -1, special_defense: -1, ..Default::default() };
+                let drop = match (0..2).find(|&sl| state.side(ss).active[sl].pokemon_index == Some(si)) {
+                    Some(bsl) if ss != side => mirror_armor_bounce(state, ss, bsl, side, tidx, &drop),
+                    _ => drop,
+                };
+                apply_boosts(state, side, tidx, &drop, ss != side);
             }
             ResidualKind::Ingrain(side, slot) => {
                 // PS ingrain `onResidual`: heal baseMaxhp / 16.

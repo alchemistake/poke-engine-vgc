@@ -26,6 +26,16 @@ pub const THAWS_USER: [Choices; 12] = [
     Choices::SIZZLYSLIDE,
 ];
 
+/// Moves with the PS `thawsTarget` flag: a hit cures a frozen target
+/// (data/conditions.ts `frz.onAfterMoveSecondary`).
+pub const THAWS_TARGET: [Choices; 5] = [
+    Choices::SCORCHINGSANDS,
+    Choices::STEAMERUPTION,
+    Choices::SCALD,
+    Choices::MATCHAGOTCHA,
+    Choices::HYDROSTEAM,
+];
+
 /// The field facts `immune_to_status` needs, gathered by each engine from its
 /// own state.
 pub struct StatusContext {

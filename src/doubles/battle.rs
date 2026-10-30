@@ -2403,7 +2403,13 @@ fn execute_action_inner(
         // `getMoveTargets`: `priorityEvent('RedirectTarget')` after the target is chosen.
         None => ps_get_target(state, rng, action).map(|t| redirect_target(state, action, t)),
     };
-    if let Some((ts, tsl)) = resolved {
+    // PS `runMove` -> `moveUsed(move, targetLoc)` stores the action's own
+    // targetLoc (before any redirect), not the pokemon it finally hit. Instruct,
+    // Sleep Talk-style locks and Encore read it back.
+    // PS sim/battle-actions.ts runMove; sim/pokemon.ts moveUsed.
+    if action.target_loc != 0 {
+        state.side_mut(side).active[slot].last_target_loc = action.target_loc;
+    } else if let Some((ts, tsl)) = resolved {
         state.side_mut(side).active[slot].last_target_loc =
             if ts == side { -(tsl as i8 + 1) } else { tsl as i8 + 1 };
     }
@@ -2816,6 +2822,17 @@ fn execute_action_inner(
             push_order(move_order);
             return;
         }
+    }
+
+    // An adjacentAlly move whose chosen location is now the user (Ally Switch
+    // swapped the user into it) or has no adjacent ally: PS `getTarget` returns
+    // null (`targetLoc === selfLoc`, `getRandomTarget` with no ally), and
+    // `useMoveInner` prints `[notarget]` and fails. No draws.
+    // PS sim/battle.ts getTarget; sim/battle-actions.ts useMoveInner (`!target`).
+    if is_ally && !is_self && !is_field && resolved.is_none() {
+        modify_move_field_tie(state, rng);
+        push_order(move_order);
+        return;
     }
 
     // Expanding Force `onModifyMove` (PS data/moves.ts expandingforce): in Psychic
@@ -5042,6 +5059,12 @@ fn execute_action_inner(
                 // prints `-miss` and skips it: no heal for it, no draw).
                 // PS data/conditions.ts dive / fly / dig `onInvulnerability`.
                 let ally_misses = sl != slot && semi_invulnerable_blocks(state, side, idx, choice.move_id, side, sl);
+                // Heal Block `onTryHeal` returns false for this heal: that target
+                // is skipped (PS battle-actions.ts 'heal interrupted'). PS
+                // data/moves.ts healblock.condition.onTryHeal.
+                if state.side(side).active[sl].heal_block > 0 {
+                    continue;
+                }
                 if let Some(tidx) = state.side(side).active[sl].pokemon_index {
                     let pm = state.side_mut(side).team_member_mut(tidx);
                     if sl != slot && pm.hp > 0 && pm.ability == Abilities::GOODASGOLD && !user_breaks_gold {
@@ -11402,6 +11425,17 @@ fn end_of_turn(
                 let raw = p.speed;
                 let s = state.side_mut(side);
                 s.team_member_mut(idx).id = new_id;
+                // PS `formeChange` -> `setSpecies`: `storedStats` are rebuilt from the
+                // base stats, so an averaged Atk / SpA (Power Split) or Def / SpD
+                // (Guard Split) is undone, as on switch-in.
+                // PS sim/pokemon.ts setSpecies.
+                if let Some(st) = s.saved_stats[idx as usize].take() {
+                    let p = s.team_member_mut(idx);
+                    p.attack = st[0];
+                    p.defense = st[1];
+                    p.special_attack = st[2];
+                    p.special_defense = st[3];
+                }
                 s.speed_cache[idx as usize] = raw as _;
             }
             ResidualKind::Harvest(side, slot) => {
@@ -11581,6 +11615,9 @@ fn end_of_turn(
                     if state.battle_is_over() != 0.0 {
                         perish_wipe = true;
                     }
+                    // PS `fieldEvent`: an `end` callback skips `resolveFaints`, so
+                    // this faint waits for the residual action's own resolve.
+                    continue;
                 }
             }
             ResidualKind::FutureMove(side, slot) => {
@@ -11827,6 +11864,10 @@ fn end_of_turn(
                 }
             }
         }
+        // PS `fieldEvent`: `resolveFaints()` after each handler's callback, so a
+        // faint from one residual is cleared before the next handler runs (a
+        // Terrain end then sorts without it). PS sim/battle.ts fieldEvent.
+        resolve_faints(state, rng, |_, _| true);
     }
 
     // Aborted charge: the move's own condition (duration 2) has now ended.

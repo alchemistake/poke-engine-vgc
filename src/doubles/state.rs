@@ -734,6 +734,9 @@ pub struct DoublesState {
     /// resolves faints after the loop, so its per-hit `eachEvent` still sorts
     /// them: (side, slot, team index).
     pub unresolved_faints: Vec<(crate::doubles::state::Side, usize, PokemonIndex)>,
+    /// KO'd pokemon (still in `unresolved_faints`) whose Attract and Syrup
+    /// Bomb volatiles still tie in `eachEvent('Update')`.
+    pub ko_update_ties: Vec<(crate::doubles::state::Side, usize, PokemonIndex)>,
     /// Abilities blanked by Mold Breaker for the running move: (side, team
     /// index, real ability). PS `battle.suppressingAbility(target)`.
     pub mold_saved: arrayvec::ArrayVec<(Side, PokemonIndex, Abilities), 3>,
@@ -1446,6 +1449,7 @@ impl DoublesState {
             },
             turn: 1,
             unresolved_faints: Vec::new(),
+            ko_update_ties: Vec::new(),
             mold_saved: arrayvec::ArrayVec::new(),
             record: true,
             faint_disabled: Vec::new(),

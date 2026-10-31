@@ -1826,6 +1826,7 @@ pub fn run_battle_fuzz(
                             a.ally_switch = old.ally_switch;
                             // PS copyVolatileFrom adds them in the source's key order.
                             a.vol_order = old.vol_order.clone();
+                            a.vol_synced = u64::MAX;
                             if old.power_trick {
                                 a.power_trick = true;
                                 if let Some(ni) = a.pokemon_index {
@@ -12511,6 +12512,11 @@ enum ResidualKind {
 fn sync_vol_order(state: &mut DoublesState) {
     for side in [Side::One, Side::Two] {
         for slot in 0..2 {
+            // Unchanged volatiles since the last sync: nothing to do.
+            let mask = state.side(side).cached_conds(slot, crate::doubles::events::vol_mask);
+            if mask == state.side(side).active()[slot].vol_synced {
+                continue;
+            }
             let mut present: [&'static str; 64] = [""; 64];
             let mut n = 0;
             crate::doubles::events::visit_pokemon_effects(state, side, slot, |e| {
@@ -12520,7 +12526,9 @@ fn sync_vol_order(state: &mut DoublesState) {
                 }
             });
             let present = &present[..n];
-            let order = &mut state.side_mut(side).active_mut()[slot].vol_order;
+            let a = &mut state.side_mut(side).active_mut()[slot];
+            a.vol_synced = mask;
+            let order = &mut a.vol_order;
             order.retain(|o| present.contains(o));
             for &id in present {
                 if !order.contains(&id) {

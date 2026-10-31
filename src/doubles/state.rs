@@ -167,6 +167,9 @@ pub struct ActiveSlot {
     /// PS ids of the volatiles in insertion order (PS `pokemon.volatiles` key
     /// order), kept by `sync_vol_order`. Orders the Residual handlers.
     pub vol_order: Vec<&'static str>,
+    /// The volatile conditions (`events::vol_mask`) `vol_order` was last
+    /// synced with (`sync_vol_order`); `u64::MAX` forces a sync.
+    pub vol_synced: u64,
     /// `flashfire` volatile: Fire moves x1.5 (ModifyAtk / ModifySpA).
     pub flash_fire: bool,
     /// `charge` volatile: the next Electric move has doubled power.
@@ -361,6 +364,7 @@ impl ActiveSlot {
             protect_kind: 0,
             perish: 0,
             vol_order: Vec::new(),
+            vol_synced: 0,
             flash_fire: false,
             charge: false,
             no_retreat: false,
@@ -437,6 +441,9 @@ pub struct TeamBoosts {
 pub struct DoublesSide {
     pub team: [Pokemon; 6],
     slots: [ActiveSlot; 2],
+    /// Per slot: the volatile conditions (`events::vol_mask`) as of the last
+    /// read; cleared by `active_mut`.
+    cond_cache: [std::cell::Cell<Option<u64>>; 2],
     pub side_conditions: SideConditions,
     /// Original species names (including formes) for each team slot, used for
     /// name-based target matching in the replay test.
@@ -506,7 +513,20 @@ impl DoublesSide {
     /// The two on-field slots, for changes.
     #[inline]
     pub fn active_mut(&mut self) -> &mut [ActiveSlot; 2] {
+        self.cond_cache = Default::default();
         &mut self.slots
+    }
+
+    /// `compute(slot)`, cached until the next `active_mut`.
+    #[inline]
+    pub fn cached_conds(&self, slot: usize, compute: impl Fn(&ActiveSlot) -> u64) -> u64 {
+        if let Some(v) = self.cond_cache[slot].get() {
+            debug_assert_eq!(v, compute(&self.slots[slot]), "stale cond_cache");
+            return v;
+        }
+        let v = compute(&self.slots[slot]);
+        self.cond_cache[slot].set(Some(v));
+        v
     }
 
     /// The Pokémon in an active slot, if any.
@@ -1147,6 +1167,7 @@ impl DoublesState {
         let mut side_one = DoublesSide {
             team: std::array::from_fn(|_| Pokemon::default()),
             slots: [ActiveSlot::empty(), ActiveSlot::empty()],
+            cond_cache: Default::default(),
             side_conditions: SideConditions::default(),
             species_names: std::array::from_fn(|_| String::new()),
             genders: std::array::from_fn(|_| None),
@@ -1168,6 +1189,7 @@ impl DoublesState {
         let mut side_two = DoublesSide {
             team: std::array::from_fn(|_| Pokemon::default()),
             slots: [ActiveSlot::empty(), ActiveSlot::empty()],
+            cond_cache: Default::default(),
             side_conditions: SideConditions::default(),
             species_names: std::array::from_fn(|_| String::new()),
             genders: std::array::from_fn(|_| None),

@@ -138,82 +138,24 @@ fn charging(a: &crate::doubles::state::ActiveSlot) -> Option<Choices> {
     a.charging.filter(|_| !a.charge_aborted).map(|(m, _)| m)
 }
 
-/// Whether `CONDS[i]` is up (`cond_mask` for one condition).
-fn cond_on(s: &crate::doubles::state::DoublesSide, a: &crate::doubles::state::ActiveSlot, slot: usize, i: u32) -> bool {
-    match i {
-        0 => a.confusion > 0,
-        1 => a.flinched,
-        2 => a.recharging,
-        3 => charging(a).is_some(),
-        4 => charging(a) == Some(Choices::DIG),
-        5 => charging(a) == Some(Choices::DIVE),
-        6 => charging(a) == Some(Choices::FLY),
-        7 => charging(a) == Some(Choices::BOUNCE),
-        8 => charging(a) == Some(Choices::PHANTOMFORCE),
-        9 => charging(a) == Some(Choices::SHADOWFORCE),
-        10 => charging(a) == Some(Choices::SKYDROP),
-        11 => a.protected && (a.protect_kind as usize).min(5) == 0,
-        12 => a.protected && (a.protect_kind as usize).min(5) == 1,
-        13 => a.protected && (a.protect_kind as usize).min(5) == 2,
-        14 => a.protected && (a.protect_kind as usize).min(5) == 3,
-        15 => a.protected && (a.protect_kind as usize).min(5) == 4,
-        16 => a.protected && (a.protect_kind as usize).min(5) == 5,
-        17 => a.endure,
-        18 => a.substitute_health > 0,
-        19 => a.salt_cure,
-        20 => a.stockpile > 0,
-        21 => a.focus_punch,
-        22 => a.beak_blast,
-        23 => a.gastro_acid,
-        24 => a.helping_hand_mult > 1.0,
-        25 => a.destinybond,
-        26 => a.partial_trap.is_some(),
-        27 => a.yawn > 0,
-        28 => a.throat_chop > 0,
-        29 => a.taunt > 0,
-        30 => a.magnet_rise > 0,
-        31 => a.smackdown,
-        32 => a.cursed,
-        33 => a.follow_me > 0,
-        34 => a.perish > 0,
-        35 => a.flash_fire,
-        36 => a.charge,
-        37 => a.no_retreat,
-        38 => a.focus_energy,
-        39 => a.attract.is_some(),
-        40 => a.leech_seed.is_some(),
-        41 => a.dragon_cheer.is_some(),
-        42 => a.glaive_rush,
-        43 => a.minimize,
-        44 => a.ingrain,
-        45 => a.heal_block > 0,
-        46 => a.syrup_bomb.is_some(),
-        47 => a.octolock.is_some(),
-        48 => a.trapped || a.no_retreat,
-        49 => a.encore.is_some(),
-        50 => a.torment,
-        51 => a.imprison,
-        52 => a.roost_orig.is_some(),
-        53 => a.aqua_ring,
-        54 => a.counter_vol.is_some(),
-        55 => a.mirror_coat_vol.is_some(),
-        56 => a.ally_switch.is_some(),
-        57 => a.lock_on.is_some(),
-        58 => a.uproar > 0,
-        59 => a.stall.is_some(),
-        60 => a.locked_move.is_some(),
-        61 => a.disabled.is_some(),
-        62 => a.electrify,
-        63 => a.power_trick,
-        64 => s.future_move[slot].is_some(),
-        65 => s.wish[slot].is_some(),
-        _ => false,
+/// The conditions of `CONDS` that are up, as bits (bit i = `CONDS[i]`).
+fn cond_mask(s: &crate::doubles::state::DoublesSide, slot: usize) -> u128 {
+    let mut m = s.cached_conds(slot, vol_mask) as u128;
+    if s.future_move[slot].is_some() {
+        m |= 1 << 64;
     }
+    if s.wish[slot].is_some() {
+        m |= 1 << 65;
+    }
+    m
 }
 
-/// The conditions of `CONDS` that are up, as bits (bit i = `CONDS[i]`).
-fn cond_mask(s: &crate::doubles::state::DoublesSide, a: &crate::doubles::state::ActiveSlot, slot: usize) -> u128 {
-    let mut m = 0u128;
+/// The volatile conditions of `CONDS` (bits 0-63) that are up in a slot.
+pub(crate) fn vol_mask(a: &crate::doubles::state::ActiveSlot) -> u64 {
+    if a.pokemon_index.is_none() {
+        return 0;
+    }
+    let mut m = 0u64;
     if a.confusion > 0 {
         m |= 1 << 0;
     }
@@ -407,12 +349,6 @@ fn cond_mask(s: &crate::doubles::state::DoublesSide, a: &crate::doubles::state::
     if a.power_trick {
         m |= 1 << 63;
     }
-    if s.future_move[slot].is_some() {
-        m |= 1 << 64;
-    }
-    if s.wish[slot].is_some() {
-        m |= 1 << 65;
-    }
     m
 }
 
@@ -429,7 +365,7 @@ pub fn visit_pokemon_effects(state: &DoublesState, side: Side, slot: usize, mut 
         f(Effect::Id(st, Status));
     }
     f(Effect::Ability(real_ability(state, side, idx)));
-    let mut m = cond_mask(s, a, slot);
+    let mut m = cond_mask(s, slot);
     while m != 0 {
         let (id, kind) = CONDS[m.trailing_zeros() as usize];
         f(Effect::Id(id, kind));
@@ -809,12 +745,9 @@ fn slot_effects(t: &Tables, state: &DoublesState, side: Side, slot: usize, conds
     }
     add(t.ability_bit.get(real_ability(state, side, idx) as usize).copied().unwrap_or(NO_BIT));
     if conds != 0 {
-        let mut m = conds;
+        let mut m = cond_mask(s, slot) & conds;
         while m != 0 {
-            let i = m.trailing_zeros();
-            if cond_on(s, a, slot, i) {
-                add(t.cond_fx[i as usize]);
-            }
+            add(t.cond_fx[m.trailing_zeros() as usize]);
             m &= m - 1;
         }
     }

@@ -13099,7 +13099,12 @@ fn sorted_actives(
     }
     // No two equal speeds (the usual case): a plain sort, no draws.
     let n = hs.len();
-    let tie = (0..n).any(|i| ((i + 1)..n).any(|j| hs[i].2 == hs[j].2));
+    let mut tie = false;
+    for i in 0..n {
+        for j in (i + 1)..n {
+            tie |= hs[i].2 == hs[j].2;
+        }
+    }
     if !tie {
         for i in 1..n {
             let mut j = i;
@@ -13108,7 +13113,12 @@ fn sorted_actives(
                 j -= 1;
             }
         }
-        return hs.into_iter().map(|(s, sl, _)| (s, sl)).collect();
+        let mut out = arrayvec::ArrayVec::new();
+        for &(s, sl, _) in &hs {
+            // SAFETY: `hs` holds at most 4 entries, the capacity of `out`.
+            unsafe { out.push_unchecked((s, sl)) };
+        }
+        return out;
     }
     // `sort_residual_slice` with every key but speed equal: fastest first,
     // ties shuffled.

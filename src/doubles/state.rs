@@ -442,7 +442,7 @@ pub struct DoublesSide {
     pub team: [Pokemon; 6],
     slots: [ActiveSlot; 2],
     /// Per slot: the volatile conditions (`events::vol_mask`) as of the last
-    /// read; cleared by `active_mut`.
+    /// read; cleared by `active_mut` / `active_slot_mut`.
     cond_cache: [std::cell::Cell<Option<u64>>; 2],
     pub side_conditions: SideConditions,
     /// Original species names (including formes) for each team slot, used for
@@ -517,7 +517,14 @@ impl DoublesSide {
         &mut self.slots
     }
 
-    /// `compute(slot)`, cached until the next `active_mut`.
+    /// One on-field slot, for changes (only its cache entry is cleared).
+    #[inline]
+    pub fn active_slot_mut(&mut self, slot: usize) -> &mut ActiveSlot {
+        self.cond_cache[slot].set(None);
+        &mut self.slots[slot]
+    }
+
+    /// `compute(slot)`, cached until the slot is next borrowed mutably.
     #[inline]
     pub fn cached_conds(&self, slot: usize, compute: impl Fn(&ActiveSlot) -> u64) -> u64 {
         if let Some(v) = self.cond_cache[slot].get() {
@@ -1299,13 +1306,13 @@ impl DoublesState {
         // have `activeTurns` 1 at the first residual (Speed Boost fires).
         for (slot, &lead_pos) in leads_a.iter().take(2).enumerate() {
             let idx = PokemonIndex::deserialize(&lead_pos.to_string());
-            self.side_one.active_mut()[slot].pokemon_index = Some(idx);
-            self.side_one.active_mut()[slot].active_turns = 1;
+            self.side_one.active_slot_mut(slot).pokemon_index = Some(idx);
+            self.side_one.active_slot_mut(slot).active_turns = 1;
         }
         for (slot, &lead_pos) in leads_b.iter().take(2).enumerate() {
             let idx = PokemonIndex::deserialize(&lead_pos.to_string());
-            self.side_two.active_mut()[slot].pokemon_index = Some(idx);
-            self.side_two.active_mut()[slot].active_turns = 1;
+            self.side_two.active_slot_mut(slot).pokemon_index = Some(idx);
+            self.side_two.active_slot_mut(slot).active_turns = 1;
         }
     }
 }

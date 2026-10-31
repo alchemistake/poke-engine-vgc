@@ -13071,8 +13071,10 @@ fn sorted_actives(
     // still counts until faints are resolved (`unresolved_faints`).
     let mut hs: arrayvec::ArrayVec<(Side, usize, i32), 4> = arrayvec::ArrayVec::new();
     for (s, sl) in [(Side::One, 0usize), (Side::One, 1), (Side::Two, 0), (Side::Two, 1)] {
-        let speed = if state.side(s).slot_pokemon(sl).map(|p| p.hp > 0).unwrap_or(false) {
-            cached_speed(state, s, sl)
+        let sd = state.side(s);
+        let occupant = sd.active()[sl].pokemon_index.filter(|&i| sd.team_member(i).hp > 0);
+        let speed = if let Some(i) = occupant {
+            sd.speed_cache[i as usize] as i32
         } else if let Some(&(_, _, idx)) =
             state.unresolved_faints.iter().find(|(fs, fsl, _)| *fs == s && *fsl == sl)
         {

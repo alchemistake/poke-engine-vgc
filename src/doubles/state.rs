@@ -463,7 +463,7 @@ pub struct DoublesSide {
     /// name-based target matching in the replay test.
     pub species_names: [&'static str; 6],
     /// Gender per team member: "M" / "F" / None (genderless). Used by Attract.
-    pub genders: [Option<String>; 6],
+    pub genders: [Option<&'static str>; 6],
     /// Stat boosts per team member (see `TeamBoosts`).
     pub team_boosts: [TeamBoosts; 6],
     /// Toxic counter per team member (0 = not toxic; reset on switch-in).
@@ -997,22 +997,68 @@ pub fn to_id(s: &str) -> String {
         .collect()
 }
 
+/// `to_id` into a stack buffer (no allocation); `None` if the id is longer
+/// than the buffer.
+fn id_buf(s: &str) -> Option<arrayvec::ArrayString<64>> {
+    let mut b = arrayvec::ArrayString::<64>::new();
+    for c in s.chars() {
+        if c.is_ascii_alphanumeric() {
+            b.try_push(c.to_ascii_lowercase()).ok()?;
+        } else if !c.is_ascii() {
+            for l in c.to_lowercase().filter(|l| l.is_ascii_alphanumeric()) {
+                b.try_push(l).ok()?;
+            }
+        }
+    }
+    Some(b)
+}
+
+/// Id -> enum map over every variant of a `define_enum_with_from_str` enum
+/// (variant names lowercased), built once. `from(i)` gives the variant with
+/// discriminant `i` for `i < n`, or the enum's default past the last one
+/// (the walk stops at the first repeated name).
+fn enum_ids<T: Clone + std::fmt::Debug>(n: usize, from: impl Fn(usize) -> T) -> FxMap<&'static str, T> {
+    let mut m = FxMap::default();
+    for i in 0..n {
+        let v = from(i);
+        let id = format!("{:?}", v).to_lowercase();
+        if m.contains_key(id.as_str()) {
+            break;
+        }
+        m.insert(&*Box::leak(id.into_boxed_str()), v);
+    }
+    m
+}
+
+type FxMap<K, V> = rustc_hash::FxHashMap<K, V>;
+
+fn lookup_id<T: Clone>(map: &FxMap<&'static str, T>, s: &str) -> Option<T> {
+    match id_buf(s) {
+        Some(b) => map.get(b.as_str()).cloned(),
+        None => map.get(to_id(s).as_str()).cloned(),
+    }
+}
+
+static NATURE_IDS: std::sync::LazyLock<FxMap<&'static str, PokemonNature>> =
+    std::sync::LazyLock::new(|| enum_ids(25, |i| PokemonNature::from(i as u8)));
+static ABILITY_IDS: std::sync::LazyLock<FxMap<&'static str, Abilities>> =
+    std::sync::LazyLock::new(|| enum_ids(i16::MAX as usize, |i| Abilities::from(i as i16)));
+static ITEM_IDS: std::sync::LazyLock<FxMap<&'static str, Items>> =
+    std::sync::LazyLock::new(|| enum_ids(256, |i| Items::from(i as u8)));
+
 fn parse_nature(s: &str) -> PokemonNature {
-    let id = to_id(s);
-    PokemonNature::from_str(&id.to_uppercase()).unwrap_or(PokemonNature::SERIOUS)
+    lookup_id(&NATURE_IDS, s).unwrap_or(PokemonNature::SERIOUS)
 }
 
 fn parse_ability(s: &str) -> Abilities {
-    let id = to_id(s);
-    Abilities::from_str(&id.to_uppercase()).unwrap_or(Abilities::NONE)
+    lookup_id(&ABILITY_IDS, s).unwrap_or(Abilities::NONE)
 }
 
 fn parse_item(s: &str) -> Items {
     if s.is_empty() {
         return Items::NONE;
     }
-    let id = to_id(s);
-    Items::from_str(&id.to_uppercase()).unwrap_or(Items::NONE)
+    lookup_id(&ITEM_IDS, s).unwrap_or(Items::NONE)
 }
 
 /// Convert a champions "stat points" EV value into effective EVs, matching
@@ -1100,8 +1146,8 @@ pub fn compute_stats(
 }
 
 thread_local! {
-    static INTERNED: std::cell::RefCell<std::collections::HashSet<&'static str>> =
-        std::cell::RefCell::new(std::collections::HashSet::new());
+    static INTERNED: std::cell::RefCell<rustc_hash::FxHashSet<&'static str>> =
+        std::cell::RefCell::new(Default::default());
 }
 
 /// A `&'static` copy of a name (species / forme names): each distinct name
@@ -1130,10 +1176,10 @@ struct SpeciesInfo {
 thread_local! {
     /// Name lookups are string matches over every species / move; a battle
     /// is built from few distinct names, so resolve each name once.
-    static SPECIES_CACHE: std::cell::RefCell<std::collections::HashMap<String, SpeciesInfo>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
-    static MOVE_CACHE: std::cell::RefCell<std::collections::HashMap<String, (Choices, Choice)>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
+    static SPECIES_CACHE: std::cell::RefCell<FxMap<String, SpeciesInfo>> =
+        std::cell::RefCell::new(Default::default());
+    static MOVE_CACHE: std::cell::RefCell<FxMap<String, Choices>> =
+        std::cell::RefCell::new(Default::default());
 }
 
 /// Forme names (e.g. "Furfrou-Debutante") may not be in the table or the
@@ -1158,13 +1204,15 @@ fn species_lookup(species: &str) -> SpeciesInfo {
 }
 
 fn move_lookup(mv: &str) -> (Choices, Choice) {
-    if let Some(r) = MOVE_CACHE.with(|c| c.borrow().get(mv).cloned()) {
-        return r;
-    }
-    let choices = Choices::from_str(&to_id(mv).to_uppercase()).unwrap_or_else(|_| panic!("unknown move {mv}"));
-    let r = (choices, MOVES.get(&choices).cloned().unwrap());
-    MOVE_CACHE.with(|c| c.borrow_mut().insert(mv.to_string(), r.clone()));
-    r
+    let choices = match MOVE_CACHE.with(|c| c.borrow().get(mv).copied()) {
+        Some(c) => c,
+        None => {
+            let c = Choices::from_str(&to_id(mv).to_uppercase()).unwrap_or_else(|_| panic!("unknown move {mv}"));
+            MOVE_CACHE.with(|m| m.borrow_mut().insert(mv.to_string(), c));
+            c
+        }
+    };
+    (choices, MOVES[&choices].clone())
 }
 
 fn build_pokemon(m: &TeamMember) -> Pokemon {
@@ -1303,13 +1351,13 @@ impl DoublesState {
             // PS `setSpecies`: speed = storedStats.spe.
             side_one.speed_cache[i] = side_one.team[i].speed;
             side_one.species_names[i] = intern(&m.species);
-            side_one.genders[i] = m.gender.clone();
+            side_one.genders[i] = m.gender.as_deref().map(intern);
         }
         for (i, m) in teams.b.iter().enumerate().take(6) {
             side_two.team[i] = build_pokemon(m);
             side_two.speed_cache[i] = side_two.team[i].speed;
             side_two.species_names[i] = intern(&m.species);
-            side_two.genders[i] = m.gender.clone();
+            side_two.genders[i] = m.gender.as_deref().map(intern);
         }
         let state = Self {
             tl: MoveScratch { pressure_extra: std::cell::Cell::new(-1), ..Default::default() },

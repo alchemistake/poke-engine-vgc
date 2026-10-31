@@ -32,6 +32,7 @@ codegen-units = 1
 arrayvec = "0.7"
 smallvec = "1"
 mimalloc = { version = "0.1", default-features = false }
+rustc-hash = "2"
 dashmap = "6.1.0"
 clap = { version = "4.5.4", features = ["derive"] }
 rand = "0.9.3"

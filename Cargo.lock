@@ -307,6 +307,7 @@ dependencies = [
  "dashmap",
  "mimalloc",
  "rand",
+ "rustc-hash",
  "serde",
  "serde_json",
  "smallvec",
@@ -451,6 +452,12 @@ checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
  "bitflags",
 ]
+
+[[package]]
+name = "rustc-hash"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7fb8039b3032c191086b10f11f319a6e99e1e82889c5cc6046f515c9db1d497"
 
 [[package]]
 name = "rustversion"

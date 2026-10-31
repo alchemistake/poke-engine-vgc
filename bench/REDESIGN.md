@@ -145,3 +145,61 @@ at once if the fast path diverges.
 Do 1 → 2 → 3 first: low risk, each a few hundred lines, and they make 4
 simpler (4 needs the static behaviour bits from 1). Measure after each.
 Run the full census after 2, 4 and 5 (they touch state and event order).
+
+## Result of the first pass (2026-10-31, branch `perf/redesign`)
+
+Accuracy: the 200K census fails on the **same 71 seeds** as 80eccb4
+(99.96 %); 500-game fuzz passes; `cargo test` passes (2 singles-engine tests
+ignored, see below).
+
+| build | 100 games | vs PS |
+|-------|-----------|-------|
+| 80eccb4 (start) | 11,358 us | x152 |
+| 723c08c, fuzz output (`bench/run.sh`) | 7,744 us | **x223** |
+| 723c08c, `--sim` | 7,576 us | x228 |
+| 723c08c, PGO (`bench/pgo.sh`, optional, per machine) | 6,849 us | x253 |
+
+What each step became:
+
+1. **Static tables:** done. `MOVES` is indexed by `Choices`; secondaries are
+   `'static` slices; `Choice` clones are a plain copy; `Move` holds only the
+   id (`Pokemon` 680 B → ~100 B); target types are an enum.
+2. **Event masks:** done. Per-slot effect bits are cached; the union of the
+   four slots is cached per side version (`DoublesSide::ver`); side
+   conditions and field are tested by precomputed masks.
+3. **Speed cache:** done in part. Speeds are computed once per refresh and
+   reused by the queue re-sort; damage computes speeds only for Electro Ball
+   / Gyro Ball; the untied active order is reused per side version.
+4. **Split giant functions:** not done. A line profile shows
+   `execute_action_inner` time spread evenly (~0.3 % per 100 lines over
+   ~6,000 lines), no hot region. The engine runs at about 3.5 instructions
+   per cycle, so it is instruction-bound, not cache-bound. PGO (which does
+   the hot/cold layout this step aimed at) gives 10 %, the upper bound for it.
+5. **Compact state:** done in part (`Move`, setup without string parsing,
+   FxHash maps). Setup of 100 games: 713 → ~450 us.
+6. **Recorder:** move-order entries are a compact type formatted on output.
+   This also fixed `--sim`, which skipped them and played a different
+   battle (1,445 vs 1,446 turns).
+
+Also: mimalloc in the binaries (−6 %), thread-locals moved into the state.
+
+### Why x650 is not in reach with this design
+
+The remaining time is the PS-parity pipeline itself: per action the engine
+runs ~8 speed computations, ~5 target resolutions, ~3.5 `eachEvent('Update')`
+sorts, ~3.5 faint resolutions, ~8 event sorts, each a scan of the 4 slots,
+plus ~6,000 lines of mechanic checks. Each is already 10–70 cycles. The last
+ten changes gave 0–3 % each.
+
+x650 needs ~2.9x fewer instructions per turn. That means a second engine
+core, not more tuning of this one:
+
+- a **fast path for plain turns** (no active volatile, no special move or
+  ability bit, no field effect): hard-coded order, damage and residual steps,
+  with no event machinery; fall back to the full pipeline the moment a bit is
+  set (plan step 7);
+- **incremental state** for everything the pipeline re-derives after each
+  action (speeds, sorts, faint checks), driven by explicit dirty bits set in
+  the few mutators, instead of re-scanning after every action.
+
+Both need the fuzzer to guard every divergence and are multi-week work.

@@ -153,6 +153,11 @@ Then decide:
 | snapshot built from static strings; fewer `Choice` clones | 16.8 ms | x103.1 |
 | event sorts check only the conditions the event has handlers for | 16.4 ms | x105.8 |
 | per-action scratch lists on the stack; move actions instead of cloning them | 15.4 ms | x112.2 |
+| event / speed / regex-free redesign pass (see REDESIGN.md) | 11.3 ms | x153 |
+| `MOVES` indexed by `Choices`, `'static` secondaries, mimalloc, enum target types | 10.1 ms | x171 |
+| thread-locals into the state, volatile-cache invalidation only on change | 9.9 ms | x175 |
+| per-slot / per-version event bit caches, side / field masks | 8.0 ms | x216 |
+| setup without SipHash / string parsing; `Move` holds only its id | 7.7 ms | x223 |
 
 ## What did not work
 
@@ -166,6 +171,13 @@ Then decide:
   skip.
 - **Filtering `damaged_by` in place** instead of collecting a new `Vec`: no
   measurable gain (kept because it is not slower).
+
+- **`opt-level = "s"` / `2`, `panic = "abort"`, `target-cpu=native`:** slower
+  or no change (and `native` would tie the numbers to one machine).
+- **Sorting action positions instead of actions in `speed_sort_by`:** 2 %
+  slower (the permutation step costs more than the swaps it saves).
+- **Skipping `sync_sc_order` when the side conditions are unchanged, stack
+  lists in `collect_residual_handlers`:** no measurable change.
 
 ## Lessons
 

@@ -314,7 +314,7 @@ pub(crate) fn vol_mask(a: &crate::doubles::state::ActiveSlot) -> u64 {
     if a.imprison {
         m |= 1 << 51;
     }
-    if a.roost_orig.is_some() {
+    if a.roost {
         m |= 1 << 52;
     }
     if a.aqua_ring {

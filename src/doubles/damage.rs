@@ -61,6 +61,17 @@ pub fn set_gravity(on: bool) {
     GRAVITY.with(|g| g.set(on));
 }
 
+thread_local! {
+    /// The running move's user had Scrappy / Mind's Eye when the move started:
+    /// `onModifyMove` set `ignoreImmunity` for the whole move, so a Mummy
+    /// swap mid-move (Double Hit) does not undo it.
+    static SCRAPPY_MOVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub fn set_scrappy_move(on: bool) {
+    SCRAPPY_MOVE.with(|g| g.set(on));
+}
+
 /// PS `isGrounded` for a Ground move against a Smack Down'd holder: the
 /// `smackdown` volatile grounds it before the Flying typing and Levitate are
 /// checked (data/moves.ts smackdown, sim/pokemon.ts isGrounded). The chart's
@@ -90,7 +101,7 @@ pub fn smackdown_ground_view<'a>(move_type: &PokemonType, defender: &'a Pokemon,
 /// moves hit Ghost types (PS data/abilities.ts scrappy.onModifyMove ignoreImmunity).
 pub fn type_mod_by(attacker: &Pokemon, attacking_type: &PokemonType, defender: &Pokemon) -> Option<i32> {
     use crate::engine::abilities::Abilities;
-    if matches!(attacker.ability, Abilities::SCRAPPY | Abilities::MINDSEYE)
+    if (matches!(attacker.ability, Abilities::SCRAPPY | Abilities::MINDSEYE) || SCRAPPY_MOVE.with(|g| g.get()))
         && matches!(*attacking_type, PokemonType::NORMAL | PokemonType::FIGHTING)
         && (defender.types.0 == PokemonType::GHOST || defender.types.1 == PokemonType::GHOST)
     {
@@ -555,9 +566,6 @@ pub fn roll_multiaccuracy(
     ability_mods: (i32, i32),
     rng: &mut Gen5Rng,
 ) -> bool {
-    if GRAVITY.with(|g| g.get()) || ability_mods != (4096, 4096) {
-        return roll_accuracy_boosted_labeled("multiaccuracy", accuracy, acc_boost, eva_boost, ability_mods, rng);
-    }
     const TABLE: [f64; 7] = [1.0, 4.0 / 3.0, 5.0 / 3.0, 2.0, 7.0 / 3.0, 8.0 / 3.0, 3.0];
     let mut acc = accuracy as f64;
     let b = acc_boost.clamp(-6, 6) as i32;
@@ -571,6 +579,13 @@ pub fn roll_multiaccuracy(
         acc /= TABLE[e as usize];
     } else if e < 0 {
         acc *= TABLE[(-e) as usize];
+    }
+    // `runEvent('ModifyAccuracy')` applies its chained modifiers (Gravity,
+    // Hustle, Compound Eyes, ...) only to a non-negative integer (PS
+    // sim/battle.ts runEvent): a fractional accuracy after the boosts keeps
+    // its value. PS champions scripts.ts hitStepMoveHitLoop.
+    if (GRAVITY.with(|g| g.get()) || ability_mods != (4096, 4096)) && acc == acc.floor() && acc >= 0.0 {
+        return roll_accuracy_boosted_labeled("multiaccuracy", accuracy, acc_boost, eva_boost, ability_mods, rng);
     }
     // PS `randomChance(accuracy, 100)` = `random(100) < accuracy` (float compare).
     (rng.label("multiaccuracy").random(100) as f64) < acc

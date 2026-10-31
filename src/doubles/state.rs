@@ -239,6 +239,9 @@ pub struct ActiveSlot {
     /// `roost` volatile (duration 1): the pokemon's types before Flying was
     /// filtered out (`onType`); restored at residual / switch-out / faint.
     pub roost_orig: Option<(PokemonType, PokemonType)>,
+    /// The `roost` volatile itself (duration 1), also on a pokemon with no
+    /// Flying type to filter (its residual handler still exists).
+    pub roost: bool,
     /// `aquaring` volatile: heals 1/16 max HP each residual (order 6).
     pub aqua_ring: bool,
     /// `counter` / `mirrorcoat` volatiles (duration 1): the last foe slot that
@@ -392,6 +395,7 @@ impl ActiveSlot {
             added_grass: false,
             added_type: PokemonType::TYPELESS,
             roost_orig: None,
+            roost: false,
             aqua_ring: false,
             counter_vol: None,
             mirror_coat_vol: None,

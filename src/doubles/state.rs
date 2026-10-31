@@ -1591,8 +1591,8 @@ pub fn normalize_status(s: PokemonStatus) -> &'static str {
 }
 
 /// The side conditions currently up (fixed order; see `sc_order`).
-pub fn side_condition_entries(sc: &SideConditions) -> Vec<SideConditionEntry> {
-    let mut v = vec![];
+/// `side_condition_entries` into a stack list (no allocation).
+pub fn side_condition_entries_into(sc: &SideConditions, v: &mut arrayvec::ArrayVec<SideConditionEntry, 24>) {
     if sc.reflect != 0 {
         v.push(SideConditionEntry { id: "reflect", duration: Some(sc.reflect) });
     }
@@ -1632,7 +1632,12 @@ pub fn side_condition_entries(sc: &SideConditions) -> Vec<SideConditionEntry> {
     if sc.wide_guard != 0 {
         v.push(SideConditionEntry { id: "wideguard", duration: Some(sc.wide_guard) });
     }
-    v
+}
+
+pub fn side_condition_entries(sc: &SideConditions) -> Vec<SideConditionEntry> {
+    let mut v = arrayvec::ArrayVec::new();
+    side_condition_entries_into(sc, &mut v);
+    v.into_iter().collect()
 }
 
 /// Snapshot the full state of both sides for fuzz comparison.
@@ -1798,11 +1803,15 @@ impl DoublesSide {
     /// Keep `sc_order` in step with the conditions currently up: new ones are
     /// appended, ended ones dropped.
     pub fn sync_sc_order(&mut self) {
-        let present: Vec<&'static str> = side_condition_entries(&self.side_conditions).into_iter().map(|e| e.id).collect();
-        self.sc_order.retain(|o| present.contains(o));
-        for id in present {
-            if !self.sc_order.contains(&id) {
-                self.sc_order.push(id);
+        let mut present = arrayvec::ArrayVec::new();
+        side_condition_entries_into(&self.side_conditions, &mut present);
+        if present.is_empty() && self.sc_order.is_empty() {
+            return;
+        }
+        self.sc_order.retain(|o| present.iter().any(|e| e.id == *o));
+        for e in present {
+            if !self.sc_order.contains(&e.id) {
+                self.sc_order.push(e.id);
             }
         }
     }

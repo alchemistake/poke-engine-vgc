@@ -518,7 +518,7 @@ impl Pokemon {
                     }
                 }
                 if (self.item == Items::ASSAULTVEST || taunted)
-                    && self.moves[&iter.pokemon_move_index].choice.category == MoveCategory::Status
+                    && self.moves[&iter.pokemon_move_index].choice().category == MoveCategory::Status
                 {
                     continue;
                 }

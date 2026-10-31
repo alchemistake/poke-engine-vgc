@@ -558,7 +558,7 @@ fn active_move(state: &DoublesState, side: Side, slot: usize) -> Option<Choice> 
     if mv.id == crate::choices::Choices::NONE {
         return None;
     }
-    Some(mv.choice.clone())
+    Some(mv.choice().clone())
 }
 
 /// Snapshot the full-team HP (all real team members, excluding empty slots) for
@@ -827,7 +827,7 @@ fn plan_queue_change(
         .iter()
         .position(|m| m.id == mv)
         .unwrap_or(0);
-    let mut choice = move_by_index(p, mi).choice.clone();
+    let mut choice = move_by_index(p, mi).choice().clone();
     choice.move_index = match mi {
         0 => crate::state::PokemonMoveIndex::M0,
         1 => crate::state::PokemonMoveIndex::M1,
@@ -963,7 +963,7 @@ fn instruct_action(
     let mi = [&p.moves.m0, &p.moves.m1, &p.moves.m2, &p.moves.m3]
         .iter()
         .position(|m| m.id == mv)?;
-    let mut choice = move_by_index(p, mi).choice.clone();
+    let mut choice = move_by_index(p, mi).choice().clone();
     choice.move_index = match mi {
         0 => crate::state::PokemonMoveIndex::M0,
         1 => crate::state::PokemonMoveIndex::M1,
@@ -1213,7 +1213,7 @@ pub fn run_battle_fuzz(
                                 (m, 0i8)
                             } else {
                                 let m = move_by_index(p, (*mi).min(3));
-                                let mut choice = m.choice.clone();
+                                let mut choice = m.choice().clone();
                                 // The slot the move was chosen from (PP / `used`).
                                 choice.move_index = match (*mi).min(3) {
                                     0 => crate::state::PokemonMoveIndex::M0,
@@ -11807,7 +11807,7 @@ fn apply_on_switch_abilities(
                 if m.id == Choices::NONE {
                     continue;
                 }
-                let c = &m.choice;
+                let c = &m.choice();
                 let mut bp = c.base_power;
                 if c.ohko {
                     bp = 150.0;
@@ -13244,15 +13244,15 @@ fn no_usable_moves(state: &DoublesState, side: Side, slot: usize, idx: PokemonIn
             || m.disabled
             || a.disabled.is_some_and(|(d, _)| d == m.id)
             || imprison_blocks(state, side, m.id)
-            || (a.taunt > 0 && m.choice.category == MoveCategory::Status)
+            || (a.taunt > 0 && m.choice().category == MoveCategory::Status)
             // PS data/mods/champions/moves.ts fakeout / firstimpression
             // `onDisableMove`: disabled once `activeMoveActions` is non-zero.
             || (matches!(m.id, Choices::FAKEOUT | Choices::FIRSTIMPRESSION) && a.active_move_actions > 0)
             // PS data/moves.ts gravity / healblock / throatchop / torment
             // `condition.onDisableMove`.
             || (state.gravity.active && has_gravity_flag(m.id))
-            || (a.heal_block > 0 && m.choice.flags.heal)
-            || (a.throat_chop > 0 && m.choice.flags.sound)
+            || (a.heal_block > 0 && m.choice().flags.heal)
+            || (a.throat_chop > 0 && m.choice().flags.sound)
             || (a.torment && a.last_move.is_some_and(|l| l == m.id && l != Choices::STRUGGLE))
     })
 }

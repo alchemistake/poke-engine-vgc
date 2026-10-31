@@ -542,9 +542,20 @@ pub struct Move {
     pub id: Choices,
     pub disabled: bool,
     pub pp: i8,
-    pub choice: Choice,
 }
+
+/// `MOVES` entry for `Choices::NONE` when a move id has no table entry.
+static NO_MOVE: std::sync::LazyLock<Choice> = std::sync::LazyLock::new(Choice::default);
+
 impl Move {
+    /// The move's data (`MOVES[id]`); moves hold only their id.
+    #[inline]
+    pub fn choice(&self) -> &'static Choice {
+        match MOVES.get(&self.id) {
+            Some(c) => c,
+            None => &NO_MOVE,
+        }
+    }
     pub fn serialize(&self) -> String {
         format!("{:?};{};{}", self.id, self.disabled, self.pp)
     }
@@ -554,10 +565,6 @@ impl Move {
             id: Choices::from_str(split[0]).unwrap(),
             disabled: split[1].parse::<bool>().unwrap(),
             pp: split[2].parse::<i8>().unwrap(),
-            choice: MOVES
-                .get(&Choices::from_str(split[0]).unwrap())
-                .unwrap()
-                .to_owned(),
         }
     }
 }
@@ -567,7 +574,6 @@ impl Default for Move {
             id: Choices::NONE,
             disabled: false,
             pp: 32,
-            choice: Choice::default(),
         }
     }
 }
@@ -919,14 +925,13 @@ impl Default for Pokemon {
 
 impl Pokemon {
     pub fn replace_move(&mut self, move_index: PokemonMoveIndex, new_move_name: Choices) {
-        self.moves[&move_index].choice = MOVES.get(&new_move_name).unwrap().to_owned();
         self.moves[&move_index].id = new_move_name;
     }
     pub fn get_sleep_talk_choices(&self) -> Vec<Choice> {
         let mut vec = Vec::with_capacity(4);
         for p in self.moves.into_iter() {
             if p.id != Choices::SLEEPTALK && p.id != Choices::NONE {
-                vec.push(p.choice.clone());
+                vec.push(p.choice().clone());
             }
         }
         vec

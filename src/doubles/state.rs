@@ -1229,16 +1229,15 @@ fn species_lookup(species: &str) -> SpeciesInfo {
     sp
 }
 
-fn move_lookup(mv: &str) -> (Choices, Choice) {
-    let choices = match MOVE_CACHE.with(|c| c.borrow().get(mv).copied()) {
+fn move_lookup(mv: &str) -> Choices {
+    match MOVE_CACHE.with(|c| c.borrow().get(mv).copied()) {
         Some(c) => c,
         None => {
             let c = Choices::from_str(&to_id(mv).to_uppercase()).unwrap_or_else(|_| panic!("unknown move {mv}"));
             MOVE_CACHE.with(|m| m.borrow_mut().insert(mv.to_string(), c));
             c
         }
-    };
-    (choices, MOVES[&choices].clone())
+    }
 }
 
 fn build_pokemon(m: &TeamMember) -> Pokemon {
@@ -1258,16 +1257,12 @@ fn build_pokemon(m: &TeamMember) -> Pokemon {
         compute_stats(base, &m.evs, m.level, nature.clone());
     let mut moves: [MoveSlot; 4] = Default::default();
     for (i, mv) in m.moves.iter().enumerate().take(4) {
-        let (choices, choice) = move_lookup(mv);
+        let choices = move_lookup(mv);
         // PS `baseMoveSlots` pp: `calculatePP(move, 3)`, champions
         // scripts.ts `(move.pp / 5 + 1) * 4` (stored as `Choice.pp`).
-        moves[i] = MoveSlot {
-            id: choices,
-            pp: choice.pp as i8,
-            choice,
-        };
+        moves[i] = MoveSlot { id: choices, pp: MOVES[&choices].pp as i8 };
     }
-    let [m0, m1, m2, m3] = moves.map(|ms| crate::state::Move { id: ms.id, disabled: false, pp: ms.pp, choice: ms.choice });
+    let [m0, m1, m2, m3] = moves.map(|ms| crate::state::Move { id: ms.id, disabled: false, pp: ms.pp });
     Pokemon {
         id,
         level: m.level as i8,
@@ -1307,16 +1302,11 @@ fn build_pokemon(m: &TeamMember) -> Pokemon {
 #[derive(Debug, Clone)]
 struct MoveSlot {
     id: Choices,
-    choice: Choice,
     pp: i8,
 }
 impl Default for MoveSlot {
     fn default() -> Self {
-        Self {
-            id: Choices::NONE,
-            choice: Choice::default(),
-            pp: 0,
-        }
+        Self { id: Choices::NONE, pp: 0 }
     }
 }
 

@@ -4031,16 +4031,16 @@ pub fn generate_instructions_from_move_pair(
             side_one_choice.category = MoveCategory::Switch;
         }
         MoveChoice::Move(move_index) => {
-            side_one_choice = state.side_one.get_active().moves[move_index].choice.clone();
+            side_one_choice = state.side_one.get_active().moves[move_index].choice().clone();
             side_one_choice.move_index = *move_index;
         }
         MoveChoice::MoveTera(move_index) => {
-            side_one_choice = state.side_one.get_active().moves[move_index].choice.clone();
+            side_one_choice = state.side_one.get_active().moves[move_index].choice().clone();
             side_one_choice.move_index = *move_index;
             s1_tera = true;
         }
         MoveChoice::MoveMega(move_index) => {
-            side_one_choice = state.side_one.get_active().moves[move_index].choice.clone();
+            side_one_choice = state.side_one.get_active().moves[move_index].choice().clone();
             side_one_choice.move_index = *move_index;
             s1_mega = true;
         }
@@ -4066,16 +4066,16 @@ pub fn generate_instructions_from_move_pair(
             side_two_choice.category = MoveCategory::Switch;
         }
         MoveChoice::Move(move_index) => {
-            side_two_choice = state.side_two.get_active().moves[move_index].choice.clone();
+            side_two_choice = state.side_two.get_active().moves[move_index].choice().clone();
             side_two_choice.move_index = *move_index;
         }
         MoveChoice::MoveTera(move_index) => {
-            side_two_choice = state.side_two.get_active().moves[move_index].choice.clone();
+            side_two_choice = state.side_two.get_active().moves[move_index].choice().clone();
             side_two_choice.move_index = *move_index;
             s2_tera = true;
         }
         MoveChoice::MoveMega(move_index) => {
-            side_two_choice = state.side_two.get_active().moves[move_index].choice.clone();
+            side_two_choice = state.side_two.get_active().moves[move_index].choice().clone();
             side_two_choice.move_index = *move_index;
             s2_mega = true;
         }

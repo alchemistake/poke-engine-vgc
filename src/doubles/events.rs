@@ -637,6 +637,11 @@ struct EventTable {
     /// `eachEvent` events only have unprefixed `on<Event>` handlers.
     prefixed: bool,
     poke: [Vec<PokeEntry>; 5],
+    /// `poke[i]` positions grouped by effect bit, table order kept within a
+    /// bit: `by_bit[i][first[i][bit] as usize..][..count[i][bit]]`.
+    by_bit: [Vec<u16>; 5],
+    first: [[u16; 128]; 5],
+    count: [[u8; 128]; 5],
     /// Union of the `bit`s in `poke[i]`.
     poke_mask: [u128; 5],
     /// The `CONDS` with a pokemon handler in this event (bit i = `CONDS[i]`):
@@ -753,9 +758,26 @@ fn build_tables() -> Tables {
         };
         let side = side_names.map(|cb| global(cb, &SIDE_IDS, &[HandlerKind::Side]));
         let field = global(poke_names[ON], &FIELD_IDS, &[HandlerKind::Field, HandlerKind::Weather]);
+        let mut by_bit: [Vec<u16>; 5] = Default::default();
+        let mut first = [[0u16; 128]; 5];
+        let mut count = [[0u8; 128]; 5];
+        for pi in 0..5 {
+            for bit in 0..128u8 {
+                first[pi][bit as usize] = by_bit[pi].len() as u16;
+                for (k, h) in poke[pi].iter().enumerate() {
+                    if h.bit == bit {
+                        by_bit[pi].push(k as u16);
+                        count[pi][bit as usize] += 1;
+                    }
+                }
+            }
+        }
         events.push(EventTable {
             left_to_right: LEFT_TO_RIGHT.contains(&name),
             prefixed: !UNPREFIXED.contains(&name),
+            by_bit,
+            first,
+            count,
             poke,
             poke_mask,
             conds: 0,
@@ -969,7 +991,9 @@ impl Collector<'_> {
             if self.ev.poke_mask[prefix] & (1u128 << bit) == 0 {
                 continue;
             }
-            for h in self.ev.poke[prefix].iter().filter(|h| h.bit == bit) {
+            let (f, n) = (self.ev.first[prefix][bit as usize] as usize, self.ev.count[prefix][bit as usize] as usize);
+            for &k in &self.ev.by_bit[prefix][f..f + n] {
+                let h = &self.ev.poke[prefix][k as usize];
                 let speed = if h.raw_speed {
                     self.state.side(side).slot_pokemon(slot).map(|p| p.speed as i32).unwrap_or(speed)
                 } else {

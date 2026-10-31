@@ -4684,7 +4684,11 @@ fn execute_action_inner(
     // Invulnerability -> TryHit -> TypeImmunity -> Accuracy). An immune
     // target consumes no PRNG draws at all.
     // TODO(PS parity): move-specific immunities (PS `hitStepTryImmunity`).
-    let speeds = (stat_speed(state, side, slot), stat_speed(state, target_side, target_slot));
+    let speeds = if matches!(choice.move_id, Choices::ELECTROBALL | Choices::GYROBALL) {
+        (stat_speed(state, side, slot), stat_speed(state, target_side, target_slot))
+    } else {
+        (0, 0)
+    };
     let effective_power = if dynamic_base_power(
         choice,
         state.side(side).team_member(idx),
@@ -10182,7 +10186,12 @@ fn compute_hit_damage(
     ate_boosted: bool,
     spread: bool,
 ) -> (i16, bool) {
-    let speeds = (stat_speed(state, side, slot), stat_speed(state, target_side, target_slot));
+    // Only Electro Ball / Gyro Ball read the speeds (`dynamic_base_power`).
+    let speeds = if matches!(choice.move_id, Choices::ELECTROBALL | Choices::GYROBALL) {
+        (stat_speed(state, side, slot), stat_speed(state, target_side, target_slot))
+    } else {
+        (0, 0)
+    };
     // PS `ignoringAbility` (gen 5+): a pokemon that is not active (a Future Sight
     // source that fainted or switched out) has its ability ignored, so Levitate
     // does not keep it out of Psychic Terrain (`isGrounded`) or affect its damage.
@@ -10200,10 +10209,12 @@ fn compute_hit_damage(
     };
     // The attacker's slot state applies only while it occupies the slot (a Future
     // Sight source may have left; the slot then belongs to another pokemon).
-    let att_slot = if state.side(side).active()[slot].pokemon_index == Some(idx) {
-        state.side(side).active()[slot].clone()
+    let empty_slot;
+    let att_slot: &ActiveSlot = if state.side(side).active()[slot].pokemon_index == Some(idx) {
+        &state.side(side).active()[slot]
     } else {
-        ActiveSlot::empty()
+        empty_slot = ActiveSlot::empty();
+        &empty_slot
     };
     let defender_actual = state
         .side(target_side)

@@ -3028,8 +3028,11 @@ fn execute_action_body(
     // called moves keep their caller as the source.
     let pressure_skipped = {
         let a = &state.side(action.side).active()[action.slot];
-        !(a.external_call || action.no_pp)
-            && (a.locked_move.is_some() || a.uproar > 0 || (a.charging.is_some() && !a.charge_aborted))
+        // The firing turn of a called charge move (Copycat -> Dig) is a
+        // `no_pp` action but still runs from its `twoturnmove` lock.
+        !a.external_call
+            && ((!action.no_pp && (a.locked_move.is_some() || a.uproar > 0))
+                || (a.charging.is_some() && !a.charge_aborted))
     };
     let before = state.side(action.side).active()[action.slot].charging;
     let was_recharging = state.side(action.side).active()[action.slot].recharging;
@@ -11838,7 +11841,9 @@ fn cursed_body(
         att_idx.and_then(|ai| state.faint_disabled.iter().rev().find(|e| e.0 == side && e.1 == ai).and_then(|e| e.2))
     };
     // PS `addVolatile` fails on a fainted pokemon: no Disable for a KO'd attacker.
-    let att_alive = att_idx.is_some_and(|ai| state.side(side).team_member(ai).hp > 0);
+    // A `selfdestruct: 'always'` user (Misty Explosion) fainted before its
+    // hits, though the engine still holds its HP until the move ends.
+    let att_alive = att_idx.is_some_and(|ai| state.side(side).team_member(ai).hp > 0) && !is_selfdestruct_always(choice.move_id);
     if att_disabled.is_some() || choice.move_id == Choices::STRUGGLE {
         return;
     }

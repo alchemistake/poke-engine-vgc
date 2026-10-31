@@ -3164,7 +3164,7 @@ fn execute_action_inner(
     // BeforeMove handlers in PS priority order (champions conditions):
     // sleep / freeze (10), flinch (8), confusion (3), paralysis (1).
     // `sleep_turns` holds PS `statusState.time` for sleep and freeze.
-    {
+    if matches!(state.side(side).team_member(idx).status, PokemonStatus::SLEEP | PokemonStatus::FREEZE) {
         let move_id = action.choice.move_id;
         let s = state.side_mut(side);
         let p = s.team_member_mut(idx);
@@ -3332,7 +3332,8 @@ fn execute_action_inner(
             let s = state.side_mut(side);
             if let Some(p) = s.active()[slot].pokemon_index {
                 s.moves_used[p as usize][action.choice.move_index as usize] = true;
-                let mv = &mut s.team_member_mut(p).moves[&action.choice.move_index];
+                // PP is not read by the `ver`-keyed caches.
+                let mv = &mut s.team_member_scratch_mut(p).moves[&action.choice.move_index];
                 // Struggle has no PP (PS `struggle` is not deducted): its
                 // `move_index` is the default slot 0, which must not lose PP.
                 if action.choice.move_id != Choices::STRUGGLE {
@@ -5860,7 +5861,7 @@ fn execute_action_inner(
                 if let Some(tidx) = state.side(target_side).active()[target_slot].pokemon_index {
                     state
                         .side_mut(target_side)
-                        .team_member_mut(tidx)
+                        .team_member_scratch_mut(tidx)
                         .attacked_by
                         .push((attacker_key(side, idx as u8), turn_now));
                     // PS `gotAttacked`: `attackedBy` entry with damage / slot
@@ -11989,6 +11990,9 @@ fn update_forecast(state: &mut DoublesState) {
                 // holder's switch-in): the type is not re-set while the weather
                 // is unchanged, so a Soak / Magic Powder type sticks.
                 if state.side(sd).active()[sl].forecast_weather == Some(weather) {
+                    continue;
+                }
+                if state.side(sd).team_member(idx).ability != Abilities::FORECAST {
                     continue;
                 }
                 let pm = state.side_mut(sd).team_member_mut(idx);

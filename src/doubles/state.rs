@@ -518,6 +518,12 @@ impl DoublesSide {
     pub fn team_member(&self, index: PokemonIndex) -> &Pokemon {
         &self.team[index as usize]
     }
+    /// A team member, for changes to fields other than status, ability and
+    /// HP (PP, `attacked_by`, ...): `ver` is not bumped.
+    #[inline]
+    pub fn team_member_scratch_mut(&mut self, index: PokemonIndex) -> &mut Pokemon {
+        &mut self.team[index as usize]
+    }
     pub fn team_member_mut(&mut self, index: PokemonIndex) -> &mut Pokemon {
         self.ver = self.ver.wrapping_add(1);
         &mut self.team[index as usize]

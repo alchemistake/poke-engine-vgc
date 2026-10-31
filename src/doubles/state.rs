@@ -524,6 +524,14 @@ impl DoublesSide {
     pub fn team_member_scratch_mut(&mut self, index: PokemonIndex) -> &mut Pokemon {
         &mut self.team[index as usize]
     }
+    /// Write PS `pokemon.speed` (`speed_cache`); a change bumps `ver`.
+    #[inline]
+    pub fn set_speed_cache(&mut self, index: usize, speed: i16) {
+        if self.speed_cache[index] != speed {
+            self.speed_cache[index] = speed;
+            self.ver = self.ver.wrapping_add(1);
+        }
+    }
     pub fn team_member_mut(&mut self, index: PokemonIndex) -> &mut Pokemon {
         self.ver = self.ver.wrapping_add(1);
         &mut self.team[index as usize]
@@ -685,6 +693,8 @@ pub struct DoublesState {
     /// Union of the four slots' event-handler effect bits (`events`), keyed
     /// by both sides' `ver` and the Future Sight / Wish bits.
     pub(crate) fx_union: std::cell::Cell<Option<(u32, u32, u8, u128)>>,
+    /// `sorted_actives`' last untied order, keyed by both sides' `ver`.
+    pub(crate) actives_order: std::cell::Cell<Option<((u32, u32), [(Side, u8); 4], u8)>>,
     /// PS `battle.lastMove`: the last move used by anyone (Copycat).
     pub last_move: Option<Choices>,
     /// Set when the current action's `onHit` ran a Copycat / Sleep Talk
@@ -1380,6 +1390,7 @@ impl DoublesState {
         let state = Self {
             tl: MoveScratch { pressure_extra: std::cell::Cell::new(-1), ..Default::default() },
             fx_union: Default::default(),
+            actives_order: Default::default(),
             last_move: None,
             copy_called: false,
             queue_change: None,

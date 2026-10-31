@@ -376,7 +376,7 @@ fn resolve_faints(state: &mut DoublesState, rng: &mut Gen5Rng, pick: impl Fn(Sid
         // `storedStats`, so a Speed Swap (or Guard / Power Split) is undone
         // when the pokemon faints.
         restore_stored_stats(s, idx);
-        s.speed_cache[idx as usize] = s.team_member(idx).speed;
+        s.set_speed_cache(idx as usize, s.team_member(idx).speed);
         resolved.push((side, idx));
     }
     // Still-queued faints of other slots remain unresolved.
@@ -2311,7 +2311,7 @@ fn update_speed_get(state: &mut DoublesState) -> [[Option<i16>; 2]; 2] {
             let sp = eff.map(|sp| if trick_room { 10000 + sp as i32 } else { sp as i32 });
             let s = state.side_mut(side);
             if let (Some(idx), Some(sp)) = (s.active()[slot].pokemon_index, sp) {
-                s.speed_cache[idx as usize] = sp as i16;
+                s.set_speed_cache(idx as usize, sp as i16);
             }
         }
     }
@@ -3442,7 +3442,7 @@ fn execute_action_inner(
                     pm.types = (PokemonType::from(data.types.0), PokemonType::from(data.types.1));
                     // `formeChange` -> `setSpecies`: the cached speed is the raw stat.
                     let raw = pm.speed;
-                    state.side_mut(side).speed_cache[idx as usize] = raw as _;
+                    state.side_mut(side).set_speed_cache(idx as usize, raw as _);
                     let a = state.side_mut(side).active_slot_mut(slot);
                     a.type_change = None;
                     a.added_type = PokemonType::TYPELESS;
@@ -11048,7 +11048,7 @@ fn disguise_bust(state: &mut DoublesState, side: Side, slot: usize) {
     let dmg = (pm.maxhp / 8).max(1);
     apply_damage(state, side, slot, dmg);
     let raw = state.side(side).team_member(idx).speed;
-    state.side_mut(side).speed_cache[idx as usize] = raw as _;
+    state.side_mut(side).set_speed_cache(idx as usize, raw as _);
 }
 
 /// The volatiles Aroma Veil's `onAllyTryAddVolatile` blocks (PS
@@ -12026,7 +12026,7 @@ fn update_forecast(state: &mut DoublesState) {
                     let raw = s.team_member(idx).speed;
                     s.slot_scratch_mut(sl).forecast_weather = Some(weather);
                     if changed {
-                        s.speed_cache[idx as usize] = raw as _;
+                        s.set_speed_cache(idx as usize, raw as _);
                     }
                 }
             }
@@ -12235,7 +12235,7 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
         // `runSwitch` sort (sim/battle.ts dragIn path), so this raw speed is
         // what the switch-in speed sort reads.
         let raw_speed = s.team_member(idx).speed;
-        s.speed_cache[idx as usize] = raw_speed as _;
+        s.set_speed_cache(idx as usize, raw_speed as _);
         s.active_slot_mut(slot).pokemon_index = Some(idx);
         // PS `clearVolatile` (switch-in): `newlySwitched = true`.
         s.slot_scratch_mut(slot).newly_switched = true;
@@ -12263,7 +12263,7 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
                 pm.special_attack = spa;
                 pm.special_defense = spd;
                 let raw = pm.speed;
-                s.speed_cache[idx as usize] = raw as _;
+                s.set_speed_cache(idx as usize, raw as _);
             }
         }
         // Same `setSpecies(baseSpecies)`: Hunger Switch's `formeChange` is not
@@ -13071,6 +13071,19 @@ fn sorted_actives(
     rng: &mut Gen5Rng,
     label: &'static str,
 ) -> arrayvec::ArrayVec<(Side, usize), 4> {
+    // An untied order is reused while no slot, team member or cached speed
+    // changed (`DoublesSide::ver`); ties always re-sort (they draw).
+    let cacheable = state.unresolved_faints.is_empty()
+        && label != "speed tie (switch-in)"
+        && !crate::doubles::debug::flags().actives;
+    let key = (state.side_one.ver, state.side_two.ver);
+    if cacheable {
+        if let Some((k, order, n)) = state.actives_order.get() {
+            if k == key {
+                return order[..n as usize].iter().map(|&(s, sl)| (s, sl as usize)).collect();
+            }
+        }
+    }
     // Actives in slot order; a pokemon that fainted in the current hit loop
     // still counts until faints are resolved (`unresolved_faints`).
     let mut hs: arrayvec::ArrayVec<(Side, usize, i32), 4> = arrayvec::ArrayVec::new();
@@ -13121,6 +13134,13 @@ fn sorted_actives(
         for &(s, sl, _) in &hs {
             // SAFETY: `hs` holds at most 4 entries, the capacity of `out`.
             unsafe { out.push_unchecked((s, sl)) };
+        }
+        if cacheable {
+            let mut order = [(Side::One, 0u8); 4];
+            for (o, &(s, sl)) in order.iter_mut().zip(out.iter()) {
+                *o = (s, sl as u8);
+            }
+            state.actives_order.set(Some((key, order, out.len() as u8)));
         }
         return out;
     }
@@ -13678,7 +13698,7 @@ fn end_of_turn(
                 // PS sim/pokemon.ts setSpecies.
                 restore_stored_stats(s, idx);
                 let raw = s.team_member(idx).speed;
-                s.speed_cache[idx as usize] = raw as _;
+                s.set_speed_cache(idx as usize, raw as _);
             }
             ResidualKind::Harvest(side, slot) => {
                 // PS harvest.onResidual: `isWeather(sun) || randomChance(1, 2)`.

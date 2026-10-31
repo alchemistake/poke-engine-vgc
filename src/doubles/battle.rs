@@ -5,6 +5,7 @@
 //! accuracy / speed-tie shuffles all line up with a pokemon-showdown battle run
 //! on the same seed and the same move choices.
 
+use crate::doubles::move_targets::Tgt;
 use crate::choices::{ChargeSetup, Choice, Choices, Effect, MoveCategory, MoveTarget, StatBoosts, MOVES};
 use crate::doubles::damage::{calculate_damage, roll_accuracy, roll_accuracy_boosted, roll_accuracy_boosted_labeled, DamageCtx, DamageOutcome};
 use crate::doubles::rng::Gen5Rng;
@@ -2128,7 +2129,7 @@ fn redirect_target(state: &DoublesState, action: &Action, target: (Side, usize))
         _ => None,
     };
     let ty = move_target(action.choice.move_id);
-    if !matches!(ty, "normal" | "randomNormal" | "adjacentFoe" | "any" | "scripted") {
+    if !matches!(ty, Tgt::Normal | Tgt::RandomNormal | Tgt::AdjacentFoe | Tgt::Any | Tgt::Scripted) {
         if let Some((Some(t), _)) = rec {
             return t;
         }
@@ -2168,7 +2169,7 @@ fn redirect_target(state: &DoublesState, action: &Action, target: (Side, usize))
         if let Some(p) = state.side(s).slot_pokemon(sl) {
             if p.hp > 0 && p.ability == want {
                 // 'adjacentFoe' only accepts foes.
-                if ty == "adjacentFoe" && s == action.side {
+                if ty == Tgt::AdjacentFoe && s == action.side {
                     continue;
                 }
                 holders.push((cached_speed(state, s, sl), s, sl));
@@ -2210,10 +2211,10 @@ fn ps_get_target_inner(
         || user_types.1 == PokemonType::GHOST
         || state.side(side).active()[slot].added_type == PokemonType::GHOST;
     let ty = if action.recharge {
-        ""
+        Tgt::None
     } else if action.choice.move_id == Choices::CURSE && !user_ghost {
         // curse.onModifyMove: `move.target = move.nonGhostTarget` ('self').
-        "self"
+        Tgt::SelfTarget
     } else {
         move_target(action.choice.move_id)
     };
@@ -2222,8 +2223,8 @@ fn ps_get_target_inner(
 
     let random_target = |rng: &mut Gen5Rng| -> Option<(Side, usize)> {
         match ty {
-            "self" | "all" | "allySide" | "allyTeam" | "adjacentAllyOrSelf" => Some((side, slot)),
-            "adjacentAlly" => {
+            Tgt::SelfTarget | Tgt::All | Tgt::AllySide | Tgt::AllyTeam | Tgt::AdjacentAllyOrSelf => Some((side, slot)),
+            Tgt::AdjacentAlly => {
                 if alive(side, 1 - slot) {
                     let _ = rng.label(label).random(1);
                     Some((side, 1 - slot))
@@ -2252,7 +2253,7 @@ fn ps_get_target_inner(
         return random_target(rng);
     }
     let self_loc = -(slot as i8 + 1);
-    if matches!(ty, "adjacentAlly" | "any" | "normal") && loc == self_loc && a.charging.is_none() {
+    if matches!(ty, Tgt::AdjacentAlly | Tgt::Any | Tgt::Normal) && loc == self_loc && a.charging.is_none() {
         return None;
     }
     let is_self = loc == self_loc;
@@ -2260,14 +2261,14 @@ fn ps_get_target_inner(
     // In doubles every other slot is adjacent.
     let valid = loc.abs() <= 2
         && match ty {
-            "randomNormal" | "scripted" | "normal" => !is_self,
-            "adjacentAlly" => !is_self && !is_foe,
-            "adjacentAllyOrSelf" => !is_foe,
-            "adjacentFoe" => is_foe,
-            "any" => !is_self,
+            Tgt::RandomNormal | Tgt::Scripted | Tgt::Normal => !is_self,
+            Tgt::AdjacentAlly => !is_self && !is_foe,
+            Tgt::AdjacentAllyOrSelf => !is_foe,
+            Tgt::AdjacentFoe => is_foe,
+            Tgt::Any => !is_self,
             _ => false,
         };
-    if ty != "randomNormal" && valid {
+    if ty != Tgt::RandomNormal && valid {
         let (ts, tsl) = if is_foe { (foe, (loc - 1) as usize) } else { (side, (-loc - 1) as usize) };
         if alive(ts, tsl) {
             return Some((ts, tsl));
@@ -2275,7 +2276,7 @@ fn ps_get_target_inner(
         if !is_foe {
             // PS `getTarget`: a fainted ally is not retargeted, except that
             // `adjacentAllyOrSelf` (gen != 5) returns the user (no draw).
-            if ty == "adjacentAllyOrSelf" {
+            if ty == Tgt::AdjacentAllyOrSelf {
                 return Some((side, slot));
             }
             return Some((ts, tsl));
@@ -2347,17 +2348,17 @@ fn friend_guard_tie_groups(state: &DoublesState) -> [u8; 4] {
 /// The cached PS `pokemon.speed` of a slot's occupant.
 /// PS move target type (`ps_move_target`) per move, indexed by `Choices`
 /// (built once; the generated table matches on move id strings).
-static MOVE_TARGETS: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
+static MOVE_TARGETS: std::sync::LazyLock<Vec<Tgt>> = std::sync::LazyLock::new(|| {
     (0..=u16::MAX)
         .map(Choices::from)
         .enumerate()
         .take_while(|&(i, m)| m as usize == i)
-        .map(|(_, m)| crate::doubles::move_targets::ps_move_target(&m.to_string().to_lowercase()))
+        .map(|(_, m)| Tgt::from_ps(crate::doubles::move_targets::ps_move_target(&m.to_string().to_lowercase())))
         .collect()
 });
 
 /// PS `move.target` of a move ("normal", "allAdjacentFoes", ...; "" if none).
-pub(crate) fn move_target(m: Choices) -> &'static str {
+pub(crate) fn move_target(m: Choices) -> Tgt {
     MOVE_TARGETS[m as usize]
 }
 
@@ -2684,11 +2685,11 @@ fn pressure_extra_count(state: &DoublesState, action: &Action) -> i8 {
     let all_foes = matches!(
         action.choice.move_id,
         Choices::IMPRISON | Choices::SPIKES | Choices::STEALTHROCK | Choices::TOXICSPIKES
-    ) || matches!(ty, "allAdjacentFoes" | "allAdjacent")
+    ) || matches!(ty, Tgt::AllAdjacentFoes | Tgt::AllAdjacent)
         // PS getMoveTargets: `all` targets `alliesAndSelf()` plus `foes(true)`
         // (Wonder Room, Sunny Day, ...); `allySide` / `allyTeam` no foes.
-        || ty == "all";
-    let single = matches!(ty, "normal" | "any" | "adjacentFoe" | "randomNormal");
+        || ty == Tgt::All;
+    let single = matches!(ty, Tgt::Normal | Tgt::Any | Tgt::AdjacentFoe | Tgt::RandomNormal);
     let slots: smallvec::SmallVec<[usize; 2]> = if all_foes {
         smallvec::smallvec![0, 1]
     } else if single && PRESSURE_TARGET.with(|c| c.get()).is_some() {
@@ -3108,7 +3109,7 @@ fn execute_action_inner(
     let bounce_spread_copy = state.side(side).active()[slot].bounced
         && matches!(
             move_target(action.choice.move_id),
-            "allAdjacent" | "allAdjacentFoes"
+            Tgt::AllAdjacent | Tgt::AllAdjacentFoes
         );
     // A called Metal Burst / Comeuppance (Copycat, ...) is `useMove` with no
     // target: `onModifyTarget` sets it to `getAtSlot(lastDamagedBy.slot)` before
@@ -3567,7 +3568,7 @@ fn execute_action_inner(
                 // An allAdjacent move (Earthquake) with no living foe still hits
                 // the living ally: PS `getMoveTargets` lists the adjacent allies.
                 // PS data/moves.ts earthquake (target allAdjacent).
-                let all_adjacent_ally = move_target(choice.move_id) == "allAdjacent"
+                let all_adjacent_ally = move_target(choice.move_id) == Tgt::AllAdjacent
                     && switched_in_alive(state, side, 1 - slot);
                 // A `futuremove` (Future Sight) keeps its fainted target: it
                 // targets the slot (PS sim/pokemon.ts getMoveTargets).
@@ -4207,7 +4208,7 @@ fn execute_action_inner(
     // the single-target pre-hit checks (no draws), then rolls its own accuracy.
     // TODO(PS parity): invulnerability exceptions (Earthquake vs Dig, ...).
     let move_ty = if expanding_force_spreads(state, side, slot, choice) {
-        "allAdjacentFoes"
+        Tgt::AllAdjacentFoes
     } else {
         move_target(choice.move_id)
     };
@@ -4221,7 +4222,7 @@ fn execute_action_inner(
         && !is_field
         && switched_in_alive(state, target_side, target_slot)
         && switched_in_alive(state, target_side, 1 - target_slot);
-    let is_spread = (matches!(move_ty, "allAdjacentFoes" | "allAdjacent") || smart_target) && !is_self && !is_field;
+    let is_spread = (matches!(move_ty, Tgt::AllAdjacentFoes | Tgt::AllAdjacent) || smart_target) && !is_self && !is_field;
     let mut spread_list: Vec<(Side, usize)> = Vec::new();
     // PS `trySpreadMoveHit`: `spreadHit` is set from the original target list.
     let mut spread_count = 0usize;
@@ -4236,7 +4237,7 @@ fn execute_action_inner(
             cands.push((target_side, target_slot));
             cands.push((target_side, 1 - target_slot));
         } else {
-            if move_ty == "allAdjacent" && switched_in_alive(state, side, 1 - slot) {
+            if move_ty == Tgt::AllAdjacent && switched_in_alive(state, side, 1 - slot) {
                 cands.push((side, 1 - slot));
             }
             for sl in 0..2 {
@@ -4456,7 +4457,7 @@ fn execute_action_inner(
     // are ally-targeted too (PS `hitStepInvulnerabilityEvent` for the ally).
     let ally_or_self_picked_ally = is_self
         && move_target(choice.move_id)
-            == "adjacentAllyOrSelf"
+            == Tgt::AdjacentAllyOrSelf
         && matches!(resolved, Some((rs, rl)) if rs == side && rl != slot);
     if (is_ally && !is_self || ally_or_self_picked_ally) && !is_field && choice.move_id != Choices::HELPINGHAND {
         // PS data/moves.ts noguard `onAnyInvulnerability` (priority 1) returns 0
@@ -5077,7 +5078,7 @@ fn execute_action_inner(
     if !is_spread
         && !choice.always_hit
         && !choice.ohko
-        && move_ty != "all"
+        && move_ty != Tgt::All
         && !toxic_hits
         && !weather_guaranteed
         && roll_accuracy_of(choice) > 0.0
@@ -5145,7 +5146,7 @@ fn execute_action_inner(
         target_slot = spread_list[0].1;
     } else if !choice.always_hit
         && !choice.ohko
-        && move_ty != "all"
+        && move_ty != Tgt::All
         && !toxic_hits
         && !lock_on_hits(state, side, slot, target_side, target_slot)
         && !state.side(target_side).active()[target_slot].glaive_rush
@@ -5336,7 +5337,7 @@ fn execute_action_inner(
     // Substitute fails them in `TryPrimaryHit` (status moves have no damage:
     // `getDamage` is falsy), unless the move bypasses it or the user is an
     // Infiltrator. The user itself is not blocked.
-    if move_target(choice.move_id) == "adjacentAllyOrSelf"
+    if move_target(choice.move_id) == Tgt::AdjacentAllyOrSelf
         && choice.category == MoveCategory::Status
         && !bypasses_substitute(choice)
         && state.side(side).team_member(idx).ability != Abilities::INFILTRATOR
@@ -6085,7 +6086,7 @@ fn execute_action_inner(
             } else {
                 (target_side, target_slot)
             };
-            if move_ty == "allies" {
+            if move_ty == Tgt::Allies {
                 // Howl & co. (`target: 'allies'`): the user and its ally, in
                 // slot order.
                 for sl in 0..2 {
@@ -7999,8 +8000,8 @@ fn execute_action_inner(
         // foeSide moves: the Pokemon target is the user (allySide) or the chosen
         // foe (foeSide). Its Magic Bounce holders tie and shuffle before any effect.
         let ps_target = move_target(choice.move_id);
-        if ps_target == "allySide" || ps_target == "foeSide" {
-            let (ps, pslot) = if ps_target == "allySide" { (side, slot) } else { (target_side, target_slot) };
+        if ps_target == Tgt::AllySide || ps_target == Tgt::FoeSide {
+            let (ps, pslot) = if ps_target == Tgt::AllySide { (side, slot) } else { (target_side, target_slot) };
             crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::TryHitSide, (ps, pslot), Some((side, slot)));
         }
 
@@ -8664,7 +8665,7 @@ fn execute_action_inner(
         }
         // PS useMoveInner: `all` / `foeSide` / `allySide` / `allyTeam` moves run
         // `tryMoveHit` (one `moveHit`, no hit loop and no `eachEvent('Update')`).
-        if is_field || move_failed || matches!(move_ty, "all" | "foeSide" | "allySide" | "allyTeam") {
+        if is_field || move_failed || matches!(move_ty, Tgt::All | Tgt::FoeSide | Tgt::AllySide | Tgt::AllyTeam) {
             break;
         }
         hits_done += 1;

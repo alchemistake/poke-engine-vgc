@@ -1,6 +1,50 @@
 // Auto-generated move target types from pokemon-showdown's champions dex
 // (`Dex.mod("champions").moves`, field `target`). Used to mirror PS
 // `getTarget` / `getRandomTarget`, which can consume PRNG draws.
+/// PS `move.target` as an enum (`ps_move_target` gives the PS string).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tgt {
+    Normal,
+    RandomNormal,
+    AdjacentFoe,
+    Any,
+    Scripted,
+    AdjacentAlly,
+    AdjacentAllyOrSelf,
+    All,
+    AllAdjacent,
+    AllAdjacentFoes,
+    Allies,
+    AllySide,
+    AllyTeam,
+    FoeSide,
+    SelfTarget,
+    None,
+}
+
+impl Tgt {
+    pub fn from_ps(s: &str) -> Tgt {
+        match s {
+            "normal" => Tgt::Normal,
+            "randomNormal" => Tgt::RandomNormal,
+            "adjacentFoe" => Tgt::AdjacentFoe,
+            "any" => Tgt::Any,
+            "scripted" => Tgt::Scripted,
+            "adjacentAlly" => Tgt::AdjacentAlly,
+            "adjacentAllyOrSelf" => Tgt::AdjacentAllyOrSelf,
+            "all" => Tgt::All,
+            "allAdjacent" => Tgt::AllAdjacent,
+            "allAdjacentFoes" => Tgt::AllAdjacentFoes,
+            "allies" => Tgt::Allies,
+            "allySide" => Tgt::AllySide,
+            "allyTeam" => Tgt::AllyTeam,
+            "foeSide" => Tgt::FoeSide,
+            "self" => Tgt::SelfTarget,
+            _ => Tgt::None,
+        }
+    }
+}
+
 pub fn ps_move_target(id: &str) -> &'static str {
     match id {
         "10000000voltthunderbolt" => "normal",

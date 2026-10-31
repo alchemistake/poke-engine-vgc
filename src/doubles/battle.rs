@@ -4315,6 +4315,19 @@ fn execute_action_inner(
         return;
     }
 
+    // Aura Wheel `onTry`: only a Morpeko (either forme) can use it; anyone
+    // else (a Copycat / Instruct copy) gets `-fail`. PS data/moves.ts aurawheel.
+    if choice.move_id == Choices::AURAWHEEL
+        && !matches!(
+            state.side(side).team_member(idx).id,
+            crate::pokemon::PokemonName::MORPEKO | crate::pokemon::PokemonName::MORPEKOHANGRY
+        )
+    {
+        state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
+        push_order(move_order);
+        return;
+    }
+
     // Ally Switch `onPrepareHit`: `addVolatile('allyswitch')`; a restart rolls
     // `randomChance(1, counter)` and fails (dropping the volatile) on a miss.
     if choice.move_id == Choices::ALLYSWITCH {

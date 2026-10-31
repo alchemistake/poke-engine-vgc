@@ -597,6 +597,11 @@ struct EventTable {
     side: [Vec<GlobalEntry>; 3],
     /// `on` weather / terrain / pseudo-weather handlers.
     field: Vec<GlobalEntry>,
+    /// Union of `poke_mask`, and of the `SIDE_IDS` / `FIELD_IDS` bits with a
+    /// handler: an event whose effects are all absent has nothing to sort.
+    any_poke: u128,
+    any_side: u32,
+    any_field: u32,
     /// Callback names, for `PE_DEBUG_EVENTS`.
     poke_names: [&'static str; 5],
     side_names: [&'static str; 3],
@@ -697,6 +702,9 @@ fn build_tables() -> Tables {
             poke,
             poke_mask,
             conds: 0,
+            any_poke: 0,
+            any_side: 0,
+            any_field: 0,
             side,
             field,
             poke_names,
@@ -708,6 +716,9 @@ fn build_tables() -> Tables {
     let status_fx = STATUS_IDS.map(|id| fx.get(&(HandlerKind::Status as u8, id)).copied().unwrap_or(NO_BIT));
     for ev in events.iter_mut() {
         let all = ev.poke_mask.iter().fold(0, |m, &x| m | x);
+        ev.any_poke = all;
+        ev.any_side = ev.side.iter().flatten().fold(0, |m, h| m | 1 << h.idx);
+        ev.any_field = ev.field.iter().fold(0, |m, h| m | 1 << h.idx);
         for (i, &bit) in cond_fx.iter().enumerate() {
             if bit != NO_BIT && all & (1u128 << bit) != 0 {
                 ev.conds |= 1 << i;
@@ -761,6 +772,33 @@ struct Key {
     priority: i32,
     speed: i32,
     sub_order: i32,
+}
+
+/// Whether any active pokemon, side or the field holds an effect with a
+/// handler for the event (any prefix). Most event sorts have none.
+fn has_any_handler(t: &Tables, ev: &EventTable, state: &DoublesState) -> bool {
+    if ev.any_side & (side_mask(state, Side::One) | side_mask(state, Side::Two)) != 0
+        || ev.any_field & field_mask(state) != 0
+    {
+        return true;
+    }
+    if ev.any_poke == 0 {
+        return false;
+    }
+    let has = |bit: u8| bit != NO_BIT && ev.any_poke & (1u128 << bit) != 0;
+    for side in [Side::One, Side::Two] {
+        let s = state.side(side);
+        for slot in 0..2 {
+            let Some(idx) = s.active()[slot].pokemon_index else { continue };
+            if status_index(s.team_member(idx).status).is_some_and(|i| has(t.status_fx[i]))
+                || has(t.ability_bit.get(real_ability(state, side, idx) as usize).copied().unwrap_or(NO_BIT))
+                || (ev.conds != 0 && cond_mask(s, slot) & ev.conds != 0)
+            {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Collects the handlers of one `run_event_ties` call. Each slot's effects
@@ -848,7 +886,8 @@ pub fn run_event_ties_on_effect(
 ) {
     let t: &Tables = &TABLES;
     let ev = &t.events[event as usize];
-    if ev.left_to_right {
+    if ev.left_to_right || !has_any_handler(t, ev, state) {
+        // At most the effect's own handler: a sort of one key draws nothing.
         return;
     }
     let prefixed = ev.prefixed;

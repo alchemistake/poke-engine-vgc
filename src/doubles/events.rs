@@ -61,106 +61,399 @@ pub fn pokemon_effects(state: &DoublesState, side: Side, slot: usize) -> Vec<(St
     v
 }
 
+/// The volatile and slot conditions `visit_pokemon_effects` reports, in
+/// report order (`cond_mask`).
+const CONDS: [(&str, HandlerKind); 66] = [
+    ("confusion", HandlerKind::Volatile),
+    ("flinch", HandlerKind::Volatile),
+    ("mustrecharge", HandlerKind::Volatile),
+    ("twoturnmove", HandlerKind::Volatile),
+    ("dig", HandlerKind::Volatile),
+    ("dive", HandlerKind::Volatile),
+    ("fly", HandlerKind::Volatile),
+    ("bounce", HandlerKind::Volatile),
+    ("phantomforce", HandlerKind::Volatile),
+    ("shadowforce", HandlerKind::Volatile),
+    ("skydrop", HandlerKind::Volatile),
+    ("protect", HandlerKind::Volatile),
+    ("kingsshield", HandlerKind::Volatile),
+    ("spikyshield", HandlerKind::Volatile),
+    ("banefulbunker", HandlerKind::Volatile),
+    ("silktrap", HandlerKind::Volatile),
+    ("burningbulwark", HandlerKind::Volatile),
+    ("endure", HandlerKind::Volatile),
+    ("substitute", HandlerKind::Volatile),
+    ("saltcure", HandlerKind::Volatile),
+    ("stockpile", HandlerKind::Volatile),
+    ("focuspunch", HandlerKind::Volatile),
+    ("beakblast", HandlerKind::Volatile),
+    ("gastroacid", HandlerKind::Volatile),
+    ("helpinghand", HandlerKind::Volatile),
+    ("destinybond", HandlerKind::Volatile),
+    ("partiallytrapped", HandlerKind::Volatile),
+    ("yawn", HandlerKind::Volatile),
+    ("throatchop", HandlerKind::Volatile),
+    ("taunt", HandlerKind::Volatile),
+    ("magnetrise", HandlerKind::Volatile),
+    ("smackdown", HandlerKind::Volatile),
+    ("curse", HandlerKind::Volatile),
+    ("followme", HandlerKind::Volatile),
+    ("perishsong", HandlerKind::Volatile),
+    ("flashfire", HandlerKind::Volatile),
+    ("charge", HandlerKind::Volatile),
+    ("noretreat", HandlerKind::Volatile),
+    ("focusenergy", HandlerKind::Volatile),
+    ("attract", HandlerKind::Volatile),
+    ("leechseed", HandlerKind::Volatile),
+    ("dragoncheer", HandlerKind::Volatile),
+    ("glaiverush", HandlerKind::Volatile),
+    ("minimize", HandlerKind::Volatile),
+    ("ingrain", HandlerKind::Volatile),
+    ("healblock", HandlerKind::Volatile),
+    ("syrupbomb", HandlerKind::Volatile),
+    ("octolock", HandlerKind::Volatile),
+    ("trapped", HandlerKind::Volatile),
+    ("encore", HandlerKind::Volatile),
+    ("torment", HandlerKind::Volatile),
+    ("imprison", HandlerKind::Volatile),
+    ("roost", HandlerKind::Volatile),
+    ("aquaring", HandlerKind::Volatile),
+    ("counter", HandlerKind::Volatile),
+    ("mirrorcoat", HandlerKind::Volatile),
+    ("allyswitch", HandlerKind::Volatile),
+    ("lockon", HandlerKind::Volatile),
+    ("uproar", HandlerKind::Volatile),
+    ("stall", HandlerKind::Volatile),
+    ("lockedmove", HandlerKind::Volatile),
+    ("disable", HandlerKind::Volatile),
+    ("electrify", HandlerKind::Volatile),
+    ("powertrick", HandlerKind::Volatile),
+    ("futuremove", HandlerKind::Slot),
+    ("wish", HandlerKind::Slot),
+];
+
+
+/// The move a slot is charging (a two-turn move not aborted).
+fn charging(a: &crate::doubles::state::ActiveSlot) -> Option<Choices> {
+    a.charging.filter(|_| !a.charge_aborted).map(|(m, _)| m)
+}
+
+/// Whether `CONDS[i]` is up (`cond_mask` for one condition).
+fn cond_on(s: &crate::doubles::state::DoublesSide, a: &crate::doubles::state::ActiveSlot, slot: usize, i: u32) -> bool {
+    match i {
+        0 => a.confusion > 0,
+        1 => a.flinched,
+        2 => a.recharging,
+        3 => charging(a).is_some(),
+        4 => charging(a) == Some(Choices::DIG),
+        5 => charging(a) == Some(Choices::DIVE),
+        6 => charging(a) == Some(Choices::FLY),
+        7 => charging(a) == Some(Choices::BOUNCE),
+        8 => charging(a) == Some(Choices::PHANTOMFORCE),
+        9 => charging(a) == Some(Choices::SHADOWFORCE),
+        10 => charging(a) == Some(Choices::SKYDROP),
+        11 => a.protected && (a.protect_kind as usize).min(5) == 0,
+        12 => a.protected && (a.protect_kind as usize).min(5) == 1,
+        13 => a.protected && (a.protect_kind as usize).min(5) == 2,
+        14 => a.protected && (a.protect_kind as usize).min(5) == 3,
+        15 => a.protected && (a.protect_kind as usize).min(5) == 4,
+        16 => a.protected && (a.protect_kind as usize).min(5) == 5,
+        17 => a.endure,
+        18 => a.substitute_health > 0,
+        19 => a.salt_cure,
+        20 => a.stockpile > 0,
+        21 => a.focus_punch,
+        22 => a.beak_blast,
+        23 => a.gastro_acid,
+        24 => a.helping_hand_mult > 1.0,
+        25 => a.destinybond,
+        26 => a.partial_trap.is_some(),
+        27 => a.yawn > 0,
+        28 => a.throat_chop > 0,
+        29 => a.taunt > 0,
+        30 => a.magnet_rise > 0,
+        31 => a.smackdown,
+        32 => a.cursed,
+        33 => a.follow_me > 0,
+        34 => a.perish > 0,
+        35 => a.flash_fire,
+        36 => a.charge,
+        37 => a.no_retreat,
+        38 => a.focus_energy,
+        39 => a.attract.is_some(),
+        40 => a.leech_seed.is_some(),
+        41 => a.dragon_cheer.is_some(),
+        42 => a.glaive_rush,
+        43 => a.minimize,
+        44 => a.ingrain,
+        45 => a.heal_block > 0,
+        46 => a.syrup_bomb.is_some(),
+        47 => a.octolock.is_some(),
+        48 => a.trapped || a.no_retreat,
+        49 => a.encore.is_some(),
+        50 => a.torment,
+        51 => a.imprison,
+        52 => a.roost_orig.is_some(),
+        53 => a.aqua_ring,
+        54 => a.counter_vol.is_some(),
+        55 => a.mirror_coat_vol.is_some(),
+        56 => a.ally_switch.is_some(),
+        57 => a.lock_on.is_some(),
+        58 => a.uproar > 0,
+        59 => a.stall.is_some(),
+        60 => a.locked_move.is_some(),
+        61 => a.disabled.is_some(),
+        62 => a.electrify,
+        63 => a.power_trick,
+        64 => s.future_move[slot].is_some(),
+        65 => s.wish[slot].is_some(),
+        _ => false,
+    }
+}
+
+/// The conditions of `CONDS` that are up, as bits (bit i = `CONDS[i]`).
+fn cond_mask(s: &crate::doubles::state::DoublesSide, a: &crate::doubles::state::ActiveSlot, slot: usize) -> u128 {
+    let mut m = 0u128;
+    if a.confusion > 0 {
+        m |= 1 << 0;
+    }
+    if a.flinched {
+        m |= 1 << 1;
+    }
+    if a.recharging {
+        m |= 1 << 2;
+    }
+    if charging(a).is_some() {
+        m |= 1 << 3;
+    }
+    if charging(a) == Some(Choices::DIG) {
+        m |= 1 << 4;
+    }
+    if charging(a) == Some(Choices::DIVE) {
+        m |= 1 << 5;
+    }
+    if charging(a) == Some(Choices::FLY) {
+        m |= 1 << 6;
+    }
+    if charging(a) == Some(Choices::BOUNCE) {
+        m |= 1 << 7;
+    }
+    if charging(a) == Some(Choices::PHANTOMFORCE) {
+        m |= 1 << 8;
+    }
+    if charging(a) == Some(Choices::SHADOWFORCE) {
+        m |= 1 << 9;
+    }
+    if charging(a) == Some(Choices::SKYDROP) {
+        m |= 1 << 10;
+    }
+    if a.protected && (a.protect_kind as usize).min(5) == 0 {
+        m |= 1 << 11;
+    }
+    if a.protected && (a.protect_kind as usize).min(5) == 1 {
+        m |= 1 << 12;
+    }
+    if a.protected && (a.protect_kind as usize).min(5) == 2 {
+        m |= 1 << 13;
+    }
+    if a.protected && (a.protect_kind as usize).min(5) == 3 {
+        m |= 1 << 14;
+    }
+    if a.protected && (a.protect_kind as usize).min(5) == 4 {
+        m |= 1 << 15;
+    }
+    if a.protected && (a.protect_kind as usize).min(5) == 5 {
+        m |= 1 << 16;
+    }
+    if a.endure {
+        m |= 1 << 17;
+    }
+    if a.substitute_health > 0 {
+        m |= 1 << 18;
+    }
+    if a.salt_cure {
+        m |= 1 << 19;
+    }
+    if a.stockpile > 0 {
+        m |= 1 << 20;
+    }
+    if a.focus_punch {
+        m |= 1 << 21;
+    }
+    if a.beak_blast {
+        m |= 1 << 22;
+    }
+    if a.gastro_acid {
+        m |= 1 << 23;
+    }
+    if a.helping_hand_mult > 1.0 {
+        m |= 1 << 24;
+    }
+    if a.destinybond {
+        m |= 1 << 25;
+    }
+    if a.partial_trap.is_some() {
+        m |= 1 << 26;
+    }
+    if a.yawn > 0 {
+        m |= 1 << 27;
+    }
+    if a.throat_chop > 0 {
+        m |= 1 << 28;
+    }
+    if a.taunt > 0 {
+        m |= 1 << 29;
+    }
+    if a.magnet_rise > 0 {
+        m |= 1 << 30;
+    }
+    if a.smackdown {
+        m |= 1 << 31;
+    }
+    if a.cursed {
+        m |= 1 << 32;
+    }
+    if a.follow_me > 0 {
+        m |= 1 << 33;
+    }
+    if a.perish > 0 {
+        m |= 1 << 34;
+    }
+    if a.flash_fire {
+        m |= 1 << 35;
+    }
+    if a.charge {
+        m |= 1 << 36;
+    }
+    if a.no_retreat {
+        m |= 1 << 37;
+    }
+    if a.focus_energy {
+        m |= 1 << 38;
+    }
+    if a.attract.is_some() {
+        m |= 1 << 39;
+    }
+    if a.leech_seed.is_some() {
+        m |= 1 << 40;
+    }
+    if a.dragon_cheer.is_some() {
+        m |= 1 << 41;
+    }
+    if a.glaive_rush {
+        m |= 1 << 42;
+    }
+    if a.minimize {
+        m |= 1 << 43;
+    }
+    if a.ingrain {
+        m |= 1 << 44;
+    }
+    if a.heal_block > 0 {
+        m |= 1 << 45;
+    }
+    if a.syrup_bomb.is_some() {
+        m |= 1 << 46;
+    }
+    if a.octolock.is_some() {
+        m |= 1 << 47;
+    }
+    // No Retreat `onStart` adds the `trapped` volatile (PS data/moves.ts noretreat).
+    if a.trapped || a.no_retreat {
+        m |= 1 << 48;
+    }
+    if a.encore.is_some() {
+        m |= 1 << 49;
+    }
+    if a.torment {
+        m |= 1 << 50;
+    }
+    if a.imprison {
+        m |= 1 << 51;
+    }
+    if a.roost_orig.is_some() {
+        m |= 1 << 52;
+    }
+    if a.aqua_ring {
+        m |= 1 << 53;
+    }
+    if a.counter_vol.is_some() {
+        m |= 1 << 54;
+    }
+    if a.mirror_coat_vol.is_some() {
+        m |= 1 << 55;
+    }
+    if a.ally_switch.is_some() {
+        m |= 1 << 56;
+    }
+    if a.lock_on.is_some() {
+        m |= 1 << 57;
+    }
+    if a.uproar > 0 {
+        m |= 1 << 58;
+    }
+    if a.stall.is_some() {
+        m |= 1 << 59;
+    }
+    if a.locked_move.is_some() {
+        m |= 1 << 60;
+    }
+    if a.disabled.is_some() {
+        m |= 1 << 61;
+    }
+    if a.electrify {
+        m |= 1 << 62;
+    }
+    if a.power_trick {
+        m |= 1 << 63;
+    }
+    if s.future_move[slot].is_some() {
+        m |= 1 << 64;
+    }
+    if s.wish[slot].is_some() {
+        m |= 1 << 65;
+    }
+    m
+}
+
 /// `pokemon_effects` without allocating: calls `f` for each effect, in the
 /// same order (the order PS collects their handlers in).
 /// TODO(PS parity): the ability under Gastro Acid (the engine stores NONE).
-pub fn visit_pokemon_effects(state: &DoublesState, side: Side, slot: usize, f: impl FnMut(Effect)) {
-    visit_effects(state, side, slot, true, f);
-}
-
-/// `visit_pokemon_effects`; with `volatiles` false it stops after the
-/// ability (status and ability only).
-fn visit_effects(state: &DoublesState, side: Side, slot: usize, volatiles: bool, mut f: impl FnMut(Effect)) {
+pub fn visit_pokemon_effects(state: &DoublesState, side: Side, slot: usize, mut f: impl FnMut(Effect)) {
     use HandlerKind::*;
     let s = state.side(side);
     let a = &s.active[slot];
     let Some(idx) = a.pokemon_index else { return };
     let p = s.team_member(idx);
-    let st = match p.status {
-        PokemonStatus::BURN => Some("brn"),
-        PokemonStatus::PARALYZE => Some("par"),
-        PokemonStatus::SLEEP => Some("slp"),
-        PokemonStatus::FREEZE => Some("frz"),
-        PokemonStatus::POISON => Some("psn"),
-        PokemonStatus::TOXIC => Some("tox"),
-        _ => None,
-    };
-    if let Some(st) = st {
+    if let Some(st) = status_id(p.status) {
         f(Effect::Id(st, Status));
     }
     f(Effect::Ability(real_ability(state, side, idx)));
-    if !volatiles {
-        return;
+    let mut m = cond_mask(s, a, slot);
+    while m != 0 {
+        let (id, kind) = CONDS[m.trailing_zeros() as usize];
+        f(Effect::Id(id, kind));
+        m &= m - 1;
     }
-    let mut vol = |on: bool, id: &'static str| {
-        if on {
-            f(Effect::Id(id, Volatile));
-        }
-    };
-    vol(a.confusion > 0, "confusion");
-    vol(a.flinched, "flinch");
-    vol(a.recharging, "mustrecharge");
-    if let Some((m, _)) = a.charging.filter(|_| !a.charge_aborted) {
-        vol(true, "twoturnmove");
-        if let Some(id) = semi_invulnerable_id(m) {
-            vol(true, id);
-        }
+}
+
+/// Status ids (PS ids), indexed by `status_index`.
+const STATUS_IDS: [&str; 6] = ["brn", "par", "slp", "frz", "psn", "tox"];
+
+fn status_index(st: PokemonStatus) -> Option<usize> {
+    match st {
+        PokemonStatus::BURN => Some(0),
+        PokemonStatus::PARALYZE => Some(1),
+        PokemonStatus::SLEEP => Some(2),
+        PokemonStatus::FREEZE => Some(3),
+        PokemonStatus::POISON => Some(4),
+        PokemonStatus::TOXIC => Some(5),
+        _ => None,
     }
-    vol(a.protected, PROTECT_IDS[(a.protect_kind as usize).min(5)]);
-    vol(a.endure, "endure");
-    vol(a.substitute_health > 0, "substitute");
-    vol(a.salt_cure, "saltcure");
-    vol(a.stockpile > 0, "stockpile");
-    vol(a.focus_punch, "focuspunch");
-    vol(a.beak_blast, "beakblast");
-    vol(a.gastro_acid, "gastroacid");
-    vol(a.helping_hand_mult > 1.0, "helpinghand");
-    vol(a.destinybond, "destinybond");
-    vol(a.partial_trap.is_some(), "partiallytrapped");
-    vol(a.yawn > 0, "yawn");
-    vol(a.throat_chop > 0, "throatchop");
-    vol(a.taunt > 0, "taunt");
-    vol(a.magnet_rise > 0, "magnetrise");
-    vol(a.smackdown, "smackdown");
-    vol(a.cursed, "curse");
-    vol(a.follow_me > 0, "followme");
-    vol(a.perish > 0, "perishsong");
-    vol(a.flash_fire, "flashfire");
-    vol(a.charge, "charge");
-    vol(a.no_retreat, "noretreat");
-    vol(a.focus_energy, "focusenergy");
-    vol(a.attract.is_some(), "attract");
-    vol(a.leech_seed.is_some(), "leechseed");
-    vol(a.dragon_cheer.is_some(), "dragoncheer");
-    vol(a.glaive_rush, "glaiverush");
-    vol(a.minimize, "minimize");
-    vol(a.ingrain, "ingrain");
-    vol(a.heal_block > 0, "healblock");
-    vol(a.syrup_bomb.is_some(), "syrupbomb");
-    vol(a.octolock.is_some(), "octolock");
-    // No Retreat `onStart` adds the `trapped` volatile (PS data/moves.ts noretreat).
-    vol(a.trapped || a.no_retreat, "trapped");
-    vol(a.encore.is_some(), "encore");
-    vol(a.torment, "torment");
-    vol(a.imprison, "imprison");
-    vol(a.roost_orig.is_some(), "roost");
-    vol(a.aqua_ring, "aquaring");
-    vol(a.counter_vol.is_some(), "counter");
-    vol(a.mirror_coat_vol.is_some(), "mirrorcoat");
-    vol(a.ally_switch.is_some(), "allyswitch");
-    vol(a.lock_on.is_some(), "lockon");
-    vol(a.uproar > 0, "uproar");
-    vol(a.stall.is_some(), "stall");
-    vol(a.locked_move.is_some(), "lockedmove");
-    vol(a.disabled.is_some(), "disable");
-    vol(a.electrify, "electrify");
-    vol(a.power_trick, "powertrick");
-    if s.future_move[slot].is_some() {
-        f(Effect::Id("futuremove", Slot));
-    }
-    if s.wish[slot].is_some() {
-        f(Effect::Id("wish", Slot));
-    }
+}
+
+fn status_id(st: PokemonStatus) -> Option<&'static str> {
+    status_index(st).map(|i| STATUS_IDS[i])
 }
 
 /// Side condition ids (PS ids); a side's active ones are a bit mask over
@@ -361,9 +654,9 @@ struct EventTable {
     poke: [Vec<PokeEntry>; 5],
     /// Union of the `bit`s in `poke[i]`.
     poke_mask: [u128; 5],
-    /// Some pokemon handler is a volatile or slot condition (else a slot's
-    /// status and ability are enough).
-    needs_volatiles: bool,
+    /// The `CONDS` with a pokemon handler in this event (bit i = `CONDS[i]`):
+    /// only these are checked on a slot.
+    conds: u128,
     /// `on` / `onFoe` / `onAny` side condition handlers.
     side: [Vec<GlobalEntry>; 3],
     /// `on` weather / terrain / pseudo-weather handlers.
@@ -373,32 +666,13 @@ struct EventTable {
     side_names: [&'static str; 3],
 }
 
-/// FNV-1a: the effect map is hit for every effect of every slot in every
-/// event sort, and its keys are short ids (SipHash cost ~2% of run time).
-#[derive(Default)]
-struct Fnv(u64);
-
-impl std::hash::Hasher for Fnv {
-    fn finish(&self) -> u64 {
-        self.0
-    }
-    fn write(&mut self, bytes: &[u8]) {
-        let mut h = if self.0 == 0 { 0xcbf2_9ce4_8422_2325 } else { self.0 };
-        for &b in bytes {
-            h = (h ^ b as u64).wrapping_mul(0x100_0000_01b3);
-        }
-        self.0 = h;
-    }
-}
-
-type FxMap = std::collections::HashMap<(u8, &'static str), u8, std::hash::BuildHasherDefault<Fnv>>;
-
 struct Tables {
-    /// Bit of each pokemon effect (kind, PS id) that has a handler in some
-    /// event table. Effects without one never join a sort.
-    fx: FxMap,
     /// Bit of each ability (indexed by `Abilities as usize`), or `NO_BIT`.
     ability_bit: Vec<u8>,
+    /// Effect bit of each `CONDS` entry, or `NO_BIT`.
+    cond_fx: [u8; CONDS.len()],
+    /// Effect bit of each `STATUS_IDS` entry, or `NO_BIT`.
+    status_fx: [u8; 6],
     events: Vec<EventTable>,
 }
 
@@ -421,9 +695,11 @@ fn leak(s: String) -> &'static str {
 fn build_tables() -> Tables {
     use crate::engine::abilities::Abilities;
     use std::str::FromStr;
-    let mut fx = FxMap::default();
+    // Bit of each pokemon effect (kind, PS id) that has a handler in some
+    // event table. Effects without one never join a sort.
+    let mut fx: std::collections::HashMap<(u8, &'static str), u8> = std::collections::HashMap::new();
     let mut ability_bit: Vec<u8> = Vec::new();
-    let mut events = Vec::new();
+    let mut events: Vec<EventTable> = Vec::new();
     for ev in Event::ALL {
         let name = ev.name();
         let poke_names = POKE_PREFIXES.map(|p| leak(format!("{}{}", p, name)));
@@ -477,9 +753,6 @@ fn build_tables() -> Tables {
                 })
                 .collect()
         };
-        let needs_volatiles = poke_names
-            .iter()
-            .any(|cb| handlers(cb).iter().any(|h| matches!(h.kind, HandlerKind::Volatile | HandlerKind::Slot)));
         let side = side_names.map(|cb| global(cb, &SIDE_IDS, &[HandlerKind::Side]));
         let field = global(poke_names[ON], &FIELD_IDS, &[HandlerKind::Field, HandlerKind::Weather]);
         events.push(EventTable {
@@ -487,14 +760,25 @@ fn build_tables() -> Tables {
             prefixed: !UNPREFIXED.contains(&name),
             poke,
             poke_mask,
-            needs_volatiles,
+            conds: 0,
             side,
             field,
             poke_names,
             side_names,
         });
     }
-    Tables { fx, ability_bit, events }
+    // Effect bits of the conditions and statuses, and each event's conditions.
+    let cond_fx = CONDS.map(|(id, kind)| fx.get(&(kind as u8, id)).copied().unwrap_or(NO_BIT));
+    let status_fx = STATUS_IDS.map(|id| fx.get(&(HandlerKind::Status as u8, id)).copied().unwrap_or(NO_BIT));
+    for ev in events.iter_mut() {
+        let all = ev.poke_mask.iter().fold(0, |m, &x| m | x);
+        for (i, &bit) in cond_fx.iter().enumerate() {
+            if bit != NO_BIT && all & (1u128 << bit) != 0 {
+                ev.conds |= 1 << i;
+            }
+        }
+    }
+    Tables { ability_bit, cond_fx, status_fx, events }
 }
 
 /// The effects of the pokemon in a slot that have a handler somewhere, as
@@ -506,20 +790,34 @@ struct SlotEffects {
     mask: u128,
 }
 
-fn slot_effects(t: &Tables, state: &DoublesState, side: Side, slot: usize, volatiles: bool) -> SlotEffects {
+fn slot_effects(t: &Tables, state: &DoublesState, side: Side, slot: usize, conds: u128) -> SlotEffects {
     let mut e = SlotEffects { bits: [0; 16], n: 0, mask: 0 };
-    visit_effects(state, side, slot, volatiles, |fx| {
-        let bit = match fx {
-            Effect::Id(id, kind) => t.fx.get(&(kind as u8, id)).copied().unwrap_or(NO_BIT),
-            Effect::Ability(ab) => t.ability_bit.get(ab as usize).copied().unwrap_or(NO_BIT),
-        };
+    let mut add = |bit: u8| {
         if bit != NO_BIT {
             assert!((e.n as usize) < e.bits.len(), "too many pokemon effects with handlers");
             e.bits[e.n as usize] = bit;
             e.n += 1;
             e.mask |= 1u128 << bit;
         }
-    });
+    };
+    // Same order as `visit_pokemon_effects`: status, ability, conditions.
+    let s = state.side(side);
+    let a = &s.active[slot];
+    let Some(idx) = a.pokemon_index else { return e };
+    if let Some(i) = status_index(s.team_member(idx).status) {
+        add(t.status_fx[i]);
+    }
+    add(t.ability_bit.get(real_ability(state, side, idx) as usize).copied().unwrap_or(NO_BIT));
+    if conds != 0 {
+        let mut m = conds;
+        while m != 0 {
+            let i = m.trailing_zeros();
+            if cond_on(s, a, slot, i) {
+                add(t.cond_fx[i as usize]);
+            }
+            m &= m - 1;
+        }
+    }
     e
 }
 
@@ -549,8 +847,8 @@ impl Collector<'_> {
             return;
         }
         let si = side as usize * 2 + slot;
-        let (t, state, volatiles) = (self.t, self.state, self.ev.needs_volatiles);
-        let fx = *self.slots[si].get_or_insert_with(|| slot_effects(t, state, side, slot, volatiles));
+        let (t, state, conds) = (self.t, self.state, self.ev.conds);
+        let fx = *self.slots[si].get_or_insert_with(|| slot_effects(t, state, side, slot, conds));
         if fx.mask & self.ev.poke_mask[prefix] == 0 {
             return;
         }

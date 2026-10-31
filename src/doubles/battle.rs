@@ -13074,7 +13074,7 @@ fn sorted_actives(
 ) -> arrayvec::ArrayVec<(Side, usize), 4> {
     // Actives in slot order; a pokemon that fainted in the current hit loop
     // still counts until faints are resolved (`unresolved_faints`).
-    let mut hs: arrayvec::ArrayVec<ResidualHandler, 4> = arrayvec::ArrayVec::new();
+    let mut hs: arrayvec::ArrayVec<(Side, usize, i32), 4> = arrayvec::ArrayVec::new();
     for (s, sl) in [(Side::One, 0usize), (Side::One, 1), (Side::Two, 0), (Side::Two, 1)] {
         let speed = if state.side(s).slot_pokemon(sl).map(|p| p.hp > 0).unwrap_or(false) {
             cached_speed(state, s, sl)
@@ -13094,24 +13094,39 @@ fn sorted_actives(
         } else {
             continue;
         };
-            hs.push(ResidualHandler {
-            order: 0,
-            priority: 0,
-            speed,
-            sub_order: 0,
-            kind: ResidualKind::Status(s, sl),
-        });
+        hs.push((s, sl, speed));
     }
     if crate::doubles::debug::flags().actives {
-        eprintln!("ACTIVES {} {:?}", label, hs.iter().map(|h| (h.kind.clone(), h.speed)).collect::<Vec<_>>());
+        let shown: Vec<_> = hs.iter().map(|&(s, sl, sp)| (ResidualKind::Status(s, sl), sp)).collect();
+        eprintln!("ACTIVES {} {:?}", label, shown);
     }
-    sort_residual_slice(&mut hs, rng, label);
-    hs.into_iter()
-        .filter_map(|h| match h.kind {
-            ResidualKind::Status(s, sl) => Some((s, sl)),
-            _ => None,
-        })
-        .collect()
+    // `sort_residual_slice` with every key but speed equal: fastest first,
+    // ties shuffled.
+    let mut sorted = 0usize;
+    while sorted + 1 < hs.len() {
+        let mut best = hs[sorted].2;
+        let mut ties: arrayvec::ArrayVec<usize, 4> = arrayvec::ArrayVec::new();
+        ties.push(sorted);
+        for i in (sorted + 1)..hs.len() {
+            if hs[i].2 > best {
+                best = hs[i].2;
+                ties.clear();
+                ties.push(i);
+            } else if hs[i].2 == best {
+                ties.push(i);
+            }
+        }
+        for (i, &index) in ties.iter().enumerate() {
+            if index != sorted + i {
+                hs.swap(sorted + i, index);
+            }
+        }
+        if ties.len() > 1 {
+            shuffle(&mut hs, sorted, sorted + ties.len(), rng, label);
+        }
+        sorted += ties.len();
+    }
+    hs.into_iter().map(|(s, sl, _)| (s, sl)).collect()
 }
 
 /// End-of-turn `DisableMove` and `TrapPokemon` (and `MaybeTrapPokemon` for a

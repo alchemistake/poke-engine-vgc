@@ -684,6 +684,10 @@ pub struct MoveScratch {
     /// Set while Opportunist applies its own copied boosts (PS `effect.name ===
     /// 'Opportunist'`): those raises are not copied again.
     pub opportunist_busy: std::cell::Cell<bool>,
+    /// Slots (bit `side * 2 + slot`) a spread hit KOs after the target whose
+    /// effects are running: PS `spreadDamage` already left them at 0 HP, so
+    /// their abilities no longer act (Flower Veil).
+    pub spread_ko_later: std::cell::Cell<u8>,
 }
 
 #[derive(Debug, Clone)]

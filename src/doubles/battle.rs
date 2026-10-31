@@ -1140,9 +1140,11 @@ pub fn run_battle_fuzz(
     update_forecast(state);
     // Turn 0: the initial state right after the leads are sent out (stat
     // calc, species data, leads). Compared before any turn is simulated.
-    let mut init = fuzz_snapshot(state, Vec::new());
-    init.turn = 0;
-    turn_states.push(init);
+    if state.record {
+        let mut init = fuzz_snapshot(state, Vec::new());
+        init.turn = 0;
+        turn_states.push(init);
+    }
 
     let limit = stop_after.unwrap_or(u32::MAX);
     let mut ci = 0usize;
@@ -2000,7 +2002,9 @@ pub fn run_battle_fuzz(
             sync_vol_order(state);
         }
 
-        turn_states.push(fuzz_snapshot(state, move_order));
+        if state.record {
+            turn_states.push(fuzz_snapshot(state, move_order));
+        }
         state.turn += 1;
         ci += 1;
 
@@ -3047,8 +3051,9 @@ fn execute_action_inner(
     // The action is logged once: a spread move that bounces (Magic Bounce) logs
     // its own entry before the holder's copy runs, then keeps going.
     let outer_logged = std::cell::Cell::new(false);
+    let record = state.record;
     let push_order = |move_order: &mut Vec<String>| {
-        if outer_logged.replace(true) {
+        if outer_logged.replace(true) || !record {
             return;
         }
         if crate::doubles::debug::flags().dmg {
@@ -8031,7 +8036,9 @@ fn execute_action_inner(
             };
             if let Some(bsl) = bouncer {
                 let bidx = state.side(cs).active()[bsl].pokemon_index.unwrap();
-                extra_order.push(order_entry(cs, bsl, state.side(cs).species_names[bidx as usize], choice.move_id));
+                if state.record {
+                    extra_order.push(order_entry(cs, bsl, state.side(cs).species_names[bidx as usize], choice.move_id));
+                }
                 if !apply_side_condition(state, side, sc.condition) {
                     move_failed = true;
                 }

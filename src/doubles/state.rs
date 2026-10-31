@@ -645,6 +645,9 @@ pub struct DoublesState {
     /// Abilities blanked by Mold Breaker for the running move: (side, team
     /// index, real ability). PS `battle.suppressingAbility(target)`.
     pub mold_saved: arrayvec::ArrayVec<(Side, PokemonIndex, Abilities), 3>,
+    /// Build the fuzz output (per-turn snapshots, move-order entries). Off
+    /// for plain simulation; the battle itself is the same either way.
+    pub record: bool,
     /// The `disabled` volatile each pokemon had when it fainted. PS keeps the
     /// volatiles until `faintMessages`, so a DamagingHit handler that runs after
     /// a Destiny Bond KO of its attacker still sees the attacker's Disable.
@@ -1299,6 +1302,7 @@ impl DoublesState {
             turn: 1,
             unresolved_faints: Vec::new(),
             mold_saved: arrayvec::ArrayVec::new(),
+            record: true,
             faint_disabled: Vec::new(),
             db_alive_pending: Vec::new(),
             pending_disguise: Vec::new(),

@@ -4,14 +4,18 @@
 //! timed region; each game builds its state from the parsed input.
 //!
 //! cargo run --release --features champions --no-default-features \
-//!     --bin bench-doubles -- [games.json] [reps]
+//!     --bin bench-doubles -- [games.json] [reps] [--sim]
+//!
+//! `--sim` runs the battles without the fuzz output (per-turn snapshots and
+//! move-order entries): the plain simulation a search would run.
 use poke_engine::doubles::battle::run_battle_fuzz;
 use poke_engine::doubles::rng::Gen5Rng;
 use poke_engine::doubles::state::{BattleInput, DoublesState, FuzzBattleResult, Leads};
 use std::time::Instant;
 
-fn play(input: &BattleInput) -> FuzzBattleResult {
+fn play(input: &BattleInput, record: bool) -> FuzzBattleResult {
     let mut state = DoublesState::from_input(input);
+    state.record = record;
     let leads = input.leads.clone().unwrap_or(Leads {
         a: vec![0, 1],
         b: vec![0, 1],
@@ -22,7 +26,9 @@ fn play(input: &BattleInput) -> FuzzBattleResult {
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
+    let mut args: Vec<String> = std::env::args().collect();
+    let sim = args.iter().any(|a| a == "--sim");
+    args.retain(|a| a != "--sim");
     let path = args.get(1).map(String::as_str).unwrap_or("bench/games.json");
     let reps: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(20);
     let json = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {}", path, e));
@@ -34,11 +40,12 @@ fn main() {
         let t0 = Instant::now();
         turns = 0;
         for g in &games {
-            let r = std::hint::black_box(play(std::hint::black_box(g)));
-            turns += r.turns.len() as u64 - 1;
+            let r = std::hint::black_box(play(std::hint::black_box(g), !sim));
+            turns += r.total_turns as u64 - 1;
         }
         best = best.min(t0.elapsed().as_micros());
     }
-    eprintln!("{} games, {} turns, best of {} runs", games.len(), turns, reps);
+    let mode = if sim { "sim" } else { "fuzz output" };
+    eprintln!("{} games, {} turns, best of {} runs ({})", games.len(), turns, reps, mode);
     println!("{}", best);
 }

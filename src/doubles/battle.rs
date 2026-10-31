@@ -2302,18 +2302,27 @@ fn stat_speed(state: &DoublesState, side: Side, slot: usize) -> i32 {
 /// cache writes use (`speed_cache[i] = raw stat`, e.g. a Mimikyu bust). Keeping
 /// one convention lets a stale entry tie or order the way PS's does.
 fn update_speed(state: &mut DoublesState) {
+    update_speed_get(state);
+}
+
+/// `update_speed`, returning each slot's `effective_speed` (by side, slot).
+fn update_speed_get(state: &mut DoublesState) -> [[Option<i16>; 2]; 2] {
     let trick_room = state.trick_room.active;
     let weather = effective_weather(state);
+    let mut out = [[None; 2]; 2];
     for side in [Side::One, Side::Two] {
         for slot in 0..2 {
             // `effective_speed` is the stat negated under Trick Room.
-            let sp = effective_speed_in(state, side, slot, weather).map(|sp| if trick_room { 10000 + sp as i32 } else { sp as i32 });
+            let eff = effective_speed_in(state, side, slot, weather);
+            out[side as usize][slot] = eff;
+            let sp = eff.map(|sp| if trick_room { 10000 + sp as i32 } else { sp as i32 });
             let s = state.side_mut(side);
             if let (Some(idx), Some(sp)) = (s.active()[slot].pokemon_index, sp) {
                 s.speed_cache[idx as usize] = sp as i16;
             }
         }
     }
+    out
 }
 
 /// PS `runEvent('ModifyDamage')` Friend Guard handlers (`onAnyModifyDamage`,
@@ -2480,8 +2489,7 @@ fn resort_queue(state: &mut DoublesState, rng: &mut Gen5Rng, queue: &mut [Action
     if queue.is_empty() {
         return;
     }
-    update_speed(state);
-    let weather = effective_weather(state);
+    let speeds = update_speed_get(state);
     for a in queue.iter_mut() {
         // PS `getActionSpeed` (every re-sort) recomputes the priority from the
         // current ability: a Skill Swap'd Prankster boosts a queued Status move.
@@ -2499,7 +2507,7 @@ fn resort_queue(state: &mut DoublesState, rng: &mut Gen5Rng, queue: &mut [Action
         // Actions follow the pokemon: an Ally Switch moves it to the other slot.
         if let Some(sl) = (0..2).find(|&sl| state.side(a.side).active()[sl].pokemon_index == Some(a.pokemon_index)) {
             a.slot = sl;
-            if let Some(sp) = effective_speed_in(state, a.side, a.slot, weather) {
+            if let Some(sp) = speeds[a.side as usize][a.slot] {
                 a.speed = sp;
             }
         } else {

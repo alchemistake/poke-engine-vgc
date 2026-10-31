@@ -2872,7 +2872,8 @@ fn execute_action_body(
     // (`runMove`), except the recharge turn; otherwise a miss / immunity /
     // failed effect sets `false` where it happens, and the rest succeeded.
     {
-        let a = state.side_mut(action.side).active_slot_mut(action.slot);
+        // `move_result_this_turn` is not read by `events::vol_mask`.
+        let a = state.side_mut(action.side).slot_scratch_mut(action.slot);
         if a.pokemon_index.is_some() {
             if move_order.len() == order_len && !was_recharging {
                 a.move_result_this_turn = Some(false);
@@ -2970,10 +2971,10 @@ fn execute_action(
     // `twoturnmove` (data/conditions.ts). The charge was not consumed. The body
     // returns early for every BeforeMove failure (sleep, flinch, ...), so this
     // runs after it, not at its end.
-    let a = state.side_mut(action.side).active_slot_mut(action.slot);
-    if let (Some(b), Some(c)) = (before, a.charging) {
+    let c = state.side(action.side).active()[action.slot].charging;
+    if let (Some(b), Some(c)) = (before, c) {
         if b.0 == c.0 && b.1 == c.1 {
-            a.charge_aborted = true;
+            state.side_mut(action.side).active_slot_mut(action.slot).charge_aborted = true;
         }
     }
 }
@@ -2991,7 +2992,9 @@ fn execute_action_inner(
     let idx = action.pokemon_index;
     // Glaive Rush `onBeforeMove` (priority 100): the drawback ends when the
     // holder tries to move.
-    state.side_mut(side).active_slot_mut(slot).glaive_rush = false;
+    if state.side(side).active()[slot].glaive_rush {
+        state.side_mut(side).active_slot_mut(slot).glaive_rush = false;
+    }
     // Illusion (`onBeforeSwitchIn`): shown as the last unfainted pokemon after
     // it in `side.pokemon` until a damaging hit ends it.
     let name = {
@@ -5939,7 +5942,9 @@ fn execute_action_inner(
             }
             // Counter / Mirror Coat condition `onDamagingHit`.
             if target_side != side && damage > 0 {
-                let t = state.side_mut(target_side).active_slot_mut(target_slot);
+                // Updates an existing Counter / Mirror Coat volatile in place
+                // (its `vol_mask` bit does not change).
+                let t = state.side_mut(target_side).slot_scratch_mut(target_slot);
                 let slot_ref = Some((side, slot));
                 match choice.category {
                     MoveCategory::Physical => {
@@ -11252,7 +11257,11 @@ fn ability_update_cures(state: &mut DoublesState, side: Side, slot: usize) {
         pm.sleep_turns = 0;
     }
     match ability {
-        Abilities::OWNTEMPO => state.side_mut(side).active_slot_mut(slot).confusion = 0,
+        Abilities::OWNTEMPO => {
+            if state.side(side).active()[slot].confusion > 0 {
+                state.side_mut(side).active_slot_mut(slot).confusion = 0
+            }
+        }
         // oblivious.onUpdate: removes attract and taunt.
         Abilities::OBLIVIOUS => {
             let a = state.side_mut(side).active_slot_mut(slot);
@@ -11626,7 +11635,8 @@ fn apply_boosts_from(
     // statsLoweredThisTurn (PS `boost`): set when a drop actually applied.
     if lowered {
         let s = state.side_mut(side);
-        for a in s.active_mut().iter_mut() {
+        for sl in 0..2 {
+            let a = s.slot_scratch_mut(sl);
             if a.pokemon_index == Some(idx) {
                 a.stats_lowered_this_turn = true;
             }
@@ -11655,7 +11665,8 @@ fn apply_boosts_from(
     let raised = gained.iter().any(|&g| g > 0);
     if raised {
         let s = state.side_mut(side);
-        for a in s.active_mut().iter_mut() {
+        for sl in 0..2 {
+            let a = s.slot_scratch_mut(sl);
             if a.pokemon_index == Some(idx) {
                 a.stats_raised_this_turn = true;
             }

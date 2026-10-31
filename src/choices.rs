@@ -20972,7 +20972,7 @@ pub enum MoveCategory {
     Switch,
 }
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 pub enum MoveTarget {
     User,
     Opponent,
@@ -21005,37 +21005,37 @@ impl Default for ChargeSetup {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct VolatileStatus {
     pub target: MoveTarget,
     pub volatile_status: PokemonVolatileStatus,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct SideCondition {
     pub target: MoveTarget,
     pub condition: PokemonSideCondition,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Boost {
     pub target: MoveTarget,
     pub boosts: StatBoosts,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Heal {
     pub target: MoveTarget,
     pub amount: f32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Status {
     pub target: MoveTarget,
     pub status: PokemonStatus,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StatBoosts {
     pub attack: i8,
     pub defense: i8,
@@ -21079,7 +21079,7 @@ pub struct Myself {
     pub boosts: StatBoosts,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Flags {
     pub bite: bool,
     pub bullet: bool,

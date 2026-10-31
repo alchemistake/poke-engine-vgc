@@ -3,6 +3,8 @@
 Fixed set of 100 games: fuzz seeds 0–99 (1446 turns), choices recorded once
 from pokemon-showdown. Single core, no parallelism.
 
+To make the engine faster, follow [SPEED_LOOP.md](SPEED_LOOP.md).
+
 | file | what |
 |------|------|
 | `SPEED.csv` | `<sha>,<microseconds for 100 games>` — one line per measured commit |
@@ -12,6 +14,9 @@ from pokemon-showdown. Single core, no parallelism.
 | `bench_doubles.rs` | `bench-doubles` binary: best of N runs, JSON parse not timed |
 | `run.sh` | build + run + append to `SPEED.csv` |
 | `ps_bench.js` | pokemon-showdown replay of the same games (best of N) |
+| `profile_top.py` | summarize a samply profile (self / inclusive %, callers) |
+| `valgrind.sh` | memcheck, callgrind, cachegrind, DHAT in Docker |
+| `dhat_sites.py` | DHAT allocations per engine source line |
 
 ```bash
 bench/run.sh            # working tree ("-dirty" if src/ is modified)

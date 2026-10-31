@@ -153,7 +153,7 @@ Then decide:
 | snapshot built from static strings; fewer `Choice` clones | 16.8 ms | x103.1 |
 | event sorts check only the conditions the event has handlers for | 16.4 ms | x105.8 |
 | per-action scratch lists on the stack; move actions instead of cloning them | 15.4 ms | x112.2 |
-| event / speed / regex-free redesign pass (see REDESIGN.md) | 11.3 ms | x153 |
+| start of the redesign branch (80eccb4, see REDESIGN.md) | 11.3 ms | x152 |
 | `MOVES` indexed by `Choices`, `'static` secondaries, mimalloc, enum target types | 10.1 ms | x171 |
 | thread-locals into the state, volatile-cache invalidation only on change | 9.9 ms | x175 |
 | per-slot / per-version event bit caches, side / field masks | 8.0 ms | x216 |

@@ -5513,7 +5513,7 @@ fn execute_action_inner(
       }
       // PS `getSpreadDamage`: every target's crit + damage roll comes before
       // any per-target effect.
-      let pre_damage: Vec<(i16, bool)> = if is_spread && is_attack {
+      let pre_damage: smallvec::SmallVec<[(i16, bool); 4]> = if is_spread && is_attack {
           let sp = spread_count > 1;
           // A substitute's `onTryPrimaryHit` computes its damage first
           // (before `getSpreadDamage` covers the other targets).
@@ -5525,7 +5525,7 @@ fn execute_action_inner(
               let has_sub = !bypass && state.side(ts).active()[tsl].substitute_health > 0;
               (!has_sub) as u8
           });
-          let mut out = vec![(0i16, false); hit_targets.len()];
+          let mut out: smallvec::SmallVec<[(i16, bool); 4]> = smallvec::smallvec![(0i16, false); hit_targets.len()];
           for i in order {
               let (ts, tsl) = hit_targets[i];
               // PS getSpreadDamage skips a target that is gone (`!target`).
@@ -5552,13 +5552,13 @@ fn execute_action_inner(
           }
           out
       } else {
-          Vec::new()
+          smallvec::SmallVec::new()
       };
-      let mut hit_damage_by = vec![None; hit_targets.len()];
+      let mut hit_damage_by: smallvec::SmallVec<[Option<i16>; 4]> = smallvec::smallvec![None; hit_targets.len()];
       // A target took something this hit (damage, or a Substitute hit): PS
       // `hitStepMoveHitLoop` skips `eachEvent` when every `damage[i]` is false.
       let mut hit_landed = false;
-      let mut hit_pi_by = vec![None; hit_targets.len()];
+      let mut hit_pi_by: smallvec::SmallVec<[_; 4]> = smallvec::smallvec![None; hit_targets.len()];
       for (ti, &(hts, htsl)) in hit_targets.iter().enumerate() {
         target_side = hts;
         target_slot = htsl;

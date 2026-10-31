@@ -777,8 +777,8 @@ struct Key {
 /// Whether any active pokemon, side or the field holds an effect with a
 /// handler for the event (any prefix). Most event sorts have none.
 fn has_any_handler(t: &Tables, ev: &EventTable, state: &DoublesState) -> bool {
-    if ev.any_side & (side_mask(state, Side::One) | side_mask(state, Side::Two)) != 0
-        || ev.any_field & field_mask(state) != 0
+    if (ev.any_side != 0 && ev.any_side & (side_mask(state, Side::One) | side_mask(state, Side::Two)) != 0)
+        || (ev.any_field != 0 && ev.any_field & field_mask(state) != 0)
     {
         return true;
     }

@@ -1506,6 +1506,31 @@ pub struct SideConditionEntry {
     pub duration: Option<i8>,
 }
 
+/// One move-order entry; serialized as `"<A|B><slot>:<species>:<MOVE>"`.
+#[derive(Debug, Clone, Copy)]
+pub struct OrderEntry {
+    pub side: Side,
+    pub slot: u8,
+    pub species: &'static str,
+    pub mv: Choices,
+}
+
+impl std::fmt::Display for OrderEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let tag = match self.side {
+            Side::One => "A",
+            Side::Two => "B",
+        };
+        write!(f, "{}{}:{}:{:?}", tag, self.slot, self.species, self.mv)
+    }
+}
+
+impl Serialize for OrderEntry {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_str(self)
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct FuzzTurnState {
     pub turn: u32,
@@ -1519,7 +1544,7 @@ pub struct FuzzTurnState {
     pub a_side_conditions: Vec<SideConditionEntry>,
     pub b_side_conditions: Vec<SideConditionEntry>,
     /// Execution order this turn, entries "SIDE<slot>:Species:movename".
-    pub move_order: Vec<String>,
+    pub move_order: Vec<OrderEntry>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1598,7 +1623,7 @@ pub fn side_condition_entries(sc: &SideConditions) -> Vec<SideConditionEntry> {
 }
 
 /// Snapshot the full state of both sides for fuzz comparison.
-pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<String>) -> FuzzTurnState {
+pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzTurnState {
     let snap_side = |s: &DoublesSide| -> Vec<FullSlot> {
         s.team
             .iter()

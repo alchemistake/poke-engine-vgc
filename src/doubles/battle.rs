@@ -6,6 +6,7 @@
 //! on the same seed and the same move choices.
 
 use crate::doubles::move_targets::Tgt;
+use crate::doubles::state::OrderEntry;
 use crate::choices::{ChargeSetup, Choice, Choices, Effect, MoveCategory, MoveTarget, StatBoosts, MOVES};
 use crate::doubles::damage::{calculate_damage, roll_accuracy, roll_accuracy_boosted, roll_accuracy_boosted_labeled, DamageCtx, DamageOutcome};
 use crate::doubles::rng::Gen5Rng;
@@ -212,17 +213,9 @@ static MOVE_NAMES: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock:
         .collect()
 });
 
-/// A move-order entry, `"<side><slot>:<species>:<MOVE>"` (fuzz snapshot).
-fn order_entry(side: Side, slot: usize, species: &str, m: Choices) -> String {
-    let mv = MOVE_NAMES[m as usize];
-    let mut e = String::with_capacity(4 + species.len() + mv.len());
-    e.push_str(side_tag(side));
-    e.push((b'0' + slot as u8) as char);
-    e.push(':');
-    e.push_str(species);
-    e.push(':');
-    e.push_str(mv);
-    e
+/// A move-order entry (fuzz snapshot); formatted only when serialized.
+fn order_entry(side: Side, slot: usize, species: &'static str, m: Choices) -> OrderEntry {
+    OrderEntry { side, slot: slot as u8, species, mv: m }
 }
 
 fn side_tag(side: Side) -> &'static str {
@@ -1469,7 +1462,7 @@ pub fn run_battle_fuzz(
         // Execute in order. A pivot move (Volt Switch / U-turn) switches its
         // user out right after it acts, using the controller's answer to PS's
         // mid-turn switch request (PS `runAction` -> `makeRequest('switch')`).
-        let mut move_order: Vec<String> = Vec::new();
+        let mut move_order: Vec<OrderEntry> = Vec::new();
         let mut used_switches = vec![false; turn.switches.len()];
         let mut i = 0;
         // An instructed Counter / Mirror Coat: its `beforeTurnMove` action, run
@@ -2756,7 +2749,7 @@ fn execute_action_body(
     state: &mut DoublesState,
     rng: &mut Gen5Rng,
     action: &Action,
-    move_order: &mut Vec<String>,
+    move_order: &mut Vec<OrderEntry>,
     queue: &[Action],
 ) {
     let will_act = !queue.is_empty();
@@ -2960,7 +2953,7 @@ fn execute_action(
     state: &mut DoublesState,
     rng: &mut Gen5Rng,
     action: &Action,
-    move_order: &mut Vec<String>,
+    move_order: &mut Vec<OrderEntry>,
     queue: &[Action],
 ) {
     let before = state.side(action.side).active()[action.slot].charging;
@@ -3002,7 +2995,7 @@ fn execute_action_inner(
     state: &mut DoublesState,
     rng: &mut Gen5Rng,
     action: &Action,
-    move_order: &mut Vec<String>,
+    move_order: &mut Vec<OrderEntry>,
     will_act: bool,
     queue: &[Action],
 ) {
@@ -3040,8 +3033,9 @@ fn execute_action_inner(
     // its own entry before the holder's copy runs, then keeps going.
     let outer_logged = std::cell::Cell::new(false);
     let record = state.record;
-    let push_order = |move_order: &mut Vec<String>| {
-        if outer_logged.replace(true) || !record {
+    // Always kept (cheap): the battle logic reads the entry count.
+    let push_order = |move_order: &mut Vec<OrderEntry>| {
+        if outer_logged.replace(true) {
             return;
         }
         if crate::doubles::debug::flags().dmg {
@@ -5432,9 +5426,9 @@ fn execute_action_inner(
     // every target gave `false`. Consumed after the hit loop's targets.
     let mut spread_volatile_fail = false;
     let mut spread_volatile_ok = false;
-    let mut extra_order: Vec<String> = Vec::new();
+    let mut extra_order: Vec<OrderEntry> = Vec::new();
     // Moves a Copycat / Sleep Talk `onHit` ran (`useMove`) inside the hit loop.
-    let mut copy_order: Vec<String> = Vec::new();
+    let mut copy_order: Vec<OrderEntry> = Vec::new();
     let mut berserk_before: Vec<(Side, usize, i16)> = Vec::new();
     let mut ee_before: smallvec::SmallVec<[(Side, usize, i16); 4]> = smallvec::SmallVec::new();
 
@@ -8030,9 +8024,7 @@ fn execute_action_inner(
             };
             if let Some(bsl) = bouncer {
                 let bidx = state.side(cs).active()[bsl].pokemon_index.unwrap();
-                if state.record {
-                    extra_order.push(order_entry(cs, bsl, state.side(cs).species_names[bidx as usize], choice.move_id));
-                }
+                extra_order.push(order_entry(cs, bsl, state.side(cs).species_names[bidx as usize], choice.move_id));
                 if !apply_side_condition(state, side, sc.condition) {
                     move_failed = true;
                 }
@@ -9096,7 +9088,7 @@ fn run_copied_move(
     rng: &mut Gen5Rng,
     action: &Action,
     m: Choices,
-    copy_order: &mut Vec<String>,
+    copy_order: &mut Vec<OrderEntry>,
     will_act: bool,
     queue: &[Action],
 ) {

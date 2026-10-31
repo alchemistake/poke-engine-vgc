@@ -2520,22 +2520,6 @@ fn resort_queue(state: &mut DoublesState, rng: &mut Gen5Rng, queue: &mut [Action
 ///   6. per secondary       -> `random(100)`
 ///
 /// Type-immune and fixed-damage moves make no crit/damage draws.
-thread_local! {
-    /// PS `queue.willMove(target)` is false for every other active: Analytic.
-    static ANALYTIC_NO_MOVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-thread_local! {
-    /// The target the running move resolved to (after any retarget / redirect),
-    /// as PS `getMoveTargets` returns it: Pressure's `pressureTargets`. `None`
-    /// until `execute_action_inner` resolves it for this action.
-    static PRESSURE_TARGET: std::cell::Cell<Option<Option<(Side, usize)>>> = const { std::cell::Cell::new(None) };
-    /// Pressure PP extra counted when the target was resolved (PS `pressureTargets`
-    /// are read before the hit, so a target that swaps its ability mid-move still
-    /// costs PP). -1 when not yet resolved.
-    static PRESSURE_EXTRA: std::cell::Cell<i8> = const { std::cell::Cell::new(-1) };
-}
-
 /// PS `flags.breakable` (data/abilities.ts, champions mod).
 fn is_breakable(a: Abilities) -> bool {
     crate::doubles::ability_flags::has_flag(a, crate::doubles::ability_flags::BREAKABLE)
@@ -2667,7 +2651,7 @@ fn mold_breaker_forget(state: &mut DoublesState, side: Side, idx: PokemonIndex) 
 /// sim/pokemon.ts getMoveTargets; `mustpressure` moves count every foe,
 /// `foeSide` moves none).
 fn pressure_deduct_pp(state: &mut DoublesState, action: &Action) {
-    let pre = PRESSURE_EXTRA.with(|c| c.get());
+    let pre = state.tl.pressure_extra.get();
     let extra = if pre >= 0 { pre } else { pressure_extra_count(state, action) };
     if extra == 0 {
         return;
@@ -2692,9 +2676,9 @@ fn pressure_extra_count(state: &DoublesState, action: &Action) -> i8 {
     let single = matches!(ty, Tgt::Normal | Tgt::Any | Tgt::AdjacentFoe | Tgt::RandomNormal);
     let slots: smallvec::SmallVec<[usize; 2]> = if all_foes {
         smallvec::smallvec![0, 1]
-    } else if single && PRESSURE_TARGET.with(|c| c.get()).is_some() {
+    } else if single && state.tl.pressure_target.get().is_some() {
         // PS `pressureTargets` = the resolved target (post retarget / redirect).
-        match PRESSURE_TARGET.with(|c| c.get()).flatten() {
+        match state.tl.pressure_target.get().flatten() {
             Some((ts, tsl)) if ts == foe => smallvec::smallvec![tsl],
             _ => smallvec::SmallVec::new(),
         }
@@ -2709,23 +2693,6 @@ fn pressure_extra_count(state: &DoublesState, action: &Action) -> i8 {
         .filter(|&sl| state.side(foe).slot_pokemon(sl).is_some_and(|p| p.hp > 0 && p.ability == Abilities::PRESSURE))
         .count() as i8;
     extra
-}
-
-thread_local! {
-    /// The running move's `AfterMove` handler sort was already drawn by
-    /// `execute_action_inner` (before a duration-1 lockedmove release, whose
-    /// `onEnd` confusion must come after the sort). Reset per action.
-    static AFTER_MOVE_TIE_DRAWN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// The running move found no targets (PS useMoveInner `!targets.length`):
-    /// it returns false without `MoveFail`, so no crash / Steel Beam fail damage.
-    static NO_TARGET_FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// PS `battle.activeTarget` while a spread move's Substitute `onTryPrimaryHit`
-    /// computes its damage (set only then): the last target of the previous
-    /// per-target loop, not the substitute holder. Unaware reads it.
-    static SUB_ACTIVE_TARGET: std::cell::Cell<Option<(Side, usize)>> = const { std::cell::Cell::new(None) };
-    /// The running move stopped in its BeforeMove handlers (PS runMove
-    /// `!willTryMove`), so `runEvent('MoveAborted')` follows.
-    static BEFORE_MOVE_ABORTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// PS `runMove` -> `runEvent('AfterMove', pokemon)`: the handlers are the
@@ -2776,18 +2743,16 @@ fn execute_action_body(
     let will_act = !queue.is_empty();
     crate::doubles::damage::set_gravity(state.gravity.active);
     // Analytic: every other (unfainted) active has no pending action.
-    ANALYTIC_NO_MOVE.with(|c| {
-        c.set(![Side::One, Side::Two].iter().any(|&sd| {
+    state.tl.analytic_no_move.set(![Side::One, Side::Two].iter().any(|&sd| {
             (0..2).any(|sl| {
                 let a = &state.side(sd).active()[sl];
                 (sd, sl) != (action.side, action.slot)
                     && state.side(sd).slot_pokemon(sl).map(|p| p.hp > 0).unwrap_or(false)
                     && queue.iter().any(|q| q.side == sd && Some(q.pokemon_index) == a.pokemon_index)
             })
-        }))
-    });
-    PRESSURE_TARGET.with(|c| c.set(None));
-    PRESSURE_EXTRA.with(|c| c.set(-1));
+        }));
+    state.tl.pressure_target.set(None);
+    state.tl.pressure_extra.set(-1);
     // PS `runMove`: a locked move (lockedmove / twoturnmove firing turn / uproar)
     // runs with `sourceEffect` = the lock condition, so `useMoveInner`'s Pressure
     // block (`!sourceEffect || callerMoveForPressure`) is skipped. Externally
@@ -2817,15 +2782,15 @@ fn execute_action_body(
     }
     state.in_move = true;
     let mold_breaker = mold_breaker_suppress(state, action);
-    AFTER_MOVE_TIE_DRAWN.with(|c| c.set(false));
-    NO_TARGET_FAIL.with(|c| c.set(false));
-    BEFORE_MOVE_ABORTED.with(|c| c.set(false));
+    state.tl.after_move_tie_drawn.set(false);
+    state.tl.no_target_fail.set(false);
+    state.tl.before_move_aborted.set(false);
     execute_action_inner(state, rng, action, move_order, will_act, queue);
     // PS runMove: a failed BeforeMove runs `runEvent('MoveAborted')` (charge,
     // twoturnmove, destinybond handlers: a sort). PS sim/battle-actions.ts runMove.
     // TODO(PS parity): Destiny Bond is cleared before the move here, so its
     // handler is not in this sort.
-    if BEFORE_MOVE_ABORTED.with(|c| c.replace(false)) {
+    if state.tl.before_move_aborted.replace(false) {
         if let Some(sl) = (0..2).find(|&sl| state.side(action.side).active()[sl].pokemon_index == Some(action.pokemon_index)) {
             crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::MoveAborted, (action.side, sl), None);
         }
@@ -2882,7 +2847,7 @@ fn execute_action_body(
     }
     // PS runMove `runEvent('AfterMove')`: the handlers are sorted before any of
     // them runs (charge removal, lockedmove release below). Only for a move that ran.
-    if move_order.len() > order_len && !AFTER_MOVE_TIE_DRAWN.with(|c| c.get()) {
+    if move_order.len() > order_len && !state.tl.after_move_tie_drawn.get() {
         after_move_handler_ties(state, rng, action.side, action.pokemon_index, false);
     }
     // Opportunist `onAnyAfterMove` (every holder, after the move).
@@ -2935,7 +2900,7 @@ fn execute_action_body(
     // `onMoveFail` after `useMoveInner` found `moveResult` false (a miss,
     // Protect, an immunity, ...). PS data/moves.ts jumpkick / supercellslam
     // (`damage(baseMaxhp / 2)`), sim/battle-actions.ts useMoveInner.
-    let no_target_fail = NO_TARGET_FAIL.with(|c| c.get());
+    let no_target_fail = state.tl.no_target_fail.get();
     if move_order.len() > order_len && !no_target_fail {
         move_fail_self_damage(state, action.side, action.slot, &action.choice);
     }
@@ -3132,9 +3097,9 @@ fn execute_action_inner(
         // `getMoveTargets`: `priorityEvent('RedirectTarget')` after the target is chosen.
         None => ps_get_target(state, rng, action).map(|t| redirect_target(state, action, t)),
     };
-    PRESSURE_TARGET.with(|c| c.set(Some(resolved)));
+    state.tl.pressure_target.set(Some(resolved));
     let pre_extra = pressure_extra_count(state, action);
-    PRESSURE_EXTRA.with(|c| c.set(pre_extra));
+    state.tl.pressure_extra.set(pre_extra);
     // PS `runMove` -> `moveUsed(move, targetLoc)` stores the action's own
     // targetLoc (before any redirect), not the pokemon it finally hit. Instruct,
     // Sleep Talk-style locks and Encore read it back. It runs after BeforeMove
@@ -3170,7 +3135,7 @@ fn execute_action_inner(
     // PS sim/battle-actions.ts runMove. TODO(PS parity): the `|cant|` message
     // names the handler that ran first (order not modelled).
     crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::BeforeMove, (side, slot), resolved);
-    BEFORE_MOVE_ABORTED.with(|c| c.set(true));
+    state.tl.before_move_aborted.set(true);
     // A pokemon that must recharge (Hyper Beam / Solar Beam) cannot act.
     // No PRNG draw (PS `mustrecharge.onBeforeMove` returns false).
     if state.side(side).active()[slot].recharging {
@@ -3327,7 +3292,7 @@ fn execute_action_inner(
         return;
     }
 
-    BEFORE_MOVE_ABORTED.with(|c| c.set(false));
+    state.tl.before_move_aborted.set(false);
     // Focus Punch `beforeMoveCallback` (after the BeforeMove checks): it
     // fails with `|cant|` if the user was hit by a damaging move this turn.
     if action.choice.move_id == Choices::FOCUSPUNCH && state.side(side).active()[slot].lost_focus {
@@ -3610,7 +3575,7 @@ fn execute_action_inner(
             // PS useMoveInner `!targets.length`: `-fail` and `return false`, so
             // `moveThisTurnResult` is false (Stomping Tantrum's doubled BP reads it).
             state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
-            NO_TARGET_FAIL.with(|c| c.set(true));
+            state.tl.no_target_fail.set(true);
             modify_move_field_tie(state, rng);
         modify_move_user_tie(state, rng, side, slot);
             // `selfdestruct: 'always'` faints the user before the target check
@@ -3634,7 +3599,7 @@ fn execute_action_inner(
     let ally_gone = matches!(resolved, Some((rs, rl)) if rs == side && rl != slot && !switched_in_alive(state, rs, rl));
     if is_ally && !is_self && !is_field && (resolved.is_none() || ally_gone) {
         state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
-        NO_TARGET_FAIL.with(|c| c.set(true));
+        state.tl.no_target_fail.set(true);
         modify_move_field_tie(state, rng);
         modify_move_user_tie(state, rng, side, slot);
         push_order(move_order);
@@ -3649,7 +3614,7 @@ fn execute_action_inner(
         if let Some((ts, sl)) = resolved {
             if ts == side && !switched_in_alive(state, ts, sl) {
                 state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
-                NO_TARGET_FAIL.with(|c| c.set(true));
+                state.tl.no_target_fail.set(true);
                 modify_move_field_tie(state, rng);
                 modify_move_user_tie(state, rng, side, slot);
                 push_order(move_order);
@@ -5542,9 +5507,9 @@ fn execute_action_inner(
               // PS substitute.onTryPrimaryHit -> `getDamage` with the stale
               // `activeTarget`; `getSpreadDamage` then sets it per target.
               // data/abilities.ts unaware.onAnyModifyBoost reads it.
-              SUB_ACTIVE_TARGET.with(|c| c.set(if has_sub { ps_active_target } else { None }));
+              state.tl.sub_active_target.set(if has_sub { ps_active_target } else { None });
               out[i] = compute_hit_damage(state, rng, side, slot, idx, ts, tsl, choice, ate_boosted, sp);
-              SUB_ACTIVE_TARGET.with(|c| c.set(None));
+              state.tl.sub_active_target.set(None);
               if !has_sub {
                   ps_active_target = Some((ts, tsl));
               }
@@ -8945,7 +8910,7 @@ fn execute_action_inner(
     // PS runs the `AfterMove` sort before the lock's `onAfterMove` removes it.
     if state.side(side).active()[holder].locked_move.is_some() {
         after_move_handler_ties(state, rng, side, idx, true);
-        AFTER_MOVE_TIE_DRAWN.with(|c| c.set(true));
+        state.tl.after_move_tie_drawn.set(true);
     }
     if let Some((1, t)) = state.side(side).active()[holder].locked_move {
         state.side_mut(side).active_slot_mut(holder).locked_move = None;
@@ -9134,9 +9099,9 @@ fn run_copied_move(
     }
     state.side_mut(action.side).slot_scratch_mut(action.slot).external_call = true;
     let n = copy_order.len();
-    let outer_no_target = NO_TARGET_FAIL.with(|c| c.replace(false));
+    let outer_no_target = state.tl.no_target_fail.replace(false);
     execute_action_inner(state, rng, &sub, copy_order, will_act, queue);
-    let copied_no_target = NO_TARGET_FAIL.with(|c| c.replace(outer_no_target));
+    let copied_no_target = state.tl.no_target_fail.replace(outer_no_target);
     // The copy may swap positions (Ally Switch): the flag travels with the
     // `ActiveSlot`, so clear it on every slot of the side, not only `action.slot`.
     for sl in 0..2 {
@@ -9388,7 +9353,7 @@ fn base_power_with_modifiers(
         Abilities::RECKLESS if choice.recoil.is_some() || choice.crash.is_some() => mods.push((23, 4915)),
         Abilities::TOUGHCLAWS if f.contact => mods.push((21, 5325)),
         // Analytic `onBasePower`: no other active has a move left in the queue.
-        Abilities::ANALYTIC if ANALYTIC_NO_MOVE.with(|c| c.get()) => mods.push((21, 5325)),
+        Abilities::ANALYTIC if state.tl.analytic_no_move.get() => mods.push((21, 5325)),
         Abilities::STRONGJAW if f.bite => mods.push((19, 6144)),
         Abilities::MEGALAUNCHER if f.pulse => mods.push((19, 6144)),
         Abilities::SHARPNESS if f.slicing => mods.push((19, 6144)),
@@ -10307,7 +10272,7 @@ fn compute_hit_damage(
         // spread move's Substitute damage runs with a stale one (SUB_ACTIVE_TARGET).
         // Unaware is `onAnyModifyBoost`: the holder that is `activeTarget`
         // zeroes the attacker's boosts even when another pokemon is hit.
-        let (unaware_holder, is_active_target) = match SUB_ACTIVE_TARGET.with(|c| c.get()) {
+        let (unaware_holder, is_active_target) = match state.tl.sub_active_target.get() {
             Some((ats, atsl)) => (
                 state.side(ats).slot_pokemon(atsl).map(|p| p.ability).unwrap_or(Abilities::NONE),
                 (ats, atsl) == (target_side, target_slot),
@@ -11476,12 +11441,6 @@ fn mirror_armor_bounce(
     }
 }
 
-thread_local! {
-    /// Set while Opportunist applies its own copied boosts (PS `effect.name ===
-    /// 'Opportunist'`): those raises are not copied again.
-    static OPPORTUNIST_BUSY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
 /// PS data/abilities.ts opportunist `onAnyAfterMove` / `onAnySwitchIn` /
 /// `onResidual`: apply the boosts the holder copied from its foes, then clear
 /// them. Only a living holder with the ability applies them (`onEnd` clears).
@@ -11504,9 +11463,9 @@ fn flush_opportunist(state: &mut DoublesState, side: Side, slot: usize) {
         accuracy: pending[5],
         evasion: pending[6],
     };
-    OPPORTUNIST_BUSY.with(|b| b.set(true));
+    state.tl.opportunist_busy.set(true);
     apply_boosts(state, side, idx, &copy, false);
-    OPPORTUNIST_BUSY.with(|b| b.set(false));
+    state.tl.opportunist_busy.set(false);
 }
 
 fn apply_boosts(
@@ -11676,7 +11635,7 @@ fn apply_boosts_from(
     // Opportunist `onFoeAfterBoost`: each foe holder adds the positive raises to
     // its `effectState.boosts` (not for boosts it caused itself). They are
     // applied later by `flush_opportunist`. PS data/abilities.ts opportunist.
-    if gained.iter().any(|&g| g > 0) && !OPPORTUNIST_BUSY.with(|b| b.get()) {
+    if gained.iter().any(|&g| g > 0) && !state.tl.opportunist_busy.get() {
         let foe = side.other();
         for fsl in 0..2 {
             let holder = state.side(foe).slot_pokemon(fsl).filter(|p| p.hp > 0 && p.ability == Abilities::OPPORTUNIST);

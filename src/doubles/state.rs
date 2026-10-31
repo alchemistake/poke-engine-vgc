@@ -616,8 +616,43 @@ impl DoublesSide {
     }
 }
 
+/// Per-action scratch flags of the running move (PS battle-level fields such
+/// as `activeTarget`); `Cell`s so read-only helpers can set them.
+#[derive(Debug, Clone, Default)]
+pub struct MoveScratch {
+    /// PS `queue.willMove(target)` is false for every other active: Analytic.
+    pub analytic_no_move: std::cell::Cell<bool>,
+    /// The target the running move resolved to (after any retarget / redirect),
+    /// as PS `getMoveTargets` returns it: Pressure's `pressureTargets`. `None`
+    /// until `execute_action_inner` resolves it for this action.
+    pub pressure_target: std::cell::Cell<Option<Option<(Side, usize)>>>,
+    /// Pressure PP extra counted when the target was resolved (PS `pressureTargets`
+    /// are read before the hit, so a target that swaps its ability mid-move still
+    /// costs PP). -1 when not yet resolved.
+    pub pressure_extra: std::cell::Cell<i8>,
+    /// The running move's `AfterMove` handler sort was already drawn by
+    /// `execute_action_inner` (before a duration-1 lockedmove release, whose
+    /// `onEnd` confusion must come after the sort). Reset per action.
+    pub after_move_tie_drawn: std::cell::Cell<bool>,
+    /// The running move found no targets (PS useMoveInner `!targets.length`):
+    /// it returns false without `MoveFail`, so no crash / Steel Beam fail damage.
+    pub no_target_fail: std::cell::Cell<bool>,
+    /// PS `battle.activeTarget` while a spread move's Substitute `onTryPrimaryHit`
+    /// computes its damage (set only then): the last target of the previous
+    /// per-target loop, not the substitute holder. Unaware reads it.
+    pub sub_active_target: std::cell::Cell<Option<(Side, usize)>>,
+    /// The running move stopped in its BeforeMove handlers (PS runMove
+    /// `!willTryMove`), so `runEvent('MoveAborted')` follows.
+    pub before_move_aborted: std::cell::Cell<bool>,
+    /// Set while Opportunist applies its own copied boosts (PS `effect.name ===
+    /// 'Opportunist'`): those raises are not copied again.
+    pub opportunist_busy: std::cell::Cell<bool>,
+}
+
 #[derive(Debug, Clone)]
 pub struct DoublesState {
+    /// Scratch flags of the running move (were thread-locals).
+    pub tl: MoveScratch,
     /// PS `battle.lastMove`: the last move used by anyone (Copycat).
     pub last_move: Option<Choices>,
     /// Set when the current action's `onHit` ran a Copycat / Sleep Talk
@@ -1259,6 +1294,7 @@ impl DoublesState {
             side_two.genders[i] = m.gender.clone();
         }
         let state = Self {
+            tl: MoveScratch { pressure_extra: std::cell::Cell::new(-1), ..Default::default() },
             last_move: None,
             copy_called: false,
             queue_change: None,

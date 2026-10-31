@@ -458,6 +458,10 @@ pub struct DoublesSide {
     /// (`events::slot_fx`), valid while the key fields still match. Cleared
     /// with `cond_cache`.
     pub(crate) fx_cache: [std::cell::Cell<Option<FxCache>>; 2],
+    /// Bumped by every change to the slots or team members (`active_mut`,
+    /// `active_slot_mut`, `team_member_mut`, direct `team` writes): keys
+    /// `DoublesState::fx_union`.
+    pub(crate) ver: u32,
     pub side_conditions: SideConditions,
     /// Original species names (including formes) for each team slot, used for
     /// name-based target matching in the replay test.
@@ -515,6 +519,7 @@ impl DoublesSide {
         &self.team[index as usize]
     }
     pub fn team_member_mut(&mut self, index: PokemonIndex) -> &mut Pokemon {
+        self.ver = self.ver.wrapping_add(1);
         &mut self.team[index as usize]
     }
 
@@ -529,6 +534,7 @@ impl DoublesSide {
     pub fn active_mut(&mut self) -> &mut [ActiveSlot; 2] {
         self.cond_cache = Default::default();
         self.fx_cache = Default::default();
+        self.ver = self.ver.wrapping_add(1);
         &mut self.slots
     }
 
@@ -537,6 +543,7 @@ impl DoublesSide {
     pub fn active_slot_mut(&mut self, slot: usize) -> &mut ActiveSlot {
         self.cond_cache[slot].set(None);
         self.fx_cache[slot].set(None);
+        self.ver = self.ver.wrapping_add(1);
         &mut self.slots[slot]
     }
 
@@ -669,6 +676,9 @@ pub struct MoveScratch {
 pub struct DoublesState {
     /// Scratch flags of the running move (were thread-locals).
     pub tl: MoveScratch,
+    /// Union of the four slots' event-handler effect bits (`events`), keyed
+    /// by both sides' `ver` and the Future Sight / Wish bits.
+    pub(crate) fx_union: std::cell::Cell<Option<(u32, u32, u8, u128)>>,
     /// PS `battle.lastMove`: the last move used by anyone (Copycat).
     pub last_move: Option<Choices>,
     /// Set when the current action's `onHit` ran a Copycat / Sleep Talk
@@ -1305,6 +1315,7 @@ impl DoublesState {
             slots: [ActiveSlot::empty(), ActiveSlot::empty()],
             cond_cache: Default::default(),
             fx_cache: Default::default(),
+            ver: 0,
             side_conditions: SideConditions::default(),
             species_names: [""; 6],
             genders: std::array::from_fn(|_| None),
@@ -1328,6 +1339,7 @@ impl DoublesState {
             slots: [ActiveSlot::empty(), ActiveSlot::empty()],
             cond_cache: Default::default(),
             fx_cache: Default::default(),
+            ver: 0,
             side_conditions: SideConditions::default(),
             species_names: [""; 6],
             genders: std::array::from_fn(|_| None),
@@ -1361,6 +1373,7 @@ impl DoublesState {
         }
         let state = Self {
             tl: MoveScratch { pressure_extra: std::cell::Cell::new(-1), ..Default::default() },
+            fx_union: Default::default(),
             last_move: None,
             copy_called: false,
             queue_change: None,

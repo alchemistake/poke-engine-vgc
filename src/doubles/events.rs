@@ -882,14 +882,39 @@ fn has_any_handler(t: &Tables, ev: &EventTable, state: &DoublesState) -> bool {
     if ev.any_poke == 0 {
         return false;
     }
-    for side in [Side::One, Side::Two] {
-        for slot in 0..2 {
-            if slot_fx(t, state, side, slot) & ev.any_poke != 0 {
-                return true;
+    fx_union(t, state) & ev.any_poke != 0
+}
+
+/// `slot_fx` of all four slots, OR-ed; cached in `DoublesState::fx_union`
+/// while no slot or team member changed (and no Mold Breaker list is up).
+fn fx_union(t: &Tables, state: &DoublesState) -> u128 {
+    let (a, b) = (&state.side_one, &state.side_two);
+    let extra = a.future_move[0].is_some() as u8
+        | (a.future_move[1].is_some() as u8) << 1
+        | (b.future_move[0].is_some() as u8) << 2
+        | (b.future_move[1].is_some() as u8) << 3
+        | (a.wish[0].is_some() as u8) << 4
+        | (a.wish[1].is_some() as u8) << 5
+        | (b.wish[0].is_some() as u8) << 6
+        | (b.wish[1].is_some() as u8) << 7;
+    let cacheable = state.mold_saved.is_empty();
+    if cacheable {
+        if let Some((va, vb, e, u)) = state.fx_union.get() {
+            if va == a.ver && vb == b.ver && e == extra {
+                return u;
             }
         }
     }
-    false
+    let mut u = 0;
+    for side in [Side::One, Side::Two] {
+        for slot in 0..2 {
+            u |= slot_fx(t, state, side, slot);
+        }
+    }
+    if cacheable {
+        state.fx_union.set(Some((a.ver, b.ver, extra, u)));
+    }
+    u
 }
 
 /// The effect bits (`Tables::fx`) of everything the slot's occupant holds:

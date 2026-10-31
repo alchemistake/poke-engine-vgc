@@ -2389,6 +2389,7 @@ fn check_fainted(state: &mut DoublesState) {
             continue;
         }
         let s = state.side_mut(side);
+        s.ver = s.ver.wrapping_add(1);
         for i in 0..6 {
             if s.team[i].hp <= 0 && s.team[i].id != crate::pokemon::PokemonName::NONE {
                 s.team[i].status = PokemonStatus::NONE;
@@ -12076,6 +12077,7 @@ fn apply_side_condition(state: &mut DoublesState, side: Side, c: PokemonSideCond
 /// battle-team `position` returns with floor(maxhp / 2) HP (min 1) and no status.
 fn revive_member(state: &mut DoublesState, side: Side, position: usize) {
     let s = state.side_mut(side);
+    s.ver = s.ver.wrapping_add(1);
     let p = &mut s.team[position];
     p.hp = (p.maxhp / 2).max(1);
     p.status = PokemonStatus::NONE;

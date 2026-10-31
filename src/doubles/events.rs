@@ -12,6 +12,7 @@
 //! A new volatile or side condition goes into those lists once and is then
 //! sorted in every event PS gives it a handler for.
 
+use std::convert::TryInto;
 use super::battle::{cached_speed, real_ability};
 use super::event_handlers::{handlers, HandlerKind};
 use super::rng::Gen5Rng;
@@ -399,6 +400,46 @@ const SIDE_IDS: [&str; 15] = [
     "wideguard", "craftyshield", "matblock", "spikes", "toxicspikes", "stealthrock", "stickyweb",
 ];
 
+/// Byte offset of each `SIDE_IDS` condition in `SideConditions`.
+const SIDE_OFFSETS: [usize; 15] = {
+    use crate::state::SideConditions as S;
+    use std::mem::offset_of;
+    [
+        offset_of!(S, reflect),
+        offset_of!(S, light_screen),
+        offset_of!(S, aurora_veil),
+        offset_of!(S, safeguard),
+        offset_of!(S, mist),
+        offset_of!(S, lucky_chant),
+        offset_of!(S, tailwind),
+        offset_of!(S, quick_guard),
+        offset_of!(S, wide_guard),
+        offset_of!(S, crafty_shield),
+        offset_of!(S, mat_block),
+        offset_of!(S, spikes),
+        offset_of!(S, toxic_spikes),
+        offset_of!(S, stealth_rock),
+        offset_of!(S, sticky_web),
+    ]
+};
+
+const _: () = assert!(std::mem::size_of::<crate::state::SideConditions>() <= 32);
+
+/// The bytes of a `SideConditions` (all `i8` fields), zero-padded to 32.
+#[inline]
+fn side_bytes(sc: &crate::state::SideConditions) -> [u128; 2] {
+    let mut b = [0u8; 32];
+    // SAFETY: `SideConditions` is all `i8` fields (no padding) and fits in `b`.
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            sc as *const _ as *const u8,
+            b.as_mut_ptr(),
+            std::mem::size_of::<crate::state::SideConditions>(),
+        )
+    };
+    [u128::from_ne_bytes(b[..16].try_into().unwrap()), u128::from_ne_bytes(b[16..].try_into().unwrap())]
+}
+
 /// The side conditions of a side, as bits over `SIDE_IDS`.
 fn side_mask(state: &DoublesState, side: Side) -> u32 {
     let sc = &state.side(side).side_conditions;
@@ -431,6 +472,14 @@ const FIELD_IDS: [&str; 16] = [
     "electricterrain", "grassyterrain", "mistyterrain", "psychicterrain",
     "trickroom", "gravity", "magicroom", "wonderroom", "fairylock",
 ];
+
+/// The weathers / terrains of `FIELD_IDS[0..7]` / `FIELD_IDS[7..11]`.
+const FIELD_WEATHERS: [Weather; 7] =
+    [Weather::RAIN, Weather::HEAVYRAIN, Weather::SUN, Weather::HARSHSUN, Weather::SAND, Weather::HAIL, Weather::SNOW];
+const FIELD_TERRAINS: [crate::engine::state::Terrain; 4] = {
+    use crate::engine::state::Terrain;
+    [Terrain::ELECTRICTERRAIN, Terrain::GRASSYTERRAIN, Terrain::MISTYTERRAIN, Terrain::PSYCHICTERRAIN]
+};
 
 /// Weather, terrain and pseudo-weathers, as bits over `FIELD_IDS`.
 fn field_mask(state: &DoublesState) -> u32 {
@@ -602,6 +651,14 @@ struct EventTable {
     any_poke: u128,
     any_side: u32,
     any_field: u32,
+    /// `any_side` as a byte mask over `SideConditions` (`side_bytes`): a
+    /// quick test that no side condition with a handler is up.
+    side_bytes: [u128; 2],
+    /// `any_field` by `Weather` / `Terrain` discriminant, and the
+    /// pseudo-weathers (bit i = `FIELD_IDS[11 + i]`).
+    field_weather: u64,
+    field_terrain: u64,
+    field_pseudo: u32,
     /// Callback names, for `PE_DEBUG_EVENTS`.
     poke_names: [&'static str; 5],
     side_names: [&'static str; 3],
@@ -705,6 +762,10 @@ fn build_tables() -> Tables {
             any_poke: 0,
             any_side: 0,
             any_field: 0,
+            side_bytes: [0; 2],
+            field_weather: 0,
+            field_terrain: 0,
+            field_pseudo: 0,
             side,
             field,
             poke_names,
@@ -719,6 +780,26 @@ fn build_tables() -> Tables {
         ev.any_poke = all;
         ev.any_side = ev.side.iter().flatten().fold(0, |m, h| m | 1 << h.idx);
         ev.any_field = ev.field.iter().fold(0, |m, h| m | 1 << h.idx);
+        let mut bytes = [0u8; 32];
+        for i in 0..SIDE_IDS.len() {
+            if ev.any_side & (1 << i) != 0 {
+                bytes[SIDE_OFFSETS[i]] = 0xff;
+            }
+        }
+        ev.side_bytes = [
+            u128::from_ne_bytes(bytes[..16].try_into().unwrap()),
+            u128::from_ne_bytes(bytes[16..].try_into().unwrap()),
+        ];
+        for i in 0..FIELD_IDS.len() {
+            if ev.any_field & (1 << i) == 0 {
+                continue;
+            }
+            match i {
+                0..=6 => ev.field_weather |= 1 << FIELD_WEATHERS[i] as u32,
+                7..=10 => ev.field_terrain |= 1 << FIELD_TERRAINS[i - 7] as u32,
+                _ => ev.field_pseudo |= 1 << (i - 11),
+            }
+        }
         for (i, &bit) in cond_fx.iter().enumerate() {
             if bit != NO_BIT && all & (1u128 << bit) != 0 {
                 ev.conds |= 1 << i;
@@ -777,10 +858,26 @@ struct Key {
 /// Whether any active pokemon, side or the field holds an effect with a
 /// handler for the event (any prefix). Most event sorts have none.
 fn has_any_handler(t: &Tables, ev: &EventTable, state: &DoublesState) -> bool {
-    if (ev.any_side != 0 && ev.any_side & (side_mask(state, Side::One) | side_mask(state, Side::Two)) != 0)
-        || (ev.any_field != 0 && ev.any_field & field_mask(state) != 0)
-    {
-        return true;
+    if ev.any_side != 0 {
+        for sd in [Side::One, Side::Two] {
+            let b = side_bytes(&state.side(sd).side_conditions);
+            if (b[0] & ev.side_bytes[0]) | (b[1] & ev.side_bytes[1]) != 0 && ev.any_side & side_mask(state, sd) != 0 {
+                return true;
+            }
+        }
+    }
+    if ev.any_field != 0 {
+        let pseudo = state.trick_room.active as u32
+            | (state.gravity.active as u32) << 1
+            | (state.magic_room.active as u32) << 2
+            | (state.wonder_room.active as u32) << 3
+            | (state.fairy_lock.active as u32) << 4;
+        if (ev.field_weather >> (state.weather.weather_type as u32 & 63)) & 1 != 0
+            || (ev.field_terrain >> (state.terrain.terrain_type as u32 & 63)) & 1 != 0
+            || ev.field_pseudo & pseudo != 0
+        {
+            return true;
+        }
     }
     if ev.any_poke == 0 {
         return false;

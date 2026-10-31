@@ -871,7 +871,7 @@ fn plan_queue_change(
         choice.base_power = 0.0;
     }
     let boost = ability_priority_boost(p, &choice) + grassy_glide_boost(state, p, &choice);
-    update_speed(state);
+    update_speed_quiet(state);
     let mut a = Action {
         side,
         slot,
@@ -1406,7 +1406,7 @@ pub fn run_battle_fuzz(
             rng.context = format!("turn {}: move order", turn_no);
         }
         // `commitChoices` -> `updateSpeed()`.
-        update_speed(state);
+        update_speed(state, rng);
         for a in actions.iter_mut() {
             // `resolveAction` (sim/battle-queue.ts), in PS order:
             // 1. a move with `priorityChargeCallback` (Focus Punch) queues a
@@ -1420,6 +1420,7 @@ pub fn run_battle_fuzz(
                 let mut charge = a.clone();
                 charge.target_loc = 0;
                 let _ = ps_get_target(state, rng, &charge);
+                action_speed_ties(state, rng, &charge);
                 let vol = state.side_mut(a.side).active_slot_mut(a.slot);
                 if a.choice.move_id == Choices::COUNTER {
                     vol.counter_vol = Some((None, 0));
@@ -1434,6 +1435,7 @@ pub fn run_battle_fuzz(
                 let mut charge = a.clone();
                 charge.target_loc = 0;
                 let _ = ps_get_target(state, rng, &charge);
+                action_speed_ties(state, rng, &charge);
             }
             // 2. FractionalPriority event.
             let ability = state.side(a.side).team_member(a.pokemon_index).ability;
@@ -1464,6 +1466,7 @@ pub fn run_battle_fuzz(
             // `action.originalTarget = pokemon.getAtLoc(action.targetLoc)`.
             a.orig_target = orig_target_at(state, a.side, a.target_loc);
             let _ = ps_get_target(state, rng, a);
+            action_speed_ties(state, rng, a);
         }
         commit_queue_sort(&mut actions, state, rng);
         // `beforeTurn` action: `eachEvent('BeforeTurn')`, then the action's
@@ -1651,6 +1654,7 @@ pub fn run_battle_fuzz(
                     // PS `queue.resolveAction` (instruct.onHit) -> `getActionSpeed` ->
                     // `getTarget`: the instructed copy resolves its target at once.
                     let _ = ps_get_target(state, rng, &a);
+                    action_speed_ties(state, rng, &a);
                     actions.insert(i, a);
                 }
             }
@@ -1752,7 +1756,7 @@ pub fn run_battle_fuzz(
                 }
             }
             if fs_slots.len() >= 2 {
-                update_speed(state);
+                update_speed_quiet(state);
                 let hs: Vec<ResidualHandler> = fs_slots
                     .iter()
                     .enumerate()
@@ -1804,7 +1808,7 @@ pub fn run_battle_fuzz(
                             // The switch answer (`commitChoices` -> `updateSpeed`),
                             // then the `revivalblessing` action (PS battle.ts
                             // `runAction`): half HP, status cured.
-                            update_speed(state);
+                            update_speed(state, rng);
                             revive_member(state, side, position);
                             each_event_update(state, rng);
                             // The revived pokemon is the fainted ally still in its
@@ -1832,7 +1836,8 @@ pub fn run_battle_fuzz(
                                 }
                                 each_event_update(state, rng);
                                 switch_in(state, rng, side, sl, position);
-                                update_speed(state);
+                                update_speed_one(state, rng, side, sl);
+                                modify_boost_ties(state, rng, side, sl);
                                 each_event_update(state, rng);
                                 let _ = sorted_actives(state, rng, "speed tie (switch-in)");
                                 apply_sticky_web(state, rng, side, sl);
@@ -1862,7 +1867,7 @@ pub fn run_battle_fuzz(
                         // (Its `runPursuitActivation` sort ran above, for all switchers.)
                         // The switch answer (`commitChoices` -> `updateSpeed`),
                         // the `instaswitch` action, then the `runSwitch` action.
-                        update_speed(state);
+                        update_speed(state, rng);
                         // Baton Pass (`selfSwitch: 'copyvolatile'`): boosts and
                         // the copyable volatiles move to the replacement.
                         // Baton Pass `copyVolatileFrom`: the passable volatiles.
@@ -1903,7 +1908,8 @@ pub fn run_battle_fuzz(
                         }
                         // PS `insertChoice` -> `pokemon.updateSpeed()` for the incoming
                         // pokemon: its `speed` is fresh for `runSwitch`'s speedSort.
-                        update_speed(state);
+                        // (Its `ModifyBoost` draws are at the insertChoice below.)
+                        update_speed_quiet(state);
                         if let Some(op) = old_pi {
                             let mut k = queue_start;
                             while k < actions.len() {
@@ -1981,12 +1987,14 @@ pub fn run_battle_fuzz(
                             // `runSwitch` insertChoice's `updateSpeed`: the passed
                             // Speed boosts are in the cached speed. PS
                             // sim/battle-actions.ts switchIn, sim/battle-queue.ts insertChoice.
-                            update_speed(state);
+                            update_speed_quiet(state);
                         }
                         if batch {
-                            // `insertChoice(runSwitch)`: a tie with an already queued
-                            // `runSwitch` draws its place.
-                            update_speed(state);
+                            // `insertChoice(runSwitch)`: `updateSpeed` and the
+                            // `getActionSpeed` of the incoming pokemon, then a tie
+                            // with an already queued `runSwitch` draws its place.
+                            update_speed_one(state, rng, side, slot);
+                            modify_boost_ties(state, rng, side, slot);
                             if let Some(sp) = effective_speed(state, side, slot) {
                                 let ties = run_switch_speeds.iter().filter(|&&x| x == sp).count();
                                 if ties > 0 {
@@ -2000,7 +2008,8 @@ pub fn run_battle_fuzz(
                         // PS `switchIn`: `copyVolatileFrom` runs before
                         // `queue.insertChoice({choice: 'runSwitch'})` -> `updateSpeed`,
                         // so the passed boosts count in the switch-in speed sorts.
-                        update_speed(state);
+                        update_speed_one(state, rng, side, slot);
+                        modify_boost_ties(state, rng, side, slot);
                         each_event_update(state, rng);
                         let _ = sorted_actives(state, rng, "speed tie (switch-in)");
                         apply_sticky_web(state, rng, side, slot);
@@ -2430,17 +2439,62 @@ fn stat_speed(state: &DoublesState, side: Side, slot: usize) -> i32 {
 /// under Trick Room, the raw stat otherwise), the same convention the other
 /// cache writes use (`speed_cache[i] = raw stat`, e.g. a Mimikyu bust). Keeping
 /// one convention lets a stale entry tie or order the way PS's does.
-fn update_speed(state: &mut DoublesState) {
-    update_speed_get(state);
+fn update_speed(state: &mut DoublesState, rng: &mut Gen5Rng) {
+    update_speed_get(state, rng);
+}
+
+/// Refresh the speed cache without PS's `ModifyBoost` draws: an internal
+/// recompute, or one whose PS `getStat` draws are mirrored at the call site.
+fn update_speed_quiet(state: &mut DoublesState) {
+    update_speed_get_inner(state, None);
+}
+
+/// PS `pokemon.updateSpeed()` for one pokemon (`insertChoice`): its own
+/// `getStat('spe')` `ModifyBoost`, then the refresh.
+fn update_speed_one(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize) {
+    modify_boost_ties(state, rng, side, slot);
+    update_speed_quiet(state);
+}
+
+/// PS `getActionSpeed(action)` -> `pokemon.getActionSpeed()` -> `getStat('spe')`:
+/// the `ModifyBoost` of the action's pokemon (after its `getTarget`).
+fn action_speed_ties(state: &DoublesState, rng: &mut Gen5Rng, a: &Action) {
+    if let Some(sl) = (0..2).find(|&sl| state.side(a.side).active()[sl].pokemon_index == Some(a.pokemon_index)) {
+        modify_boost_ties(state, rng, a.side, sl);
+    }
+}
+
+/// PS `getStat` / `calculateStat` `runEvent('ModifyBoost', pokemon)`: its only
+/// handlers are Unaware's `onAnyModifyBoost`, so it draws only when two
+/// active Unaware holders tie on cached speed. PS sim/pokemon.ts getStat.
+pub(crate) fn modify_boost_ties(state: &DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize) {
+    let n = [Side::One, Side::Two]
+        .iter()
+        .flat_map(|&sd| (0..2).map(move |sl| (sd, sl)))
+        .filter(|&(sd, sl)| state.side(sd).slot_pokemon(sl).is_some_and(|p| p.ability == Abilities::UNAWARE))
+        .count();
+    if n >= 2 {
+        crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::ModifyBoost, (side, slot), None);
+    }
 }
 
 /// `update_speed`, returning each slot's `effective_speed` (by side, slot).
-fn update_speed_get(state: &mut DoublesState) -> [[Option<i16>; 2]; 2] {
+fn update_speed_get(state: &mut DoublesState, rng: &mut Gen5Rng) -> [[Option<i16>; 2]; 2] {
+    update_speed_get_inner(state, Some(rng))
+}
+
+fn update_speed_get_inner(state: &mut DoublesState, mut rng: Option<&mut Gen5Rng>) -> [[Option<i16>; 2]; 2] {
     let trick_room = state.trick_room.active;
     let weather = effective_weather(state);
     let mut out = [[None; 2]; 2];
     for side in [Side::One, Side::Two] {
         for slot in 0..2 {
+            // PS updateSpeed -> getActionSpeed -> getStat('spe'): ModifyBoost.
+            if let Some(rng) = rng.as_deref_mut() {
+                if state.side(side).slot_pokemon(slot).is_some_and(|p| p.hp > 0) {
+                    modify_boost_ties(state, rng, side, slot);
+                }
+            }
             // `effective_speed` is the stat negated under Trick Room.
             let eff = effective_speed_in(state, side, slot, weather);
             out[side as usize][slot] = eff;
@@ -2622,7 +2676,7 @@ fn resort_queue(state: &mut DoublesState, rng: &mut Gen5Rng, queue: &mut [Action
     if queue.is_empty() {
         return;
     }
-    let speeds = update_speed_get(state);
+    let speeds = update_speed_get(state, rng);
     for a in queue.iter_mut() {
         // PS `getActionSpeed` (every re-sort) recomputes the priority from the
         // current ability: a Skill Swap'd Prankster boosts a queued Status move.
@@ -2652,6 +2706,7 @@ fn resort_queue(state: &mut DoublesState, rng: &mut Gen5Rng, queue: &mut [Action
             a.speed = if state.trick_room.active { -sp } else { sp };
         }
         let _ = ps_get_target(state, rng, a);
+        action_speed_ties(state, rng, a);
     }
     speed_sort(queue, rng);
 }
@@ -5345,7 +5400,12 @@ fn execute_action_inner(
         && !weather_guaranteed
         && roll_accuracy_of(choice) > 0.0
     {
-        accuracy_event_ties(state, rng, side, slot, target_side, target_slot);
+        accuracy_event_ties(state, rng, side, slot, target_side, target_slot, choice.move_id);
+    } else if !is_spread && toxic_hits {
+        // A Poison user's Toxic: `accuracy` is still a number through
+        // `ModifyAccuracy` and the boosts, then forced to `true`.
+        crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::ModifyAccuracy, (target_side, target_slot), Some((side, slot)));
+        accuracy_boost_ties(state, rng, side, slot, target_side, target_slot, choice.move_id);
     } else if !is_spread && !is_field && move_ty != Tgt::All && !choice.ohko && (choice.always_hit || weather_guaranteed) {
         // `accuracy: true` still runs `ModifyAccuracy`, then `Accuracy` unless
         // the move is a self-targeted Status move. PS sim/battle-actions.ts hitStepAccuracy.
@@ -5371,7 +5431,7 @@ fn execute_action_inner(
             let ignore_eva = ignores_evasion(evasion_ability(state, side, idx, choice.move_id), choice.move_id);
             let st = &*state;
             spread_list.retain(|&(ts, tsl)| {
-                accuracy_event_ties(st, rng, side, slot, ts, tsl);
+                accuracy_event_ties(st, rng, side, slot, ts, tsl, choice.move_id);
                 // Glaive Rush `onAccuracy`: moves against the holder always hit.
                 if st.side(ts).active()[tsl].glaive_rush {
                     return true;
@@ -11087,6 +11147,11 @@ fn compute_hit_damage(
                     } else {
                         Event::ModifySpD
                     };
+                    // `calculateStat(attackStat, .., source)` and
+                    // `calculateStat(defenseStat, .., target)`: `ModifyBoost`
+                    // on the stat users first. PS sim/battle-actions.ts getDamage.
+                    modify_boost_ties(state, rng, src.0, src.1);
+                    modify_boost_ties(state, rng, tgt.0, tgt.1);
                     crate::doubles::events::run_event_ties(state, rng, atk, src, Some(tgt));
                     crate::doubles::events::run_event_ties(state, rng, def, tgt, Some(src));
                 }
@@ -13569,10 +13634,18 @@ fn team_preview_draws(state: &DoublesState, rng: &mut Gen5Rng) {
 /// `runSwitch` speed sort.
 fn queue_insert_draws(state: &DoublesState, rng: &mut Gen5Rng) {
     let mut inserted: Vec<i16> = Vec::new();
+    let mut unaware_in = 0u8;
     for (side, slot) in [(Side::One, 0usize), (Side::One, 1), (Side::Two, 0), (Side::Two, 1)] {
         let Some(speed) = effective_speed(state, side, slot) else {
             continue;
         };
+        // `insertChoice` -> `updateSpeed` + `getActionSpeed`: `ModifyBoost`
+        // with the Unaware leads sent out so far.
+        unaware_in += state.side(side).slot_pokemon(slot).is_some_and(|p| p.ability == Abilities::UNAWARE) as u8;
+        if unaware_in >= 2 {
+            modify_boost_ties(state, rng, side, slot);
+            modify_boost_ties(state, rng, side, slot);
+        }
         let ties = inserted.iter().filter(|&&s| s == speed).count();
         if ties > 0 {
             let _ = rng.label("speed tie (queue insert)").random(ties as u32 + 1);
@@ -14044,10 +14117,22 @@ fn after_move_secondary_ties(state: &mut DoublesState, rng: &mut Gen5Rng, target
 /// `onSourceAccuracy`, ...) are speed-sorted; ties draw.
 /// PS sim/battle-actions.ts hitStepAccuracy.
 /// TODO(PS parity): `accuracy: true` moves also run this event.
-fn accuracy_event_ties(state: &DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize, ts: Side, tsl: usize) {
+fn accuracy_event_ties(state: &DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize, ts: Side, tsl: usize, mv: Choices) {
     // `runEvent('ModifyAccuracy')` first (Hustle, Tangled Feet, Compound Eyes, ...).
     crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::ModifyAccuracy, (ts, tsl), Some((side, slot)));
+    accuracy_boost_ties(state, rng, side, slot, ts, tsl, mv);
     crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::Accuracy, (ts, tsl), Some((side, slot)));
+}
+
+/// PS hitStepAccuracy: `runEvent('ModifyBoost')` of the user (accuracy), then
+/// of the target unless the move ignores evasion (Keen Eye / Illuminate /
+/// Mind's Eye `onModifyMove`, Sacred Sword, ...).
+fn accuracy_boost_ties(state: &DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize, ts: Side, tsl: usize, mv: Choices) {
+    modify_boost_ties(state, rng, side, slot);
+    let ab = state.side(side).slot_pokemon(slot).map(|p| p.ability).unwrap_or(Abilities::NONE);
+    if !ignores_evasion(if ab == Abilities::UNAWARE { Abilities::NONE } else { ab }, mv) {
+        modify_boost_ties(state, rng, ts, tsl);
+    }
 }
 
 fn sort_handler_ties(hs: &mut [(i64, i32, i64)], rng: &mut Gen5Rng, label: &'static str) {
@@ -14094,7 +14179,7 @@ fn end_of_turn(
     // volatiles / ability) and speed-sorts them with `comparePriority`,
     // shuffling exact ties (consuming PRNG draws), then runs them in order.
     // `runAction('residual')` -> `updateSpeed()` first.
-    update_speed(state);
+    update_speed(state, rng);
     let handlers = collect_residual_handlers(state);
     if crate::doubles::debug::flags().res { eprintln!("=== residual ({} handlers) ===", handlers.len()); for h in &handlers { let nm = match &h.kind { ResidualKind::GrassyHeal(sd, sl) | ResidualKind::ThroatChop(sd, sl) | ResidualKind::Stall(sd, sl) => state.side(*sd).active()[*sl].pokemon_index.map(|i| state.side(*sd).team_member(i).id.to_string()).unwrap_or_default(), _ => String::new() }; eprintln!("RES order={} sub={} speed={} kind={:?} [{}]", h.order, h.sub_order, h.speed, h.kind, nm); } }
     let handlers = sort_residual_handlers(handlers, rng, "speed tie (residual)");
@@ -14972,7 +15057,7 @@ fn end_of_turn(
     // then one `runSwitch` action for all of them. The switch answers go
     // through `commitChoices` -> `updateSpeed()` first.
     if !pending_switches.is_empty() {
-        update_speed(state);
+        update_speed(state, rng);
     }
     // PS `switchIn` -> `queue.insertChoice(runSwitch)`: a tie with an already
     // queued `runSwitch` (equal speed) draws `random(firstIndex, lastIndex + 1)`.
@@ -14991,7 +15076,9 @@ fn end_of_turn(
         // PS `runAction` -> `eachEvent('Update')` after the switch-in: the new
         // holder's `onUpdate` cures (Insomnia wakes a sleeping replacement).
         ability_update_cures(state, *side, *slot);
-        update_speed(state);
+        // `insertChoice(runSwitch)`: `updateSpeed` + `getActionSpeed`.
+        update_speed_one(state, rng, *side, *slot);
+        modify_boost_ties(state, rng, *side, *slot);
         if let Some(sp) = effective_speed(state, *side, *slot) {
             let ties = run_switch_speeds.iter().filter(|&&x| x == sp).count();
             if ties > 0 {

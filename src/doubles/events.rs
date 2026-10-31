@@ -535,6 +535,7 @@ pub enum Event {
     MaybeTrapPokemon,
     ModifyAccuracy,
     ModifyAtk,
+    ModifyBoost,
     ModifyCritRatio,
     ModifyDamage,
     ModifyDef,
@@ -550,7 +551,7 @@ pub enum Event {
 }
 
 impl Event {
-    const ALL: [Event; 22] = [
+    const ALL: [Event; 23] = [
         Event::Accuracy,
         Event::BasePower,
         Event::BeforeMove,
@@ -561,6 +562,7 @@ impl Event {
         Event::MaybeTrapPokemon,
         Event::ModifyAccuracy,
         Event::ModifyAtk,
+        Event::ModifyBoost,
         Event::ModifyCritRatio,
         Event::ModifyDamage,
         Event::ModifyDef,
@@ -588,6 +590,7 @@ impl Event {
             Event::MaybeTrapPokemon => "MaybeTrapPokemon",
             Event::ModifyAccuracy => "ModifyAccuracy",
             Event::ModifyAtk => "ModifyAtk",
+            Event::ModifyBoost => "ModifyBoost",
             Event::ModifyCritRatio => "ModifyCritRatio",
             Event::ModifyDamage => "ModifyDamage",
             Event::ModifyDef => "ModifyDef",

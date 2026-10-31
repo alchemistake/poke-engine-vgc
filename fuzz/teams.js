@@ -1,17 +1,29 @@
 // Hand-rolled random team generator for the VGC Reg M-C fuzz tester.
 //
-// Fully random: species (from the legal pool), stat points (28 pts, 0-20 per
-// stat, champions semantics), nature, ability (within the species' pool),
-// moves (4 distinct, from the species' gen-9 learnset pool), gender.
-// No items (the previous port has no item support to validate against).
+// Fully random, but always a team the format's own validator accepts
+// (pokemon-showdown `TeamValidator`, Flat Rules): species (every team-legal
+// species and forme), stat points (66 total, 0-32 per stat, champions
+// semantics), nature, ability (within the species' pool), moves (up to 4
+// distinct, from the species' move pool), gender, and a held item (Item
+// Clause: no item twice per team). Mega formes (-Mega, -Mega-X/Y/Z) are picks
+// of their own: picking one puts its base species on the sheet holding that
+// Mega Stone. No other pick ever holds a Mega Stone.
 //
 // All randomness comes from the caller-provided controller PRNG, so a given
 // tester seed reproduces the exact same teams.
 
 'use strict';
 
+const path = require('path');
+
 const STAT_KEYS = ['hp', 'atk', 'def', 'spa', 'spd', 'spe'];
 const IVS = { hp: 31, atk: 31, def: 31, spa: 31, spd: 31, spe: 31 };
+const FORMAT = 'gen9championsvgc2026regmc';
+// Champions stat points (sim/team-validator.ts validateStats, ruleTable.evLimit).
+const SP_TOTAL = 66;
+const SP_MAX = 32;
+// Chance a pokemon holds no item (Acrobatics, Knock Off / Trick no-ops, ...).
+const NO_ITEM_CHANCE = 20; // 1 in 20
 
 /**
  * Effective level-50 stats from a generated set, matching the champions mod
@@ -33,46 +45,90 @@ function effectiveStats(set, Dex) {
   return out;
 }
 
+let VALIDATOR = null;
+function validator() {
+  if (!VALIDATOR) {
+    const { TeamValidator, Dex } = require(path.resolve(__dirname, '..', '..', 'pokemon-showdown', 'dist', 'sim'));
+    VALIDATOR = new TeamValidator(Dex.formats.get(FORMAT));
+  }
+  return VALIDATOR;
+}
+
+// A set is legal for the format (species, forme, ability, moves, item, stats).
+function setProblems(set) {
+  return validator().validateSet(JSON.parse(JSON.stringify(set)), {}) || null;
+}
+
 let POOL = null;
 
 /**
  * Build the species pool once from the FORMAT's own species table
- * (`Dex.forFormat(FORMAT)`, i.e. data/mods/champions/formats-data.ts):
- * excludes CAP/fan-made, Past-gen and other `isNonstandard` species, plus
- * Illegal / Mythical / Restricted Legendary tiers — exactly what the format
- * allows. Also requires 4+ gen-9 learnset moves in the mod's learnset data.
+ * (`Dex.forFormat(FORMAT)`, i.e. data/mods/champions/formats-data.ts): every
+ * species the validator accepts on a team sheet, plus one pick per Mega
+ * forme of those species. Other battle-only formes (Aegislash-Blade,
+ * Palafin-Hero, ...) are reached in battle only. Moves come from
+ * `getMovePool` (forme learnsets fall back to the base species, like the
+ * validator).
  *
  * @param modDex Dex.forFormat('gen9championsvgc2026regmc')
+ * @returns [{ sp, sheet, moves, abilities, stone }]: `sp` is the pick (a Mega
+ *   forme for a Mega pick), `sheet` the species on the team sheet, `abilities`
+ *   the sheet species' legal abilities, `stone` the forced Mega Stone or null.
  */
 function buildSpeciesPool(modDex) {
   if (POOL) return POOL;
+  const V = validator();
+  const stonesFor = new Map(); // species name -> [mega stone names]
+  for (const it of modDex.items.all()) {
+    if (it.isNonstandard || !it.megaStone) continue;
+    for (const base of Object.keys(it.megaStone)) {
+      if (!stonesFor.has(base)) stonesFor.set(base, []);
+      stonesFor.get(base).push(it.name);
+    }
+  }
   const pool = [];
   for (const sp of modDex.species.all()) {
-    if (sp.isNonstandard) continue; // no CAP / fan-made, Past, Hidden, ...
-    if (['Illegal', 'Mythical', 'Restricted Legendary'].includes(sp.tier)) continue;
+    if (sp.isNonstandard || sp.battleOnly) continue;
     if (!sp.abilities || Object.keys(sp.abilities).length === 0) continue;
-    const entry = modDex.data.Learnsets[sp.id];
-    const ls = entry && entry.learnset;
-    if (!ls) continue;
-    const moves = Object.keys(ls).filter((m) => {
-      const e = ls[m];
-      return Array.isArray(e) && e.some((x) => x.startsWith('9'));
-    });
-    if (moves.length < 4) continue;
-    pool.push({ sp, moves });
+    if (V.checkSpecies({ species: sp.name, name: sp.name, moves: [], ability: '' }, sp, sp, {})) continue;
+    const moves = [...modDex.species.getMovePool(sp.id)].filter((m) => !V.checkCanLearn(modDex.moves.get(m), sp));
+    if (moves.length === 0) continue;
+    // Abilities the format allows on this species (Battle Bond Greninja is banned).
+    const abilities = [...new Set(Object.values(sp.abilities))].filter(
+      (a) => !setProblems({ species: sp.name, ability: a, moves: [moves[0]], nature: 'Hardy',
+        evs: { hp: 1, atk: 0, def: 0, spa: 0, spd: 0, spe: 0 }, ivs: IVS, level: 50, item: '' })
+    );
+    if (abilities.length === 0) continue;
+    pool.push({ sp, sheet: sp, moves, abilities, stone: null });
+    for (const stone of (stonesFor.get(sp.name) || []).sort()) {
+      const mega = modDex.species.get(modDex.items.get(stone).megaStone[sp.name]);
+      pool.push({ sp: mega, sheet: sp, moves, abilities, stone });
+    }
   }
   if (pool.length === 0) throw new Error('empty species pool');
   POOL = pool;
   return pool;
 }
 
-/** 28 stat points, each stat capped at 20 (champions / VGC sheet rules). */
+let ITEMS = null;
+
+/** Every item the format allows, minus Mega Stones (those go only to their species). */
+function buildItemPool(modDex) {
+  if (ITEMS) return ITEMS;
+  ITEMS = modDex.items.all()
+    .filter((it) => !it.isNonstandard && !it.megaStone && !it.zMove && !it.isPrimalOrb)
+    .map((it) => it.name)
+    .sort();
+  return ITEMS;
+}
+
+/** 66 stat points, each stat capped at 32 (champions / VGC sheet rules). */
 function rollEvs(controller) {
   const evs = { hp: 0, atk: 0, def: 0, spa: 0, spd: 0, spe: 0 };
-  let left = 28;
+  let left = SP_TOTAL;
   while (left > 0) {
     const s = STAT_KEYS[controller.random(STAT_KEYS.length)];
-    if (evs[s] < 20) {
+    if (evs[s] < SP_MAX) {
       evs[s] += 1;
       left -= 1;
     }
@@ -83,28 +139,39 @@ function rollEvs(controller) {
 /** Generate one random 6-pokemon team. `modDex` = Dex.forFormat(FORMAT). */
 function genTeam(controller, modDex) {
   const pool = buildSpeciesPool(modDex);
+  const items = buildItemPool(modDex);
   const natures = modDex.natures.all();
   const team = [];
-  for (let i = 0; i < 6; i++) {
-    const { sp, moves } = pool[controller.random(pool.length)];
+  const usedBase = new Set(); // Species Clause
+  const usedItems = new Set(); // Item Clause = 1
+  while (team.length < 6) {
+    const { sheet, moves, abilities, stone } = pool[controller.random(pool.length)];
+    if (usedBase.has(sheet.baseSpecies)) continue;
 
-    // 4 distinct random moves from the learnset pool.
+    // Up to 4 distinct random moves from the move pool.
     const remaining = moves.slice();
     const picked = [];
-    for (let m = 0; m < 4; m++) {
-      const idx = controller.random(remaining.length);
-      picked.push(remaining.splice(idx, 1)[0]);
+    while (picked.length < 4 && remaining.length > 0) {
+      picked.push(remaining.splice(controller.random(remaining.length), 1)[0]);
     }
 
-    // Random ability within the species' pool (base / secondary / hidden).
-    const abilityKeys = Object.keys(sp.abilities);
-    const ability = sp.abilities[abilityKeys[controller.random(abilityKeys.length)]];
+    const ability = abilities[controller.random(abilities.length)];
 
     // Random gender, respecting species gender locks.
-    const gender = sp.gender || ['M', 'F', 'N'][controller.random(3)];
+    const gender = sheet.gender || ['M', 'F', 'N'][controller.random(3)];
 
-    team.push({
-      species: sp.name,
+    // Held item: a Mega pick holds its Mega Stone; any other pick a random
+    // unused regular item, sometimes none.
+    let item = '';
+    if (stone) {
+      item = stone;
+    } else if (controller.random(NO_ITEM_CHANCE) !== 0) {
+      const free = items.filter((it) => !usedItems.has(it));
+      item = free[controller.random(free.length)];
+    }
+
+    const set = {
+      species: sheet.name,
       level: 50,
       gender,
       shiny: false,
@@ -113,10 +180,23 @@ function genTeam(controller, modDex) {
       evs: rollEvs(controller),
       ivs: { ...IVS },
       moves: picked,
-      item: '',
-    });
+      item,
+    };
+    const problems = setProblems(set);
+    if (problems) throw new Error(`genTeam made an illegal set:\n${problems.join('\n')}\n${JSON.stringify(set)}`);
+    usedBase.add(sheet.baseSpecies);
+    if (item) usedItems.add(item);
+    team.push(set);
   }
   return team;
 }
 
-module.exports = { genTeam, buildSpeciesPool, effectiveStats, STAT_KEYS };
+/** Throws unless the whole team passes the format's validator (Species / Item Clause). */
+function assertLegalTeam(team) {
+  const problems = validator().validateTeam(JSON.parse(JSON.stringify(team)));
+  if (problems) throw new Error(`illegal team:\n${problems.join('\n')}`);
+}
+
+module.exports = {
+  genTeam, buildSpeciesPool, buildItemPool, effectiveStats, assertLegalTeam, STAT_KEYS,
+};

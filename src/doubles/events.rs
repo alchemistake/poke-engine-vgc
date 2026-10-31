@@ -151,6 +151,26 @@ fn cond_mask(s: &crate::doubles::state::DoublesSide, slot: usize) -> u128 {
     m
 }
 
+/// The ids of the volatile conditions up in a slot, sorted (fuzz snapshot).
+/// A charging move also has a volatile of its own id (PS `solarbeam`,
+/// `meteorbeam`, ...) beside `twoturnmove`.
+pub(crate) fn volatile_ids(a: &crate::doubles::state::ActiveSlot) -> Vec<String> {
+    let mut m = vol_mask(a);
+    let mut v = Vec::new();
+    while m != 0 {
+        v.push(CONDS[m.trailing_zeros() as usize].0.to_string());
+        m &= m - 1;
+    }
+    if let Some(mv) = charging(a) {
+        let id = format!("{:?}", mv).to_lowercase();
+        if !v.contains(&id) {
+            v.push(id);
+        }
+    }
+    v.sort();
+    v
+}
+
 /// The volatile conditions of `CONDS` (bits 0-63) that are up in a slot.
 pub(crate) fn vol_mask(a: &crate::doubles::state::ActiveSlot) -> u64 {
     if a.pokemon_index.is_none() {
@@ -620,8 +640,47 @@ const SIDE_FOE: usize = 1;
 const SIDE_ANY: usize = 2;
 
 /// A pokemon handler of one callback: `bit` is its effect (`Tables::fx`).
+/// Most pokemon effects (ability, status, volatile, slot condition, item)
+/// with an event handler: the width of `FxMask`.
+const MAX_FX: usize = 512;
+
+/// A set of pokemon effect bits (`Tables` effect numbering), `MAX_FX` wide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct FxMask([u64; MAX_FX / 64]);
+
+impl FxMask {
+    const ZERO: FxMask = FxMask([0; MAX_FX / 64]);
+    #[inline]
+    fn bit(b: u16) -> FxMask {
+        let mut m = FxMask::ZERO;
+        m.0[b as usize >> 6] = 1 << (b & 63);
+        m
+    }
+    #[inline]
+    fn has(&self, b: u16) -> bool {
+        self.0[b as usize >> 6] >> (b & 63) & 1 != 0
+    }
+    #[inline]
+    fn is_zero(&self) -> bool {
+        self.0.iter().all(|&w| w == 0)
+    }
+    #[inline]
+    fn intersects(&self, o: &FxMask) -> bool {
+        self.0.iter().zip(o.0.iter()).any(|(a, b)| a & b != 0)
+    }
+}
+
+impl std::ops::BitOrAssign for FxMask {
+    #[inline]
+    fn bitor_assign(&mut self, o: FxMask) {
+        for (a, b) in self.0.iter_mut().zip(o.0) {
+            *a |= b;
+        }
+    }
+}
+
 struct PokeEntry {
-    bit: u8,
+    bit: u16,
     id: &'static str,
     order: i64,
     priority: i32,
@@ -652,10 +711,10 @@ struct EventTable {
     /// `poke[i]` positions grouped by effect bit, table order kept within a
     /// bit: `by_bit[i][first[i][bit] as usize..][..count[i][bit]]`.
     by_bit: [Vec<u16>; 5],
-    first: [[u16; 128]; 5],
-    count: [[u8; 128]; 5],
+    first: [[u16; MAX_FX]; 5],
+    count: [[u8; MAX_FX]; 5],
     /// Union of the `bit`s in `poke[i]`.
-    poke_mask: [u128; 5],
+    poke_mask: [FxMask; 5],
     /// The `CONDS` with a pokemon handler in this event (bit i = `CONDS[i]`):
     /// only these are checked on a slot.
     conds: u128,
@@ -665,7 +724,7 @@ struct EventTable {
     field: Vec<GlobalEntry>,
     /// Union of `poke_mask`, and of the `SIDE_IDS` / `FIELD_IDS` bits with a
     /// handler: an event whose effects are all absent has nothing to sort.
-    any_poke: u128,
+    any_poke: FxMask,
     any_side: u32,
     any_field: u32,
     /// `any_side` as a byte mask over `SideConditions` (`side_bytes`): a
@@ -683,15 +742,15 @@ struct EventTable {
 
 struct Tables {
     /// Bit of each ability (indexed by `Abilities as usize`), or `NO_BIT`.
-    ability_bit: Vec<u8>,
+    ability_bit: Vec<u16>,
     /// Effect bit of each `CONDS` entry, or `NO_BIT`.
-    cond_fx: [u8; CONDS.len()],
+    cond_fx: [u16; CONDS.len()],
     /// Effect bit of each `STATUS_IDS` entry, or `NO_BIT`.
-    status_fx: [u8; 6],
+    status_fx: [u16; 6],
     events: Vec<EventTable>,
 }
 
-const NO_BIT: u8 = u8::MAX;
+const NO_BIT: u16 = u16::MAX;
 
 /// Events whose handlers PS sorts left to right instead of `speedSort`
 /// (no draws). PS sim/battle.ts runEvent.
@@ -712,15 +771,15 @@ fn build_tables() -> Tables {
     use std::str::FromStr;
     // Bit of each pokemon effect (kind, PS id) that has a handler in some
     // event table. Effects without one never join a sort.
-    let mut fx: std::collections::HashMap<(u8, &'static str), u8> = std::collections::HashMap::new();
-    let mut ability_bit: Vec<u8> = Vec::new();
+    let mut fx: std::collections::HashMap<(u8, &'static str), u16> = std::collections::HashMap::new();
+    let mut ability_bit: Vec<u16> = Vec::new();
     let mut events: Vec<EventTable> = Vec::new();
     for ev in Event::ALL {
         let name = ev.name();
         let poke_names = POKE_PREFIXES.map(|p| leak(format!("{}{}", p, name)));
         let side_names = [poke_names[ON], poke_names[FOE], poke_names[ANY]];
         let mut poke: [Vec<PokeEntry>; 5] = Default::default();
-        let mut poke_mask = [0u128; 5];
+        let mut poke_mask = [FxMask::ZERO; 5];
         for (pi, cb) in poke_names.iter().enumerate() {
             for h in handlers(cb) {
                 if matches!(h.kind, HandlerKind::Side | HandlerKind::Field | HandlerKind::Weather) {
@@ -728,8 +787,8 @@ fn build_tables() -> Tables {
                 }
                 let next = fx.len();
                 let bit = *fx.entry((h.kind as u8, h.id)).or_insert_with(|| {
-                    assert!(next < 128, "more than 128 pokemon effects have event handlers");
-                    next as u8
+                    assert!(next < MAX_FX, "more than MAX_FX pokemon effects have event handlers");
+                    next as u16
                 });
                 if h.kind == HandlerKind::Ability {
                     let ab = Abilities::from_str(h.id).unwrap();
@@ -741,7 +800,7 @@ fn build_tables() -> Tables {
                         ability_bit[i] = bit;
                     }
                 }
-                poke_mask[pi] |= 1u128 << bit;
+                poke_mask[pi] |= FxMask::bit(bit);
                 poke[pi].push(PokeEntry {
                     bit,
                     id: h.id,
@@ -771,10 +830,10 @@ fn build_tables() -> Tables {
         let side = side_names.map(|cb| global(cb, &SIDE_IDS, &[HandlerKind::Side]));
         let field = global(poke_names[ON], &FIELD_IDS, &[HandlerKind::Field, HandlerKind::Weather]);
         let mut by_bit: [Vec<u16>; 5] = Default::default();
-        let mut first = [[0u16; 128]; 5];
-        let mut count = [[0u8; 128]; 5];
+        let mut first = [[0u16; MAX_FX]; 5];
+        let mut count = [[0u8; MAX_FX]; 5];
         for pi in 0..5 {
-            for bit in 0..128u8 {
+            for bit in 0..MAX_FX as u16 {
                 first[pi][bit as usize] = by_bit[pi].len() as u16;
                 for (k, h) in poke[pi].iter().enumerate() {
                     if h.bit == bit {
@@ -793,7 +852,7 @@ fn build_tables() -> Tables {
             poke,
             poke_mask,
             conds: 0,
-            any_poke: 0,
+            any_poke: FxMask::ZERO,
             any_side: 0,
             any_field: 0,
             side_bytes: [0; 2],
@@ -810,7 +869,10 @@ fn build_tables() -> Tables {
     let cond_fx = CONDS.map(|(id, kind)| fx.get(&(kind as u8, id)).copied().unwrap_or(NO_BIT));
     let status_fx = STATUS_IDS.map(|id| fx.get(&(HandlerKind::Status as u8, id)).copied().unwrap_or(NO_BIT));
     for ev in events.iter_mut() {
-        let all = ev.poke_mask.iter().fold(0, |m, &x| m | x);
+        let mut all = FxMask::ZERO;
+        for &m in &ev.poke_mask {
+            all |= m;
+        }
         ev.any_poke = all;
         ev.any_side = ev.side.iter().flatten().fold(0, |m, h| m | 1 << h.idx);
         ev.any_field = ev.field.iter().fold(0, |m, h| m | 1 << h.idx);
@@ -835,7 +897,7 @@ fn build_tables() -> Tables {
             }
         }
         for (i, &bit) in cond_fx.iter().enumerate() {
-            if bit != NO_BIT && all & (1u128 << bit) != 0 {
+            if bit != NO_BIT && all.has(bit) {
                 ev.conds |= 1 << i;
             }
         }
@@ -847,19 +909,19 @@ fn build_tables() -> Tables {
 /// bits, in `visit_pokemon_effects` order.
 #[derive(Clone, Copy)]
 struct SlotEffects {
-    bits: [u8; 16],
+    bits: [u16; 16],
     n: u8,
-    mask: u128,
+    mask: FxMask,
 }
 
 fn slot_effects(t: &Tables, state: &DoublesState, side: Side, slot: usize, conds: u128) -> SlotEffects {
-    let mut e = SlotEffects { bits: [0; 16], n: 0, mask: 0 };
-    let mut add = |bit: u8| {
+    let mut e = SlotEffects { bits: [0; 16], n: 0, mask: FxMask::ZERO };
+    let mut add = |bit: u16| {
         if bit != NO_BIT {
             assert!((e.n as usize) < e.bits.len(), "too many pokemon effects with handlers");
             e.bits[e.n as usize] = bit;
             e.n += 1;
-            e.mask |= 1u128 << bit;
+            e.mask |= FxMask::bit(bit);
         }
     };
     // Same order as `visit_pokemon_effects`: status, ability, conditions.
@@ -913,15 +975,15 @@ fn has_any_handler(t: &Tables, ev: &EventTable, state: &DoublesState) -> bool {
             return true;
         }
     }
-    if ev.any_poke == 0 {
+    if ev.any_poke.is_zero() {
         return false;
     }
-    fx_union(t, state) & ev.any_poke != 0
+    fx_union(t, state).intersects(&ev.any_poke)
 }
 
 /// `slot_fx` of all four slots, OR-ed; cached in `DoublesState::fx_union`
 /// while no slot or team member changed (and no Mold Breaker list is up).
-fn fx_union(t: &Tables, state: &DoublesState) -> u128 {
+fn fx_union(t: &Tables, state: &DoublesState) -> FxMask {
     let (a, b) = (&state.side_one, &state.side_two);
     let extra = a.future_move[0].is_some() as u8
         | (a.future_move[1].is_some() as u8) << 1
@@ -939,7 +1001,7 @@ fn fx_union(t: &Tables, state: &DoublesState) -> u128 {
             }
         }
     }
-    let mut u = 0;
+    let mut u = FxMask::ZERO;
     for side in [Side::One, Side::Two] {
         for slot in 0..2 {
             u |= slot_fx(t, state, side, slot);
@@ -953,9 +1015,9 @@ fn fx_union(t: &Tables, state: &DoublesState) -> u128 {
 
 /// The effect bits (`Tables::fx`) of everything the slot's occupant holds:
 /// status, ability and conditions. Cached per slot (`DoublesSide::fx_cache`).
-fn slot_fx(t: &Tables, state: &DoublesState, side: Side, slot: usize) -> u128 {
+fn slot_fx(t: &Tables, state: &DoublesState, side: Side, slot: usize) -> FxMask {
     let s = state.side(side);
-    let Some(idx) = s.active()[slot].pokemon_index else { return 0 };
+    let Some(idx) = s.active()[slot].pokemon_index else { return FxMask::ZERO };
     let status = s.team_member(idx).status;
     let ability = real_ability(state, side, idx);
     let extra = s.future_move[slot].is_some() as u8 | (s.wish[slot].is_some() as u8) << 1;
@@ -964,8 +1026,8 @@ fn slot_fx(t: &Tables, state: &DoublesState, side: Side, slot: usize) -> u128 {
             return c.fx;
         }
     }
-    let bit = |b: u8| if b == NO_BIT { 0 } else { 1u128 << b };
-    let mut fx = status_index(status).map_or(0, |i| bit(t.status_fx[i]));
+    let bit = |b: u16| if b == NO_BIT { FxMask::ZERO } else { FxMask::bit(b) };
+    let mut fx = status_index(status).map_or(FxMask::ZERO, |i| bit(t.status_fx[i]));
     fx |= bit(t.ability_bit.get(ability as usize).copied().unwrap_or(NO_BIT));
     let mut m = cond_mask(s, slot);
     while m != 0 {
@@ -989,18 +1051,18 @@ struct Collector<'a> {
 
 impl Collector<'_> {
     fn push_pokemon(&mut self, side: Side, slot: usize, prefix: usize) {
-        if self.ev.poke_mask[prefix] == 0 {
+        if self.ev.poke_mask[prefix].is_zero() {
             return;
         }
         let si = side as usize * 2 + slot;
         let (t, state, conds) = (self.t, self.state, self.ev.conds);
         let fx = *self.slots[si].get_or_insert_with(|| slot_effects(t, state, side, slot, conds));
-        if fx.mask & self.ev.poke_mask[prefix] == 0 {
+        if !fx.mask.intersects(&self.ev.poke_mask[prefix]) {
             return;
         }
         let speed = cached_speed(self.state, side, slot);
         for &bit in &fx.bits[..fx.n as usize] {
-            if self.ev.poke_mask[prefix] & (1u128 << bit) == 0 {
+            if !self.ev.poke_mask[prefix].has(bit) {
                 continue;
             }
             let (f, n) = (self.ev.first[prefix][bit as usize] as usize, self.ev.count[prefix][bit as usize] as usize);

@@ -448,7 +448,7 @@ pub(crate) struct FxCache {
     pub status: crate::state::PokemonStatus,
     pub ability: crate::engine::abilities::Abilities,
     pub extra: u8,
-    pub fx: u128,
+    pub fx: crate::doubles::events::FxMask,
 }
 
 #[derive(Debug, Clone)]
@@ -707,7 +707,7 @@ pub struct DoublesState {
     pub tl: MoveScratch,
     /// Union of the four slots' event-handler effect bits (`events`), keyed
     /// by both sides' `ver` and the Future Sight / Wish bits.
-    pub(crate) fx_union: std::cell::Cell<Option<(u32, u32, u8, u128)>>,
+    pub(crate) fx_union: std::cell::Cell<Option<(u32, u32, u8, crate::doubles::events::FxMask)>>,
     /// `sorted_actives`' last untied order, keyed by both sides' `ver`.
     pub(crate) actives_order: std::cell::Cell<Option<((u32, u32), [(Side, u8); 4], u8)>>,
     /// PS `battle.lastMove`: the last move used by anyone (Copycat).
@@ -1101,6 +1101,27 @@ static ABILITY_IDS: std::sync::LazyLock<FxMap<&'static str, Abilities>> =
     std::sync::LazyLock::new(|| enum_ids(i16::MAX as usize, |i| Abilities::from(i as i16)));
 static ITEM_IDS: std::sync::LazyLock<FxMap<&'static str, Items>> =
     std::sync::LazyLock::new(|| enum_ids(256, |i| Items::from(i as u8)));
+
+/// Lowercase id of each enum value, indexed by discriminant ("" for NONE):
+/// the fuzz snapshot's species / item / ability ids, without allocating.
+fn enum_names<T: std::fmt::Debug>(n: usize, from: impl Fn(usize) -> T) -> Vec<&'static str> {
+    let mut v: Vec<&'static str> = Vec::new();
+    for i in 0..n {
+        let id = format!("{:?}", from(i)).to_lowercase();
+        if i > 0 && id == "none" {
+            break; // past the last variant: `from` falls back to NONE
+        }
+        v.push(if id == "none" { "" } else { Box::leak(id.into_boxed_str()) });
+    }
+    v
+}
+
+static SPECIES_NAMES: std::sync::LazyLock<Vec<&'static str>> =
+    std::sync::LazyLock::new(|| enum_names(i16::MAX as usize, |i| PokemonName::from(i as i16)));
+static ABILITY_NAMES: std::sync::LazyLock<Vec<&'static str>> =
+    std::sync::LazyLock::new(|| enum_names(i16::MAX as usize, |i| Abilities::from(i as i16)));
+static ITEM_NAMES: std::sync::LazyLock<Vec<&'static str>> =
+    std::sync::LazyLock::new(|| enum_names(256, |i| Items::from(i as u8)));
 
 fn parse_nature(s: &str) -> PokemonNature {
     lookup_id(&NATURE_IDS, s).unwrap_or(PokemonNature::SERIOUS)
@@ -1552,6 +1573,16 @@ pub struct FullSlot {
     /// Active slot index (0/1) if on field, else null.
     pub active_slot: Option<usize>,
     pub boosts: Boosts,
+    /// Current species / forme id (PS `species.id`, e.g. "absolmega").
+    pub forme: &'static str,
+    /// Held item id ("" = none).
+    pub item: &'static str,
+    /// Current ability id.
+    pub ability: &'static str,
+    /// PP left per move slot.
+    pub pp: Vec<i8>,
+    /// Volatile condition ids while active (sorted), e.g. ["confusion"].
+    pub volatiles: Vec<String>,
 }
 
 /// Side conditions as (id, duration) pairs, ids lowercase (e.g. "reflect").
@@ -1598,6 +1629,11 @@ pub struct FuzzTurnState {
     pub trick_room: bool,
     /// Active pseudo-weather ids (sorted), e.g. ["trickroom"], ["tailwind"].
     pub pseudo_weather: Vec<&'static str>,
+    /// Turns left (PS `duration`) of the weather, terrain and each
+    /// pseudo-weather in `pseudo_weather` order.
+    pub weather_turns: i8,
+    pub terrain_turns: i8,
+    pub pseudo_weather_turns: Vec<i8>,
     pub a_side_conditions: Vec<SideConditionEntry>,
     pub b_side_conditions: Vec<SideConditionEntry>,
     /// Execution order this turn, entries "SIDE<slot>:Species:movename".
@@ -1718,12 +1754,23 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
                 };
                 FullSlot {
                     species: s.species_names[i],
+                    forme: SPECIES_NAMES[p.id as usize],
                     hp: p.hp,
                     maxhp: p.maxhp,
                     fainted: p.hp <= 0,
                     status: normalize_status(p.status),
                     active_slot,
                     boosts,
+                    item: ITEM_NAMES[p.item as usize],
+                    ability: ABILITY_NAMES[p.ability as usize],
+                    pp: [&p.moves.m0, &p.moves.m1, &p.moves.m2, &p.moves.m3]
+                        .iter()
+                        .filter(|m| m.id != Choices::NONE)
+                        .map(|m| m.pp)
+                        .collect(),
+                    volatiles: active_slot
+                        .map(|sl| crate::doubles::events::volatile_ids(&s.active()[sl]))
+                        .unwrap_or_default(),
                 }
             })
             .collect()
@@ -1735,23 +1782,20 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
         v.sort_by(|a, b| a.id.cmp(&b.id));
         v
     };
-    let mut pseudo_weather: Vec<&'static str> = vec![];
-    if state.trick_room.active {
-        pseudo_weather.push("trickroom");
-    }
-    if state.wonder_room.active {
-        pseudo_weather.push("wonderroom");
-    }
-    if state.magic_room.active {
-        pseudo_weather.push("magicroom");
-    }
-    if state.gravity.active {
-        pseudo_weather.push("gravity");
-    }
-    if state.fairy_lock.active {
-        pseudo_weather.push("fairylock");
-    }
-    pseudo_weather.sort();
+    let mut pseudo: Vec<(&'static str, i8)> = [
+        ("trickroom", &state.trick_room),
+        ("wonderroom", &state.wonder_room),
+        ("magicroom", &state.magic_room),
+        ("gravity", &state.gravity),
+        ("fairylock", &state.fairy_lock),
+    ]
+    .iter()
+    .filter(|(_, f)| f.active)
+    .map(|(id, f)| (*id, f.turns_remaining))
+    .collect();
+    pseudo.sort();
+    let pseudo_weather: Vec<&'static str> = pseudo.iter().map(|(id, _)| *id).collect();
+    let pseudo_weather_turns: Vec<i8> = pseudo.iter().map(|(_, t)| *t).collect();
     // pokemon-showdown reports the weather CONDITION id (e.g. "raindance",
     // "sunnyday", "sandstorm"), not the engine's enum name.
     let weather_name = match state.weather.weather_type {
@@ -1779,6 +1823,9 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
         },
         trick_room: state.trick_room.active,
         pseudo_weather,
+        weather_turns: if state.weather.weather_type == Weather::NONE { 0 } else { state.weather.turns_remaining },
+        terrain_turns: if state.terrain.terrain_type == Terrain::NONE { 0 } else { state.terrain.turns_remaining },
+        pseudo_weather_turns,
         a_side_conditions: sc_entries(&state.side_one.side_conditions, &state.side_one.sc_order),
         b_side_conditions: sc_entries(&state.side_two.side_conditions, &state.side_two.sc_order),
         move_order,

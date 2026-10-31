@@ -73,6 +73,13 @@ is a stale build: rebuild. All feature builds share
 **rebuild champions before fuzzing**, or the fuzzer runs the wrong
 generation's data. gen1–3 builds are out of scope (ignore them).
 
+**Before the first sweep of a session, run `node fuzz/surface_audit.js`.**
+It lists every species, forme, ability, move and held item the fuzzer can
+produce that the engine does not know (not in its enums / tables) or never
+references. Each entry will fail battles for a known reason: implement the
+whole list as classes (all type-boost items together, all resist berries
+together, Mega Evolution as one feature), not seed by seed.
+
 **Progress lives in git and the score, not in notes.** To see where the
 work stands, run the sweep (step 1). **Sweep speed (automatic, nothing to configure):** the sweep runs on all
 CPU cores, checks passing battles with one engine call per batch, and
@@ -432,7 +439,9 @@ When the fuzzer needs a mechanic:
 - regenerate or bulk-rewrite `src/choices.rs` (guard check 3);
 - lower or hand-edit `fuzz/SCORE` (only `fuzz/guard.sh --update` raises it;
   only the user may reset it, e.g. after a fuzzer change that widens coverage);
-- commit with `--no-verify`, commit to `main`, force-push, or rewrite history;
+- commit with `--no-verify`, commit to `main`, force-push, or rewrite history
+  (a harness change the user approved is committed with
+  `ALLOW_HARNESS_EDIT=1 git commit …`, never by skipping the hook);
 - change the comparison in `fuzz/fuzz.js` to hide a difference.
 
 **Always:**
@@ -456,10 +465,23 @@ Stage files by name (`git add src/doubles/battle.rs fuzz/SCORE …`),
 never `git add -A` / `git add .`. Check `git status` before committing.
 
 Facts the harness already handles:
+- teams are always legal for the format (PS `TeamValidator`: Species Clause,
+  Item Clause, legal abilities and moves); every team-legal species and
+  forme can appear;
 - battle teams are the 4 picked in team preview;
-- `evs` are 0–20 stat points (`stat_points_to_effective_ev`);
+- `evs` are stat points: 66 total, 0–32 per stat (`stat_points_to_effective_ev`);
+- every pokemon holds a random legal item (1 in 20 holds none). Mega formes
+  are picks of their own: the sheet has the base species holding that Mega
+  Stone, and no other pokemon ever holds a Mega Stone;
+- choices: a move action carries `mega: true` when it Mega Evolves (half of
+  the time it is offered, one per side); 1 in 12 actions is a voluntary
+  switch (`kind: "switch"`); 1 in 8 single-target moves aims at the ally;
 - a fainted slot with no replacement is `pass`;
-- snapshots use stable battle-team order.
+- snapshots use stable battle-team order and compare, per pokemon: forme
+  (`forme`, PS `species.id`), HP, status, boosts, held item, current
+  ability, PP per move slot, and the volatiles of active pokemon; per
+  field: weather / terrain / pseudo-weather and their turns left, side
+  conditions with durations, and the move order.
 
 
 ## 7. Debug tools

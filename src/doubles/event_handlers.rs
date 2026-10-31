@@ -97,6 +97,9 @@ pub fn handlers(callback: &str) -> &'static [EventHandler] {
         "onAnyAfterTerastallization" => &[
             EventHandler { id: "opportunist", kind: Ability, order: 0, priority: 0, sub_order: 7 },
         ],
+        "onAnyBasePower" => &[
+            EventHandler { id: "fairyaura", kind: Ability, order: 0, priority: 20, sub_order: 7 },
+        ],
         "onAnyDamage" => &[
             EventHandler { id: "damp", kind: Ability, order: 0, priority: 0, sub_order: 7 },
         ],
@@ -125,8 +128,10 @@ pub fn handlers(callback: &str) -> &'static [EventHandler] {
             EventHandler { id: "damp", kind: Ability, order: 0, priority: 0, sub_order: 7 },
         ],
         "onBasePower" => &[
+            EventHandler { id: "aerilate", kind: Ability, order: 0, priority: 23, sub_order: 7 },
             EventHandler { id: "analytic", kind: Ability, order: 0, priority: 21, sub_order: 7 },
             EventHandler { id: "charge", kind: Volatile, order: 0, priority: 9, sub_order: 2 },
+            EventHandler { id: "dragonize", kind: Ability, order: 0, priority: 23, sub_order: 7 },
             EventHandler { id: "electricterrain", kind: Field, order: 0, priority: 6, sub_order: 5 },
             EventHandler { id: "grassyterrain", kind: Field, order: 0, priority: 6, sub_order: 5 },
             EventHandler { id: "helpinghand", kind: Volatile, order: 0, priority: 10, sub_order: 2 },
@@ -197,6 +202,7 @@ pub fn handlers(callback: &str) -> &'static [EventHandler] {
             EventHandler { id: "frz", kind: Status, order: 0, priority: 0, sub_order: 0 },
             EventHandler { id: "gooey", kind: Ability, order: 0, priority: 0, sub_order: 7 },
             EventHandler { id: "illusion", kind: Ability, order: 0, priority: 0, sub_order: 7 },
+            EventHandler { id: "innardsout", kind: Ability, order: 1, priority: 0, sub_order: 7 },
             EventHandler { id: "justified", kind: Ability, order: 0, priority: 0, sub_order: 7 },
             EventHandler { id: "mirrorcoat", kind: Volatile, order: 0, priority: 0, sub_order: 2 },
             EventHandler { id: "mummy", kind: Ability, order: 0, priority: 0, sub_order: 7 },
@@ -205,6 +211,7 @@ pub fn handlers(callback: &str) -> &'static [EventHandler] {
             EventHandler { id: "roughskin", kind: Ability, order: 1, priority: 0, sub_order: 7 },
             EventHandler { id: "sandspit", kind: Ability, order: 0, priority: 0, sub_order: 7 },
             EventHandler { id: "seedsower", kind: Ability, order: 0, priority: 0, sub_order: 7 },
+            EventHandler { id: "spicyspray", kind: Ability, order: 0, priority: 0, sub_order: 7 },
             EventHandler { id: "stamina", kind: Ability, order: 0, priority: 0, sub_order: 7 },
             EventHandler { id: "static", kind: Ability, order: 0, priority: 0, sub_order: 7 },
             EventHandler { id: "thermalexchange", kind: Ability, order: 0, priority: 0, sub_order: 7 },
@@ -257,9 +264,15 @@ pub fn handlers(callback: &str) -> &'static [EventHandler] {
         "onFoeDisableMove" => &[
             EventHandler { id: "imprison", kind: Volatile, order: 0, priority: 0, sub_order: 2 },
         ],
+        "onFoeMaybeTrapPokemon" => &[
+            EventHandler { id: "shadowtag", kind: Ability, order: 0, priority: 0, sub_order: 7 },
+        ],
         "onFoeRedirectTarget" => &[
             EventHandler { id: "followme", kind: Volatile, order: 0, priority: 1, sub_order: 2 },
             EventHandler { id: "ragepowder", kind: Volatile, order: 0, priority: 1, sub_order: 2 },
+        ],
+        "onFoeTrapPokemon" => &[
+            EventHandler { id: "shadowtag", kind: Ability, order: 0, priority: 0, sub_order: 7 },
         ],
         "onFoeTryEatItem" => &[
             EventHandler { id: "unnerve", kind: Ability, order: 0, priority: 0, sub_order: 7 },
@@ -279,6 +292,10 @@ pub fn handlers(callback: &str) -> &'static [EventHandler] {
             EventHandler { id: "kingsshield", kind: Volatile, order: 0, priority: 0, sub_order: 2 },
             EventHandler { id: "owntempo", kind: Ability, order: 0, priority: 0, sub_order: 7 },
             EventHandler { id: "spikyshield", kind: Volatile, order: 0, priority: 0, sub_order: 2 },
+        ],
+        "onHitProtect" => &[
+            EventHandler { id: "piercingdrill", kind: Ability, order: 0, priority: 0, sub_order: 7 },
+            EventHandler { id: "unseenfist", kind: Ability, order: 0, priority: 0, sub_order: 7 },
         ],
         "onImmunity" => &[
             EventHandler { id: "dig", kind: Volatile, order: 0, priority: 0, sub_order: 2 },
@@ -314,6 +331,7 @@ pub fn handlers(callback: &str) -> &'static [EventHandler] {
         ],
         "onModifyAtk" => &[
             EventHandler { id: "blaze", kind: Ability, order: 0, priority: 5, sub_order: 7 },
+            EventHandler { id: "firemane", kind: Ability, order: 0, priority: 5, sub_order: 7 },
             EventHandler { id: "guts", kind: Ability, order: 0, priority: 5, sub_order: 7 },
             EventHandler { id: "hugepower", kind: Ability, order: 0, priority: 5, sub_order: 7 },
             EventHandler { id: "hustle", kind: Ability, order: 0, priority: 5, sub_order: 7 },
@@ -370,6 +388,7 @@ pub fn handlers(callback: &str) -> &'static [EventHandler] {
         ],
         "onModifySpA" => &[
             EventHandler { id: "blaze", kind: Ability, order: 0, priority: 5, sub_order: 7 },
+            EventHandler { id: "firemane", kind: Ability, order: 0, priority: 5, sub_order: 7 },
             EventHandler { id: "minus", kind: Ability, order: 0, priority: 5, sub_order: 7 },
             EventHandler { id: "overgrow", kind: Ability, order: 0, priority: 5, sub_order: 7 },
             EventHandler { id: "plus", kind: Ability, order: 0, priority: 5, sub_order: 7 },
@@ -390,6 +409,8 @@ pub fn handlers(callback: &str) -> &'static [EventHandler] {
             EventHandler { id: "tailwind", kind: Side, order: 0, priority: 0, sub_order: 4 },
         ],
         "onModifyType" => &[
+            EventHandler { id: "aerilate", kind: Ability, order: 0, priority: -1, sub_order: 7 },
+            EventHandler { id: "dragonize", kind: Ability, order: 0, priority: -1, sub_order: 7 },
             EventHandler { id: "electrify", kind: Volatile, order: 0, priority: -2, sub_order: 2 },
             EventHandler { id: "liquidvoice", kind: Ability, order: 0, priority: -1, sub_order: 7 },
             EventHandler { id: "pixilate", kind: Ability, order: 0, priority: -1, sub_order: 7 },
@@ -406,6 +427,7 @@ pub fn handlers(callback: &str) -> &'static [EventHandler] {
         ],
         "onPrepareHit" => &[
             EventHandler { id: "libero", kind: Ability, order: 0, priority: 0, sub_order: 7 },
+            EventHandler { id: "parentalbond", kind: Ability, order: 0, priority: 0, sub_order: 7 },
             EventHandler { id: "protean", kind: Ability, order: 0, priority: 0, sub_order: 7 },
         ],
         "onRedirectTarget" => &[
@@ -430,6 +452,7 @@ pub fn handlers(callback: &str) -> &'static [EventHandler] {
         ],
         "onSourceAfterFaint" => &[
             EventHandler { id: "battlebond", kind: Ability, order: 0, priority: 0, sub_order: 7 },
+            EventHandler { id: "eelevate", kind: Ability, order: 0, priority: 0, sub_order: 7 },
             EventHandler { id: "moxie", kind: Ability, order: 0, priority: 0, sub_order: 7 },
         ],
         "onSourceBasePower" => &[
@@ -453,6 +476,7 @@ pub fn handlers(callback: &str) -> &'static [EventHandler] {
             EventHandler { id: "waterbubble", kind: Ability, order: 0, priority: 5, sub_order: 7 },
         ],
         "onSourceModifyDamage" => &[
+            EventHandler { id: "auraguard", kind: Ability, order: 0, priority: 0, sub_order: 7 },
             EventHandler { id: "dig", kind: Volatile, order: 0, priority: 0, sub_order: 2 },
             EventHandler { id: "dive", kind: Volatile, order: 0, priority: 0, sub_order: 2 },
             EventHandler { id: "filter", kind: Ability, order: 0, priority: 0, sub_order: 7 },
@@ -464,6 +488,9 @@ pub fn handlers(callback: &str) -> &'static [EventHandler] {
             EventHandler { id: "punkrock", kind: Ability, order: 0, priority: 0, sub_order: 7 },
             EventHandler { id: "ripen", kind: Ability, order: 0, priority: -1, sub_order: 7 },
             EventHandler { id: "solidrock", kind: Ability, order: 0, priority: 0, sub_order: 7 },
+        ],
+        "onSourceModifySecondaries" => &[
+            EventHandler { id: "parentalbond", kind: Ability, order: 0, priority: 0, sub_order: 7 },
         ],
         "onSourceModifySpA" => &[
             EventHandler { id: "heatproof", kind: Ability, order: 0, priority: 5, sub_order: 7 },
@@ -483,6 +510,7 @@ pub fn handlers(callback: &str) -> &'static [EventHandler] {
         "onSwitchIn" => &[
             EventHandler { id: "cloudnine", kind: Ability, order: 0, priority: 0, sub_order: 7 },
             EventHandler { id: "healingwish", kind: Slot, order: 0, priority: 0, sub_order: 3 },
+            EventHandler { id: "imposter", kind: Ability, order: 0, priority: 0, sub_order: 7 },
             EventHandler { id: "spikes", kind: Side, order: 0, priority: 0, sub_order: 4 },
             EventHandler { id: "stealthrock", kind: Side, order: 0, priority: 0, sub_order: 4 },
             EventHandler { id: "stickyweb", kind: Side, order: 0, priority: 0, sub_order: 4 },
@@ -599,6 +627,9 @@ pub fn handlers(callback: &str) -> &'static [EventHandler] {
         ],
         "onWeatherChange" => &[
             EventHandler { id: "forecast", kind: Ability, order: 0, priority: 0, sub_order: 7 },
+        ],
+        "onWeatherModifyDamage" => &[
+            EventHandler { id: "megasol", kind: Ability, order: 0, priority: 1, sub_order: 7 },
         ],
         _ => &[],
     }

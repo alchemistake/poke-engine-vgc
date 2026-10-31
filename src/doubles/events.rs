@@ -422,7 +422,7 @@ fn cond_mask(s: &crate::doubles::state::DoublesSide, a: &crate::doubles::state::
 pub fn visit_pokemon_effects(state: &DoublesState, side: Side, slot: usize, mut f: impl FnMut(Effect)) {
     use HandlerKind::*;
     let s = state.side(side);
-    let a = &s.active[slot];
+    let a = &s.active()[slot];
     let Some(idx) = a.pokemon_index else { return };
     let p = s.team_member(idx);
     if let Some(st) = status_id(p.status) {
@@ -802,7 +802,7 @@ fn slot_effects(t: &Tables, state: &DoublesState, side: Side, slot: usize, conds
     };
     // Same order as `visit_pokemon_effects`: status, ability, conditions.
     let s = state.side(side);
-    let a = &s.active[slot];
+    let a = &s.active()[slot];
     let Some(idx) = a.pokemon_index else { return e };
     if let Some(i) = status_index(s.team_member(idx).status) {
         add(t.status_fx[i]);
@@ -934,8 +934,8 @@ pub fn run_event_ties_on_effect(
             d.push(format!("on{} (move)", event.name()));
         }
     }
-    let target_active = state.side(ts).active[tsl].pokemon_index.is_some();
-    let source_active = source.is_some_and(|(s, sl)| state.side(s).active[sl].pokemon_index.is_some());
+    let target_active = state.side(ts).active()[tsl].pokemon_index.is_some();
+    let source_active = source.is_some_and(|(s, sl)| state.side(s).active()[sl].pokemon_index.is_some());
     if target_active || source_active {
         c.push_pokemon(ts, tsl, ON);
         if prefixed {

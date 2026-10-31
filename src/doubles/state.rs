@@ -436,7 +436,7 @@ pub struct TeamBoosts {
 #[derive(Debug, Clone)]
 pub struct DoublesSide {
     pub team: [Pokemon; 6],
-    pub active: [ActiveSlot; 2],
+    slots: [ActiveSlot; 2],
     pub side_conditions: SideConditions,
     /// Original species names (including formes) for each team slot, used for
     /// name-based target matching in the replay test.
@@ -497,22 +497,34 @@ impl DoublesSide {
         &mut self.team[index as usize]
     }
 
+    /// The two on-field slots.
+    #[inline]
+    pub fn active(&self) -> &[ActiveSlot; 2] {
+        &self.slots
+    }
+
+    /// The two on-field slots, for changes.
+    #[inline]
+    pub fn active_mut(&mut self) -> &mut [ActiveSlot; 2] {
+        &mut self.slots
+    }
+
     /// The Pokémon in an active slot, if any.
     pub fn slot_pokemon(&self, slot: usize) -> Option<&Pokemon> {
-        self.active[slot].pokemon_index.map(|i| self.team_member(i))
+        self.active()[slot].pokemon_index.map(|i| self.team_member(i))
     }
     pub fn slot_pokemon_mut(&mut self, slot: usize) -> Option<&mut Pokemon> {
-        let idx = self.active[slot].pokemon_index?;
+        let idx = self.active()[slot].pokemon_index?;
         Some(self.team_member_mut(idx))
     }
 
     /// Team-member boosts for a slot, if occupied.
     pub fn slot_boosts(&self, slot: usize) -> Option<&TeamBoosts> {
-        let i = self.active[slot].pokemon_index?;
+        let i = self.active()[slot].pokemon_index?;
         Some(&self.team_boosts[i as usize])
     }
     pub fn slot_boosts_mut(&mut self, slot: usize) -> Option<&mut TeamBoosts> {
-        let i = self.active[slot].pokemon_index?;
+        let i = self.active()[slot].pokemon_index?;
         Some(&mut self.team_boosts[i as usize])
     }
 
@@ -534,7 +546,7 @@ impl DoublesSide {
             if self.team[i].hp > 0
                 && self.team[i].id != crate::pokemon::PokemonName::NONE
                 && !self
-                    .active
+                    .active()
                     .iter()
                     .any(|s| s.pokemon_index == Some(idx))
             {
@@ -1134,7 +1146,7 @@ impl DoublesState {
     pub fn from_teams(teams: &Teams) -> Self {
         let mut side_one = DoublesSide {
             team: std::array::from_fn(|_| Pokemon::default()),
-            active: [ActiveSlot::empty(), ActiveSlot::empty()],
+            slots: [ActiveSlot::empty(), ActiveSlot::empty()],
             side_conditions: SideConditions::default(),
             species_names: std::array::from_fn(|_| String::new()),
             genders: std::array::from_fn(|_| None),
@@ -1155,7 +1167,7 @@ impl DoublesState {
         };
         let mut side_two = DoublesSide {
             team: std::array::from_fn(|_| Pokemon::default()),
-            active: [ActiveSlot::empty(), ActiveSlot::empty()],
+            slots: [ActiveSlot::empty(), ActiveSlot::empty()],
             side_conditions: SideConditions::default(),
             species_names: std::array::from_fn(|_| String::new()),
             genders: std::array::from_fn(|_| None),
@@ -1246,13 +1258,13 @@ impl DoublesState {
         // have `activeTurns` 1 at the first residual (Speed Boost fires).
         for (slot, &lead_pos) in leads_a.iter().take(2).enumerate() {
             let idx = PokemonIndex::deserialize(&lead_pos.to_string());
-            self.side_one.active[slot].pokemon_index = Some(idx);
-            self.side_one.active[slot].active_turns = 1;
+            self.side_one.active_mut()[slot].pokemon_index = Some(idx);
+            self.side_one.active_mut()[slot].active_turns = 1;
         }
         for (slot, &lead_pos) in leads_b.iter().take(2).enumerate() {
             let idx = PokemonIndex::deserialize(&lead_pos.to_string());
-            self.side_two.active[slot].pokemon_index = Some(idx);
-            self.side_two.active[slot].active_turns = 1;
+            self.side_two.active_mut()[slot].pokemon_index = Some(idx);
+            self.side_two.active_mut()[slot].active_turns = 1;
         }
     }
 }
@@ -1436,7 +1448,7 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<String>) -> FuzzTurnS
             })
             .map(|(i, p)| {
                 let active_slot = s
-                    .active
+                    .active()
                     .iter()
                     .position(|sl| sl.pokemon_index.map(|x| x as usize) == Some(i));
                 let boosts = {

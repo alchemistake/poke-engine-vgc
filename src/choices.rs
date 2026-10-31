@@ -20921,6 +20921,22 @@ fn build_moves() -> HashMap<Choices, Choice> {
     moves
 }
 
+// Every field but `secondaries` is `Copy`; the table's lists are borrowed
+// `'static` slices, so a clone is a plain copy of the struct.
+impl Clone for Choice {
+    #[inline]
+    fn clone(&self) -> Choice {
+        // SAFETY: no field other than `secondaries` owns memory. A borrowed or
+        // absent list is copied as is; an owned one is replaced by a deep copy
+        // without dropping the bitwise duplicate.
+        let mut c = unsafe { std::ptr::read(self) };
+        if let Some(std::borrow::Cow::Owned(v)) = &self.secondaries {
+            unsafe { std::ptr::write(&mut c.secondaries, Some(std::borrow::Cow::Owned(v.clone()))) };
+        }
+        c
+    }
+}
+
 /// Move data indexed by `Choices as usize` (no hashing on lookup). Each
 /// move's `secondaries` list is leaked once to a `'static` slice, so cloning
 /// a `Choice` does not allocate.
@@ -22171,7 +22187,6 @@ impl Choices {
     }
 }
 
-#[derive(Clone)]
 pub struct Choice {
     // Basic move information
     pub move_id: Choices, // in the case of category::Switch, this is not used

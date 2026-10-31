@@ -237,6 +237,12 @@ fn side_tag(side: Side) -> &'static str {
 /// the result (champions `getActionSpeed` override), which is equivalent to
 /// reversing the speed comparison.
 pub fn effective_speed(state: &DoublesState, side: Side, slot: usize) -> Option<i16> {
+    effective_speed_in(state, side, slot, effective_weather(state))
+}
+
+/// `effective_speed` with the effective weather already known (callers that
+/// compute several speeds read it once).
+fn effective_speed_in(state: &DoublesState, side: Side, slot: usize, weather: Weather) -> Option<i16> {
     let s = state.side(side);
     let idx = s.active()[slot].pokemon_index?;
     let p = s.team_member(idx);
@@ -245,8 +251,7 @@ pub fn effective_speed(state: &DoublesState, side: Side, slot: usize) -> Option<
     // x2, speed abilities, Choice Scarf), `finalModify` applies them once; then
     // paralysis (priority -101) halves, unless Quick Feet.
     // TODO(PS parity): Unburden, Slow Start, Iron Ball, Quick Powder, ...
-    // `effectiveWeather`: none under Cloud Nine / Air Lock.
-    let weather = effective_weather(state);
+    // `weather` is PS `effectiveWeather`: none under Cloud Nine / Air Lock.
     let mut m: i64 = 4096;
     let mut chain = |x: i64| m = (m * x + 2048) >> 12;
     if s.side_conditions.tailwind > 0 {
@@ -2298,10 +2303,11 @@ fn stat_speed(state: &DoublesState, side: Side, slot: usize) -> i32 {
 /// one convention lets a stale entry tie or order the way PS's does.
 fn update_speed(state: &mut DoublesState) {
     let trick_room = state.trick_room.active;
+    let weather = effective_weather(state);
     for side in [Side::One, Side::Two] {
         for slot in 0..2 {
             // `effective_speed` is the stat negated under Trick Room.
-            let sp = effective_speed(state, side, slot).map(|sp| if trick_room { 10000 + sp as i32 } else { sp as i32 });
+            let sp = effective_speed_in(state, side, slot, weather).map(|sp| if trick_room { 10000 + sp as i32 } else { sp as i32 });
             let s = state.side_mut(side);
             if let (Some(idx), Some(sp)) = (s.active()[slot].pokemon_index, sp) {
                 s.speed_cache[idx as usize] = sp as i16;
@@ -2475,6 +2481,7 @@ fn resort_queue(state: &mut DoublesState, rng: &mut Gen5Rng, queue: &mut [Action
         return;
     }
     update_speed(state);
+    let weather = effective_weather(state);
     for a in queue.iter_mut() {
         // PS `getActionSpeed` (every re-sort) recomputes the priority from the
         // current ability: a Skill Swap'd Prankster boosts a queued Status move.
@@ -2492,7 +2499,7 @@ fn resort_queue(state: &mut DoublesState, rng: &mut Gen5Rng, queue: &mut [Action
         // Actions follow the pokemon: an Ally Switch moves it to the other slot.
         if let Some(sl) = (0..2).find(|&sl| state.side(a.side).active()[sl].pokemon_index == Some(a.pokemon_index)) {
             a.slot = sl;
-            if let Some(sp) = effective_speed(state, a.side, a.slot) {
+            if let Some(sp) = effective_speed_in(state, a.side, a.slot, weather) {
                 a.speed = sp;
             }
         } else {

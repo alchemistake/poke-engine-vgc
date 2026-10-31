@@ -114,14 +114,17 @@ fn speed_sort_by<T>(items: &mut [T], rng: &mut Gen5Rng, compare: impl Fn(&T, &T)
         return;
     }
     let mut sorted = 0usize;
+    let mut next_indexes: smallvec::SmallVec<[usize; 8]> = smallvec::SmallVec::new();
     while sorted + 1 < items.len() {
-        let mut next_indexes = vec![sorted];
+        next_indexes.clear();
+        next_indexes.push(sorted);
         for i in (sorted + 1)..items.len() {
             let delta = compare(&items[next_indexes[0]], &items[i]);
             if delta < 0 {
                 continue;
             } else if delta > 0 {
-                next_indexes = vec![i];
+                next_indexes.clear();
+                next_indexes.push(i);
             } else {
                 next_indexes.push(i);
             }
@@ -174,7 +177,7 @@ fn queue_slot_compare(a: &QueueSlot, b: &QueueSlot) -> i32 {
 /// the move. They sort with the moves, so their swaps in the selection sort
 /// reorder the speed-tied moves before the tie shuffle runs.
 fn commit_queue_sort(actions: &mut Vec<Action>, state: &DoublesState, rng: &mut Gen5Rng) {
-    let mut slots: Vec<QueueSlot> = Vec::with_capacity(actions.len() * 2);
+    let mut slots: smallvec::SmallVec<[QueueSlot; 8]> = smallvec::SmallVec::new();
     for (i, a) in actions.iter().enumerate() {
         let live = !state.side(a.side).active[a.slot].recharging;
         let pseudo_order = match a.choice.move_id {
@@ -194,8 +197,8 @@ fn commit_queue_sort(actions: &mut Vec<Action>, state: &DoublesState, rng: &mut 
         });
     }
     speed_sort_by(&mut slots, rng, queue_slot_compare);
-    let sorted: Vec<Action> = slots.iter().filter_map(|s| s.action).map(|i| actions[i].clone()).collect();
-    *actions = sorted;
+    let mut taken: smallvec::SmallVec<[Option<Action>; 4]> = actions.drain(..).map(Some).collect();
+    actions.extend(slots.iter().filter_map(|s| s.action).map(|i| taken[i].take().unwrap()));
 }
 
 fn side_tag(side: Side) -> &'static str {
@@ -2198,7 +2201,7 @@ fn ps_get_target_inner(
                 }
             }
             _ => {
-                let foes: Vec<usize> = (0..2).filter(|&s| alive(foe, s)).collect();
+                let foes: smallvec::SmallVec<[usize; 2]> = (0..2).filter(|&s| alive(foe, s)).collect();
                 if foes.is_empty() {
                     // PS `getRandomTarget` (sim/battle.ts) with no living foe: no draw;
                     // `randomFoe() || foe.active[0]` (the slot "directly across" is
@@ -2655,18 +2658,18 @@ fn pressure_extra_count(state: &DoublesState, action: &Action) -> i8 {
         // (Wonder Room, Sunny Day, ...); `allySide` / `allyTeam` no foes.
         || ty == "all";
     let single = matches!(ty, "normal" | "any" | "adjacentFoe" | "randomNormal");
-    let slots: Vec<usize> = if all_foes {
-        vec![0, 1]
+    let slots: smallvec::SmallVec<[usize; 2]> = if all_foes {
+        smallvec::smallvec![0, 1]
     } else if single && PRESSURE_TARGET.with(|c| c.get()).is_some() {
         // PS `pressureTargets` = the resolved target (post retarget / redirect).
         match PRESSURE_TARGET.with(|c| c.get()).flatten() {
-            Some((ts, tsl)) if ts == foe => vec![tsl],
-            _ => vec![],
+            Some((ts, tsl)) if ts == foe => smallvec::smallvec![tsl],
+            _ => smallvec::SmallVec::new(),
         }
     } else if single && action.target_loc > 0 {
-        vec![(action.target_loc - 1) as usize]
+        smallvec::smallvec![(action.target_loc - 1) as usize]
     } else {
-        vec![]
+        smallvec::SmallVec::new()
     };
     let extra = slots
         .into_iter()
@@ -5380,14 +5383,14 @@ fn execute_action_inner(
     let mut real_hit = false;
     // PS `move.hitTargets` (targets that were not immune / missed), for Magician's
     // `speedSort(hitTargets)`: the target's side and team index.
-    let mut magician_targets: Vec<(Side, PokemonIndex)> = Vec::new();
+    let mut magician_targets: smallvec::SmallVec<[(Side, PokemonIndex); 4]> = smallvec::SmallVec::new();
     // Cloud Nine / Air Lock `onEnd` (faint): the ability ending triggers
     // `eachEvent('WeatherChange')` — a speed sort. Set when such a holder
     // faints this move; consumed after the per-hit eachEvent.
     let mut weather_suppress_fainted = false;
     let mut weather_suppress_holder: Option<(Side, usize)> = None;
     // Targets that took a hit this move (PS `targetsCopy` of `afterMoveSecondaryEvent`).
-    let mut after_hit_targets: Vec<(Side, usize)> = Vec::new();
+    let mut after_hit_targets: smallvec::SmallVec<[(Side, usize); 4]> = smallvec::SmallVec::new();
     // Targets that got the `sparklingaria` volatile (PS data/moves.ts sparklingaria).
     let mut sparkling_marked: Vec<(Side, usize)> = Vec::new();
     let mut drop_landed = false;
@@ -5410,7 +5413,7 @@ fn execute_action_inner(
     // Moves a Copycat / Sleep Talk `onHit` ran (`useMove`) inside the hit loop.
     let mut copy_order: Vec<String> = Vec::new();
     let mut berserk_before: Vec<(Side, usize, i16)> = Vec::new();
-    let mut ee_before: Vec<(Side, usize, i16)> = Vec::new();
+    let mut ee_before: smallvec::SmallVec<[(Side, usize, i16); 4]> = smallvec::SmallVec::new();
 
     state.side_mut(side).active[slot].hit_number = 1;
     let faint_mark = state.faint_log.len();
@@ -13251,7 +13254,7 @@ fn damp_blocks_explosion(state: &DoublesState, side: Side, idx: PokemonIndex, ch
 /// TODO(PS parity): held items (Eject Button, Kee Berry, Maranga Berry, Red Card).
 fn after_move_secondary_ties(state: &mut DoublesState, rng: &mut Gen5Rng, targets: &[(Side, usize)]) {
     let mut hs: Vec<(i64, i32, i64)> = Vec::new();
-    let mut seen: Vec<(Side, usize)> = Vec::new();
+    let mut seen: smallvec::SmallVec<[(Side, usize); 4]> = smallvec::SmallVec::new();
     for &(ts, tsl) in targets {
         if seen.contains(&(ts, tsl)) {
             continue;
@@ -13324,7 +13327,7 @@ fn end_of_turn(
     ee_switches: &[(Side, usize, usize)],
 ) {
     // PS `runAction`: HP of every active before the action, for `EmergencyExit`.
-    let hp_before: Vec<(Side, usize, i16)> = [(Side::One, 0usize), (Side::One, 1), (Side::Two, 0), (Side::Two, 1)]
+    let hp_before: smallvec::SmallVec<[(Side, usize, i16); 4]> = [(Side::One, 0usize), (Side::One, 1), (Side::Two, 0), (Side::Two, 1)]
         .iter()
         .filter_map(|&(sd, sl)| state.side(sd).slot_pokemon(sl).map(|p| (sd, sl, p.hp)))
         .collect();
@@ -14305,17 +14308,14 @@ fn end_of_turn(
             if !state.side(side).slot_pokemon(sl).map(|p| p.hp > 0).unwrap_or(false) {
                 continue;
             }
-            let kept: Vec<(Side, usize, i16, u32, usize)> = state.side(side).damaged_by[pidx as usize]
-                .iter()
-                .filter(|e| {
-                    // PS `source.isActive`: the attacker itself is on the field and alive.
-                    (0..2).any(|asl| {
-                        state.side(e.0).active[asl].pokemon_index.map(|x| x as usize) == Some(e.4)
-                            && state.side(e.0).slot_pokemon(asl).map(|p| p.hp > 0).unwrap_or(false)
-                    })
+            let mut kept = std::mem::take(&mut state.side_mut(side).damaged_by[pidx as usize]);
+            kept.retain(|e| {
+                // PS `source.isActive`: the attacker itself is on the field and alive.
+                (0..2).any(|asl| {
+                    state.side(e.0).active[asl].pokemon_index.map(|x| x as usize) == Some(e.4)
+                        && state.side(e.0).slot_pokemon(asl).map(|p| p.hp > 0).unwrap_or(false)
                 })
-                .copied()
-                .collect();
+            });
             state.side_mut(side).damaged_by[pidx as usize] = kept;
         }
     }

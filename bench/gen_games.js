@@ -3,13 +3,16 @@
 // harness, played once in pokemon-showdown to record every choice.
 //   bench/games.json    engine batch input (same format as fuzz --batch)
 //   bench/ps_games.json PS replay script: seed, teams, choose() calls
-// Usage: node bench/gen_games.js [from=0] [to=100]
+// Usage: node bench/gen_games.js [from=0] [to=100] [prefix=bench/]
+// (a prefix other than bench/ writes <prefix>games.json / <prefix>ps_games.json,
+// e.g. a larger test set)
 const fs = require('fs');
 const path = require('path');
 const F = require('./load_fuzz.js');
 
 const from = +(process.argv[2] || 0);
 const to = +(process.argv[3] || 100);
+const prefix = process.argv[4] || path.join(__dirname, path.sep);
 
 const Battle = F.ps().Battle;
 const origChoose = Battle.prototype.choose;
@@ -41,7 +44,7 @@ for (let s = from; s < to; s++) {
   log = null;
   engine.push(F.engineInput(battleSeed, meta, meta.turns, meta.turns.length));
 }
-fs.writeFileSync(path.join(__dirname, 'games.json'), JSON.stringify(engine));
-fs.writeFileSync(path.join(__dirname, 'ps_games.json'), JSON.stringify(psGames));
+fs.writeFileSync(prefix + 'games.json', JSON.stringify(engine));
+fs.writeFileSync(prefix + 'ps_games.json', JSON.stringify(psGames));
 const turns = psGames.reduce((a, g) => a + g.turns, 0);
 console.log(`wrote ${psGames.length} games (${turns} turns)`);

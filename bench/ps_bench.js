@@ -2,11 +2,11 @@
 // Time pokemon-showdown on the benchmark games: replay each recorded game
 // (new Battle + the same accepted choose() calls), no snapshots or tracing.
 // Prints the best of --reps runs, in microseconds for all games.
-// Usage: node bench/ps_bench.js [reps=5]
+// Usage: node bench/ps_bench.js [reps=5] [ps_games.json]
 const path = require('path');
 const PS_DIR = path.resolve(__dirname, '..', '..', 'pokemon-showdown');
 const Sim = require(path.join(PS_DIR, 'dist', 'sim'));
-const games = require('./ps_games.json');
+const games = require(process.argv[3] ? path.resolve(process.argv[3]) : './ps_games.json');
 const FORMAT = Sim.Dex.formats.get('gen9championsvgc2026regmc');
 const reps = +(process.argv[2] || 5);
 

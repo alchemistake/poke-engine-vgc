@@ -524,6 +524,14 @@ impl DoublesSide {
         &mut self.slots[slot]
     }
 
+    /// One on-field slot, for changes to fields that `events::vol_mask` does
+    /// not read (its cached mask is kept). Debug builds check every cache hit,
+    /// so a volatile write through here fails the debug fuzz run.
+    #[inline]
+    pub fn slot_scratch_mut(&mut self, slot: usize) -> &mut ActiveSlot {
+        &mut self.slots[slot]
+    }
+
     /// `compute(slot)`, cached until the slot is next borrowed mutably.
     #[inline]
     pub fn cached_conds(&self, slot: usize, compute: impl Fn(&ActiveSlot) -> u64) -> u64 {

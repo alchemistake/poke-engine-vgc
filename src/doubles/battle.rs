@@ -201,6 +201,29 @@ fn commit_queue_sort(actions: &mut Vec<Action>, state: &DoublesState, rng: &mut 
     actions.extend(slots.iter().filter_map(|s| s.action).map(|i| taken[i].take().unwrap()));
 }
 
+/// Move names as `Choices` prints them (`{}`), indexed by `Choices`.
+static MOVE_NAMES: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
+    (0..=u16::MAX)
+        .map(Choices::from)
+        .enumerate()
+        .take_while(|&(i, m)| m as usize == i)
+        .map(|(_, m)| &*Box::leak(m.to_string().into_boxed_str()))
+        .collect()
+});
+
+/// A move-order entry, `"<side><slot>:<species>:<MOVE>"` (fuzz snapshot).
+fn order_entry(side: Side, slot: usize, species: &str, m: Choices) -> String {
+    let mv = MOVE_NAMES[m as usize];
+    let mut e = String::with_capacity(4 + species.len() + mv.len());
+    e.push_str(side_tag(side));
+    e.push((b'0' + slot as u8) as char);
+    e.push(':');
+    e.push_str(species);
+    e.push(':');
+    e.push_str(mv);
+    e
+}
+
 fn side_tag(side: Side) -> &'static str {
     match side {
         Side::One => "A",
@@ -3026,13 +3049,7 @@ fn execute_action_inner(
         if crate::doubles::debug::flags().dmg {
             eprintln!("PUSHORDER {} {}", name, action.choice.move_id);
         }
-        move_order.push(format!(
-            "{}{}:{}:{}",
-            side_tag(side),
-            slot,
-            name,
-            action.choice.move_id
-        ))
+        move_order.push(order_entry(side, slot, name, action.choice.move_id))
     };
 
     // `useMove` called by another move (Copycat, Instruct, ...). A locked move
@@ -8006,13 +8023,7 @@ fn execute_action_inner(
             };
             if let Some(bsl) = bouncer {
                 let bidx = state.side(cs).active()[bsl].pokemon_index.unwrap();
-                extra_order.push(format!(
-                    "{}{}:{}:{}",
-                    side_tag(cs),
-                    bsl,
-                    state.side(cs).species_names[bidx as usize],
-                    choice.move_id
-                ));
+                extra_order.push(order_entry(cs, bsl, state.side(cs).species_names[bidx as usize], choice.move_id));
                 if !apply_side_condition(state, side, sc.condition) {
                     move_failed = true;
                 }

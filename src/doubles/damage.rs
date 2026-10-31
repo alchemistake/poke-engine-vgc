@@ -72,6 +72,36 @@ pub fn set_scrappy_move(on: bool) {
     SCRAPPY_MOVE.with(|g| g.set(on));
 }
 
+thread_local! {
+    /// The running move's user had Infiltrator when the move started
+    /// (`move.infiltrates` from `onModifyMove`): a Mummy swap mid-move does not
+    /// undo it.
+    static INFILTRATOR_MOVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub fn set_infiltrator_move(on: bool) {
+    INFILTRATOR_MOVE.with(|g| g.set(on));
+}
+
+pub fn infiltrator_move() -> bool {
+    INFILTRATOR_MOVE.with(|g| g.get())
+}
+
+thread_local! {
+    /// The running move ignores abilities (Mold Breaker family): PS
+    /// `suppressingAbility` for any other pokemon, e.g. a dragged-in Levitate
+    /// holder meeting the hazards.
+    static MOLD_MOVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub fn set_mold_move(on: bool) {
+    MOLD_MOVE.with(|g| g.set(on));
+}
+
+pub fn mold_move() -> bool {
+    MOLD_MOVE.with(|g| g.get())
+}
+
 /// PS `isGrounded` for a Ground move against a Smack Down'd holder: the
 /// `smackdown` volatile grounds it before the Flying typing and Levitate are
 /// checked (data/moves.ts smackdown, sim/pokemon.ts isGrounded). The chart's

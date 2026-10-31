@@ -480,6 +480,10 @@ pub struct DoublesSide {
     /// (turn start, residual, queue re-sort). `eachEvent`, `runSwitch` and
     /// Residual handlers sort by it; a fresh switch-in keeps a stale value.
     pub speed_cache: [i16; 6],
+    /// PS `abilityState.effectOrder` per team member: when its ability state
+    /// started (switch-in). Breaks speed ties in redirect order
+    /// (`compareRedirectOrder`).
+    pub ability_order: [u32; 6],
     /// PS `side.pokemon` order (team indices). Switch-ins swap positions
     /// (PS `switchIn`); random drag-ins sample from positions 2.. of it.
     pub ps_order: [usize; 6],
@@ -692,6 +696,9 @@ pub struct MoveScratch {
     /// effects are running: PS `spreadDamage` already left them at 0 HP, so
     /// their abilities no longer act (Flower Veil).
     pub spread_ko_later: std::cell::Cell<u8>,
+    /// A spread hit's Substitute drain heal was already applied in the
+    /// damage pre-pass (`substitute.onTryPrimaryHit`), so the per-target loop skips it.
+    pub sub_drain_done: std::cell::Cell<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -750,6 +757,12 @@ pub struct DoublesState {
     /// wiped out at once, PS gives the win to the side of the last one
     /// (`checkWin(faintData)`, sim/battle.ts).
     pub faint_log: Vec<Side>,
+    /// Index in `faint_log` of a Destiny Bond victim of the running action:
+    /// PS queues that faint during `faintMessages`, after the hit's other
+    /// faints, so it stays last (`checkWin` reads the last one).
+    pub db_faint_pos: Option<usize>,
+    /// PS `battle.effectOrder` counter for `ability_order`.
+    pub effect_order: u32,
     /// Attacker of a move hit that fainted a pokemon, with its
     /// `onSourceAfterFaint` ability (Moxie, Chilling Neigh, Grim Neigh): (side,
     /// slot, team index, ability). PS runs that event once per `resolveFaints`
@@ -1336,6 +1349,7 @@ impl DoublesState {
             team_boosts: std::array::from_fn(|_| TeamBoosts::default()),
             toxic_stage: [0; 6],
             speed_cache: [0; 6],
+            ability_order: [0; 6],
             ps_order: [0, 1, 2, 3, 4, 5],
             fainted_in_slot: [None, None],
             wish: [None, None],
@@ -1360,6 +1374,7 @@ impl DoublesState {
             team_boosts: std::array::from_fn(|_| TeamBoosts::default()),
             toxic_stage: [0; 6],
             speed_cache: [0; 6],
+            ability_order: [0; 6],
             ps_order: [0, 1, 2, 3, 4, 5],
             fainted_in_slot: [None, None],
             wish: [None, None],
@@ -1437,6 +1452,8 @@ impl DoublesState {
             db_alive_pending: Vec::new(),
             pending_disguise: Vec::new(),
             faint_log: Vec::new(),
+            db_faint_pos: None,
+            effect_order: 0,
             pending_after_faint: None,
         };
         state

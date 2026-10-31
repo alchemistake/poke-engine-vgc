@@ -8306,7 +8306,7 @@ fn execute_action_inner(
         // Sheer Force deleted the secondaries outright (PS data/abilities.ts
         // sheerforce.onModifyMove), so Shield Dust has no `self` entry to keep.
         if let Some(secs) = choice.secondaries.as_ref().filter(|_| !custom_secondary || (shield_dust && !sheer_force)) {
-            for sec in secs {
+            for sec in secs.iter() {
                 if shield_dust && sec.target != MoveTarget::User {
                     continue;
                 }

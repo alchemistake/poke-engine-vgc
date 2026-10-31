@@ -8,7 +8,9 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::LazyLock;
 
-pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
+pub static MOVES: LazyLock<MoveTable> = LazyLock::new(|| MoveTable::from_map(build_moves()));
+
+fn build_moves() -> HashMap<Choices, Choice> {
     let mut moves: HashMap<Choices, Choice> = HashMap::new();
     moves.insert(
         Choices::NONE,
@@ -75,7 +77,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -104,7 +106,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -133,7 +135,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -189,7 +191,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -363,7 +365,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -381,7 +383,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 ..Default::default()
             },
             pp: 12,
-            secondaries: Some(vec![Secondary { chance: 100.0, target: MoveTarget::Opponent, effect: Effect::IfStatsRaised { status: None } }]),
+            secondaries: Some(vec![Secondary { chance: 100.0, target: MoveTarget::Opponent, effect: Effect::IfStatsRaised { status: None } }].into()),
             ..Default::default()
         },
     );
@@ -494,7 +496,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 8,
             ..Default::default()
         },
@@ -522,7 +524,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -603,7 +605,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -768,7 +770,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -889,7 +891,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -918,7 +920,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -947,7 +949,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -1031,7 +1033,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
-            }]),
+            }].into()),
             crash: Some(0.5),
             pp: 12,
             ..Default::default()
@@ -1114,7 +1116,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 50.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::POISON),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -1396,7 +1398,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 10.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -1419,7 +1421,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 30.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -1467,7 +1469,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -1506,7 +1508,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 10.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
-            }]),
+            }].into()),
             pp: 12,
             crit_ratio: 2,
             ..Default::default()
@@ -1527,7 +1529,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -1557,7 +1559,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -1580,7 +1582,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 10.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::FREEZE),
-                }]),
+                }].into()),
                 pp: 8,
                 ..Default::default()
             },
@@ -1607,7 +1609,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 10.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::FREEZE),
-                }]),
+                }].into()),
                 pp: 8,
                 ..Default::default()
             },
@@ -1629,7 +1631,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 10.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::FREEZE),
-                }]),
+                }].into()),
                 pp: 8,
                 ..Default::default()
             },
@@ -1684,7 +1686,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 20.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
-            }]),
+            }].into()),
             pp: 8,
             ..Default::default()
         },
@@ -1721,7 +1723,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -1759,7 +1761,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 20.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
-            }]),
+            }].into()),
             pp: 8,
             ..Default::default()
         },
@@ -1780,7 +1782,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 10.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -1877,7 +1879,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
-            }]),
+            }].into()),
             pp: 8,
             charge_setup: ChargeSetup::Always { turns: 1 },
             ..Default::default()
@@ -1957,7 +1959,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -2033,7 +2035,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -2066,7 +2068,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -2095,7 +2097,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -2125,7 +2127,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -2154,7 +2156,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -2200,7 +2202,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -2254,7 +2256,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -2349,7 +2351,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 ..Default::default()
             },
             pp: 8,
-            secondaries: Some(vec![Secondary { chance: 100.0, target: MoveTarget::Opponent, effect: Effect::IfStatsRaised { status: Some(PokemonStatus::BURN) } }]),
+            secondaries: Some(vec![Secondary { chance: 100.0, target: MoveTarget::Opponent, effect: Effect::IfStatsRaised { status: Some(PokemonStatus::BURN) } }].into()),
             ..Default::default()
         },
     );
@@ -2383,7 +2385,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 100.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -2544,7 +2546,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -2597,7 +2599,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 100.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -2619,7 +2621,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 100.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -2648,7 +2650,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -2943,7 +2945,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -3042,7 +3044,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 10.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -3072,7 +3074,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -3102,7 +3104,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -3457,7 +3459,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 10.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::POISON),
-            }]),
+            }].into()),
             pp: 20,
             crit_ratio: 2,
             ..Default::default()
@@ -3489,7 +3491,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 16,
                 ..Default::default()
             },
@@ -3520,7 +3522,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 16,
                 ..Default::default()
             },
@@ -3551,7 +3553,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -3650,7 +3652,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 20.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -3894,7 +3896,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 8,
                 self_boosts: Some(StatBoosts { attack: 0, defense: 2, special_attack: 0, special_defense: 0, speed: 0, accuracy: 0, evasion: 0 }),
                 self_boost_chance: 50.0,
@@ -3926,7 +3928,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 8,
                 self_boosts: Some(StatBoosts { attack: 0, defense: 2, special_attack: 0, special_defense: 0, speed: 0, accuracy: 0, evasion: 0 }),
                 self_boost_chance: 50.0,
@@ -4085,7 +4087,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -4165,7 +4167,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 20.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
-                }]),
+                }].into()),
                 pp: 12,
                 ..Default::default()
             },
@@ -4291,7 +4293,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-            }]),
+            }].into()),
             multihit: 2,
             pp: 8,
             ..Default::default()
@@ -4484,7 +4486,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -4665,7 +4667,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 20.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -4827,7 +4829,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -4901,7 +4903,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 100.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
-            }]),
+            }].into()),
             pp: 8,
             ..Default::default()
         },
@@ -4929,7 +4931,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -5128,7 +5130,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -5166,7 +5168,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 10.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -5253,7 +5255,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 12,
                 ..Default::default()
             },
@@ -5283,7 +5285,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 12,
                 ..Default::default()
             },
@@ -5341,7 +5343,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             crit_ratio: 2,
             ..Default::default()
@@ -5429,7 +5431,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 10.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -5513,7 +5515,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 100.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -5721,7 +5723,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 8,
             ..Default::default()
         },
@@ -5749,7 +5751,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -5769,7 +5771,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 20.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -5820,7 +5822,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 30.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::BURN),
-                }]),
+                }].into()),
                 pp: 8,
                 ..Default::default()
             },
@@ -5846,7 +5848,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 10.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::BURN),
-                }]),
+                }].into()),
                 pp: 8,
                 ..Default::default()
             },
@@ -5868,7 +5870,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 10.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::BURN),
-                }]),
+                }].into()),
                 pp: 8,
                 ..Default::default()
             },
@@ -5899,7 +5901,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
                 },
-            ]),
+            ].into()),
             pp: 16,
             ..Default::default()
         },
@@ -5928,7 +5930,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -5988,7 +5990,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 10.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -6144,7 +6146,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -6170,7 +6172,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 10.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::BURN),
-                }]),
+                }].into()),
                 pp: 16,
                 ..Default::default()
             },
@@ -6191,7 +6193,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 10.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::BURN),
-                }]),
+                }].into()),
                 pp: 16,
                 ..Default::default()
             },
@@ -6213,7 +6215,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 10.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -6234,7 +6236,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 10.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
-            }]),
+            }].into()),
             recoil: Some(0.33),
             pp: 16,
             ..Default::default()
@@ -6289,7 +6291,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -6401,7 +6403,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -6538,7 +6540,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 8,
             ..Default::default()
         },
@@ -6614,7 +6616,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -6683,7 +6685,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 10.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::FREEZE),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -6705,7 +6707,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
-            }]),
+            }].into()),
             pp: 8,
             charge_setup: ChargeSetup::OnlySnow { turns: 1 },
             ..Default::default()
@@ -6726,7 +6728,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 10.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::FREEZE),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -7208,7 +7210,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -7455,7 +7457,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -7644,7 +7646,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 30.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::POISON),
-                }]),
+                }].into()),
                 pp: 8,
                 ..Default::default()
             },
@@ -7666,7 +7668,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 30.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::POISON),
-                }]),
+                }].into()),
                 pp: 8,
                 ..Default::default()
             },
@@ -7852,7 +7854,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -8031,7 +8033,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -8088,7 +8090,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 10.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::BURN),
-                }]),
+                }].into()),
                 pp: 12,
                 ..Default::default()
             },
@@ -8111,7 +8113,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 10.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::BURN),
-                }]),
+                }].into()),
                 pp: 12,
                 ..Default::default()
             },
@@ -8884,7 +8886,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 30.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
-                }]),
+                }].into()),
                 pp: 12,
                 ..Default::default()
             },
@@ -8907,7 +8909,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 30.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
-                }]),
+                }].into()),
                 pp: 12,
                 ..Default::default()
             },
@@ -9035,7 +9037,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 10.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -9157,7 +9159,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 10.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::FREEZE),
-                }]),
+                }].into()),
                 pp: 12,
                 ..Default::default()
             },
@@ -9178,7 +9180,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 10.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::FREEZE),
-                }]),
+                }].into()),
                 pp: 12,
                 ..Default::default()
             },
@@ -9201,7 +9203,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
-            }]),
+            }].into()),
             pp: 8,
             charge_setup: ChargeSetup::OnlySnow { turns: 1 },
             ..Default::default()
@@ -9232,7 +9234,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
                 },
-            ]),
+            ].into()),
             pp: 16,
             ..Default::default()
         },
@@ -9285,7 +9287,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 10.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::FREEZE),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -9338,7 +9340,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -9407,7 +9409,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -9483,7 +9485,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -9504,7 +9506,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 100.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
-            }]),
+            }].into()),
             pp: 8,
             ..Default::default()
         },
@@ -9617,7 +9619,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -9647,7 +9649,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -10054,7 +10056,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -10203,7 +10205,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: -1,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -10321,7 +10323,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 30.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::PARALYZE),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -10343,7 +10345,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 30.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::PARALYZE),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -10448,7 +10450,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -10504,7 +10506,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 30.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -10556,7 +10558,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -10586,7 +10588,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -10633,7 +10635,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -10697,7 +10699,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -10726,7 +10728,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 8,
                 ..Default::default()
             },
@@ -10755,7 +10757,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 8,
                 ..Default::default()
             },
@@ -10810,7 +10812,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -11036,7 +11038,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 50.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::TOXIC),
-            }]),
+            }].into()),
             pp: 8,
             ..Default::default()
         },
@@ -11076,7 +11078,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 20.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
-            }]),
+            }].into()),
             drain: Some(0.5),
             pp: 16,
             ..Default::default()
@@ -11278,7 +11280,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -11378,7 +11380,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 12,
                 ..Default::default()
             },
@@ -11410,7 +11412,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 12,
                 ..Default::default()
             },
@@ -11609,7 +11611,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: -1,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -11657,7 +11659,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 8,
                 ..Default::default()
             },
@@ -11687,7 +11689,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 8,
                 ..Default::default()
             },
@@ -11746,7 +11748,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -11820,7 +11822,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 100.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::POISON),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -11841,7 +11843,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -11871,7 +11873,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: -1,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -11906,7 +11908,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: -1,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 12,
                 ..Default::default()
             },
@@ -11936,7 +11938,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: -1,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 12,
                 ..Default::default()
             },
@@ -11966,7 +11968,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -11994,7 +11996,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: -1,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -12077,7 +12079,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 12,
                 ..Default::default()
             },
@@ -12106,7 +12108,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 12,
                 ..Default::default()
             },
@@ -12136,7 +12138,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -12225,7 +12227,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -12254,7 +12256,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: -1,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -12392,7 +12394,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::POISON),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -12413,7 +12415,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 100.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -12478,7 +12480,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: -1,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -12542,7 +12544,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 8,
             ..Default::default()
         },
@@ -12741,7 +12743,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -13116,7 +13118,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -13160,7 +13162,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 30.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::TOXIC),
-                }]),
+                }].into()),
                 pp: 16,
                 ..Default::default()
             },
@@ -13183,7 +13185,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 50.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::TOXIC),
-                }]),
+                }].into()),
                 pp: 16,
                 ..Default::default()
             },
@@ -13270,7 +13272,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::POISON),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -13311,7 +13313,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 20.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::POISON),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -13332,7 +13334,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 30.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::POISON),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -13354,7 +13356,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 10.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::POISON),
-            }]),
+            }].into()),
             pp: 20,
             crit_ratio: 2,
             ..Default::default()
@@ -13435,7 +13437,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -13491,7 +13493,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 10.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::FREEZE),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -13639,7 +13641,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -13742,7 +13744,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 10.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -13788,7 +13790,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 12,
                 ..Default::default()
             },
@@ -13817,7 +13819,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 12,
                 ..Default::default()
             },
@@ -13993,7 +13995,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -14129,7 +14131,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 10.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
-            }]),
+            }].into()),
             pp: 8,
             ..Default::default()
         },
@@ -14336,7 +14338,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -14404,7 +14406,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -14555,7 +14557,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 10.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::SLEEP),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -14796,7 +14798,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 20.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -14861,7 +14863,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 30.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-                }]),
+                }].into()),
                 pp: 12,
                 ..Default::default()
             },
@@ -14892,7 +14894,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 16,
                 ..Default::default()
             },
@@ -14922,7 +14924,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 16,
                 ..Default::default()
             },
@@ -14993,7 +14995,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 16,
                 ..Default::default()
             },
@@ -15023,7 +15025,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 16,
                 ..Default::default()
             },
@@ -15077,7 +15079,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -15182,7 +15184,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 50.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
-            }]),
+            }].into()),
             pp: 8,
             ..Default::default()
         },
@@ -15313,7 +15315,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 20.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -15411,7 +15413,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -15520,7 +15522,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -15585,7 +15587,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
-            }]),
+            }].into()),
             pp: 8,
             ..Default::default()
         },
@@ -15605,7 +15607,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -15666,7 +15668,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 8,
             ..Default::default()
         },
@@ -15745,7 +15747,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -15773,7 +15775,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -15872,7 +15874,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -15950,7 +15952,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 20.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::POISON),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -16099,7 +16101,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 10.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -16146,7 +16148,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 8,
             ..Default::default()
         },
@@ -16201,7 +16203,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 100.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -16258,7 +16260,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -16326,7 +16328,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-            }]),
+            }].into()),
             pp: 8,
             crit_ratio: 2,
             charge_setup: ChargeSetup::Always { turns: 1 },
@@ -16473,7 +16475,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 40.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::POISON),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -16494,7 +16496,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 30.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::POISON),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -16516,7 +16518,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::POISON),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -16536,7 +16538,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 10.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::POISON),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -16639,7 +16641,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 40.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::POISON),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -16661,7 +16663,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 40.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::POISON),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -16738,7 +16740,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -16800,7 +16802,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 30.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-                }]),
+                }].into()),
                 pp: 16,
                 ..Default::default()
             },
@@ -16822,7 +16824,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 30.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-                }]),
+                }].into()),
                 pp: 16,
                 ..Default::default()
             },
@@ -16958,7 +16960,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -16979,7 +16981,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 100.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::SPARKLINGARIA),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -17182,7 +17184,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -17259,7 +17261,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -17328,7 +17330,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 8,
             ..Default::default()
         },
@@ -17367,7 +17369,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::BURN),
-            }]),
+            }].into()),
             pp: 8,
             ..Default::default()
         },
@@ -17388,7 +17390,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -17455,7 +17457,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -17512,7 +17514,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -17645,7 +17647,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 20.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -17754,7 +17756,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -17783,7 +17785,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         accuracy: 0,
                         evasion: 0,
                     }),
-                }]),
+                }].into()),
                 pp: 20,
                 ..Default::default()
             },
@@ -18333,7 +18335,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 100.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::SYRUPBOMB),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -18942,7 +18944,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 10.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::PARALYZE),
-                }]),
+                }].into()),
                 pp: 12,
                 ..Default::default()
             },
@@ -18968,7 +18970,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 30.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::PARALYZE),
-                }]),
+                }].into()),
                 pp: 12,
                 ..Default::default()
             },
@@ -18990,7 +18992,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 30.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::PARALYZE),
-                }]),
+                }].into()),
                 pp: 12,
                 ..Default::default()
             },
@@ -19017,7 +19019,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 10.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::PARALYZE),
-                }]),
+                }].into()),
                 pp: 16,
                 ..Default::default()
             },
@@ -19038,7 +19040,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 10.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::PARALYZE),
-                }]),
+                }].into()),
                 pp: 16,
                 ..Default::default()
             },
@@ -19105,7 +19107,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
                 },
-            ]),
+            ].into()),
             pp: 16,
             ..Default::default()
         },
@@ -19134,7 +19136,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -19156,7 +19158,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 10.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -19176,7 +19178,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 10.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -19320,7 +19322,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -19460,7 +19462,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -19524,7 +19526,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                         target: MoveTarget::Opponent,
                         effect: Effect::Status(PokemonStatus::FREEZE),
                     },
-                ]),
+                ].into()),
                 pp: 12,
                 ..Default::default()
             },
@@ -19602,7 +19604,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     target: MoveTarget::Opponent,
                     effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
                 },
-            ]),
+            ].into()),
             pp: 12,
             crit_ratio: 2,
             ..Default::default()
@@ -19686,7 +19688,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -19738,7 +19740,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 20.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::POISON),
-            }]),
+            }].into()),
             multihit: 2,
             pp: 20,
             ..Default::default()
@@ -19760,7 +19762,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 20.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -19782,7 +19784,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 100.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -20066,7 +20068,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 10.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
-            }]),
+            }].into()),
             recoil: Some(0.33),
             pp: 16,
             ..Default::default()
@@ -20128,7 +20130,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 20.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -20202,7 +20204,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 20.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::CONFUSION),
-            }]),
+            }].into()),
             pp: 20,
             ..Default::default()
         },
@@ -20434,7 +20436,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 10.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::SLEEP),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -20475,7 +20477,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 20.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::Status(PokemonStatus::PARALYZE),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -20807,7 +20809,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 100.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::PARALYZE),
-                }]),
+                }].into()),
                 pp: 8,
                 ..Default::default()
             },
@@ -20830,7 +20832,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     chance: 100.0,
                     target: MoveTarget::Opponent,
                     effect: Effect::Status(PokemonStatus::PARALYZE),
-                }]),
+                }].into()),
                 pp: 8,
                 ..Default::default()
             },
@@ -20853,7 +20855,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 20.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-            }]),
+            }].into()),
             pp: 16,
             ..Default::default()
         },
@@ -20874,7 +20876,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                 chance: 30.0,
                 target: MoveTarget::Opponent,
                 effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-            }]),
+            }].into()),
             pp: 12,
             ..Default::default()
         },
@@ -20904,7 +20906,7 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
                     accuracy: 0,
                     evasion: 0,
                 }),
-            }]),
+            }].into()),
             ..Default::default()
         },
     );
@@ -20917,7 +20919,50 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
     apply_champions_modifiers(&mut moves);
 
     moves
-});
+}
+
+/// Move data indexed by `Choices as usize` (no hashing on lookup). Each
+/// move's `secondaries` list is leaked once to a `'static` slice, so cloning
+/// a `Choice` does not allocate.
+pub struct MoveTable(Vec<Option<Choice>>);
+
+impl MoveTable {
+    fn from_map(map: HashMap<Choices, Choice>) -> MoveTable {
+        let mut v: Vec<Option<Choice>> = Vec::new();
+        for (k, mut c) in map {
+            if let Some(std::borrow::Cow::Owned(list)) = c.secondaries.take() {
+                c.secondaries = Some(std::borrow::Cow::Borrowed(Box::leak(list.into_boxed_slice())));
+            }
+            let i = k as usize;
+            if v.len() <= i {
+                v.resize_with(i + 1, || None);
+            }
+            v[i] = Some(c);
+        }
+        MoveTable(v)
+    }
+    #[inline]
+    pub fn get(&self, k: &Choices) -> Option<&Choice> {
+        match self.0.get(*k as usize) {
+            Some(Some(c)) => Some(c),
+            _ => None,
+        }
+    }
+    pub fn contains_key(&self, k: &Choices) -> bool {
+        self.get(k).is_some()
+    }
+    pub fn iter(&self) -> impl Iterator<Item = (Choices, &Choice)> {
+        self.0.iter().filter_map(|c| c.as_ref().map(|c| (c.move_id, c)))
+    }
+}
+
+impl std::ops::Index<&Choices> for MoveTable {
+    type Output = Choice;
+    #[inline]
+    fn index(&self, k: &Choices) -> &Choice {
+        self.get(k).expect("move not in MOVES")
+    }
+}
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum MoveCategory {
@@ -22146,7 +22191,7 @@ pub struct Choice {
     pub status: Option<Status>,
     pub volatile_status: Option<VolatileStatus>,
     pub side_condition: Option<SideCondition>,
-    pub secondaries: Option<Vec<Secondary>>,
+    pub secondaries: Option<std::borrow::Cow<'static, [Secondary]>>,
 
     pub target: MoveTarget,
 
@@ -22251,9 +22296,9 @@ impl Choice {
     }
     pub fn add_or_create_secondaries(&mut self, secondary: Secondary) {
         if let Some(secondaries) = &mut self.secondaries {
-            secondaries.push(secondary);
+            secondaries.to_mut().push(secondary);
         } else {
-            self.secondaries = Some(vec![secondary]);
+            self.secondaries = Some(vec![secondary].into());
         }
     }
     pub fn remove_effects_for_protect(&mut self) {
@@ -22399,7 +22444,7 @@ fn apply_champions_modifiers(moves: &mut HashMap<Choices, Choice>) {
         chance: 20.0,
         target: MoveTarget::Opponent,
         effect: Effect::VolatileStatus(PokemonVolatileStatus::FLINCH),
-    }]);
+    }].into());
     moves.get_mut(&Choices::MAKEITRAIN).unwrap().base_power = 120.0;
     moves.get_mut(&Choices::MAKEITRAIN).unwrap().accuracy = 95.0;
     moves.get_mut(&Choices::MAKEITRAIN).unwrap().boost = Some(Boost {
@@ -22425,7 +22470,7 @@ fn apply_champions_modifiers(moves: &mut HashMap<Choices, Choice>) {
             speed: 0,
             accuracy: 0, evasion: 0,
         }),
-    }]);
+    }].into());
     moves.get_mut(&Choices::MOUNTAINGALE).unwrap().base_power = 120.0;
     moves.get_mut(&Choices::NIGHTDAZE).unwrap().base_power = 90.0;
     moves.get_mut(&Choices::PSYSHIELDBASH).unwrap().base_power = 90.0;

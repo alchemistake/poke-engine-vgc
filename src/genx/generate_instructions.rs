@@ -988,7 +988,7 @@ fn compare_health_with_damage_multiples(max_damage: i16, health: i16) -> (i16, i
 fn get_instructions_from_secondaries(
     state: &mut State,
     attacker_choice: &Choice,
-    secondaries: &Vec<Secondary>,
+    secondaries: &[Secondary],
     side_reference: &SideReference,
     incoming_instructions: StateInstructions,
     hit_sub: bool,

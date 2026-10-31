@@ -2048,7 +2048,7 @@ pub fn ability_modify_attack_being_used(
         }
         Abilities::SERENEGRACE => {
             if let Some(secondaries) = &mut attacker_choice.secondaries {
-                for secondary in secondaries.iter_mut() {
+                for secondary in secondaries.to_mut().iter_mut() {
                     secondary.chance *= 2.0;
                 }
             }
@@ -2646,7 +2646,7 @@ pub fn ability_modify_attack_against(
         }
         Abilities::SHIELDDUST => {
             if let Some(secondaries) = &mut attacker_choice.secondaries {
-                for secondary in secondaries.iter_mut() {
+                for secondary in secondaries.to_mut().iter_mut() {
                     if secondary.target == MoveTarget::Opponent {
                         secondary.chance = 0.0;
                     }

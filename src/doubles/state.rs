@@ -447,7 +447,7 @@ pub struct DoublesSide {
     pub side_conditions: SideConditions,
     /// Original species names (including formes) for each team slot, used for
     /// name-based target matching in the replay test.
-    pub species_names: [String; 6],
+    pub species_names: [&'static str; 6],
     /// Gender per team member: "M" / "F" / None (genderless). Used by Attract.
     pub genders: [Option<String>; 6],
     /// Stat boosts per team member (see `TeamBoosts`).
@@ -1030,6 +1030,25 @@ pub fn compute_stats(
     (hp, atk, def, spa, spd, spe)
 }
 
+thread_local! {
+    static INTERNED: std::cell::RefCell<std::collections::HashSet<&'static str>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+/// A `&'static` copy of a name (species / forme names): each distinct name
+/// is leaked once, so states can hold names without cloning strings.
+pub fn intern(name: &str) -> &'static str {
+    INTERNED.with(|set| {
+        let mut set = set.borrow_mut();
+        if let Some(&s) = set.get(name) {
+            return s;
+        }
+        let s: &'static str = Box::leak(name.to_string().into_boxed_str());
+        set.insert(s);
+        s
+    })
+}
+
 /// Species data resolved from a team member's species name.
 #[derive(Clone, Copy)]
 struct SpeciesInfo {
@@ -1169,7 +1188,7 @@ impl DoublesState {
             slots: [ActiveSlot::empty(), ActiveSlot::empty()],
             cond_cache: Default::default(),
             side_conditions: SideConditions::default(),
-            species_names: std::array::from_fn(|_| String::new()),
+            species_names: [""; 6],
             genders: std::array::from_fn(|_| None),
             team_boosts: std::array::from_fn(|_| TeamBoosts::default()),
             toxic_stage: [0; 6],
@@ -1191,7 +1210,7 @@ impl DoublesState {
             slots: [ActiveSlot::empty(), ActiveSlot::empty()],
             cond_cache: Default::default(),
             side_conditions: SideConditions::default(),
-            species_names: std::array::from_fn(|_| String::new()),
+            species_names: [""; 6],
             genders: std::array::from_fn(|_| None),
             team_boosts: std::array::from_fn(|_| TeamBoosts::default()),
             toxic_stage: [0; 6],
@@ -1212,13 +1231,13 @@ impl DoublesState {
             side_one.team[i] = build_pokemon(m);
             // PS `setSpecies`: speed = storedStats.spe.
             side_one.speed_cache[i] = side_one.team[i].speed;
-            side_one.species_names[i] = m.species.clone();
+            side_one.species_names[i] = intern(&m.species);
             side_one.genders[i] = m.gender.clone();
         }
         for (i, m) in teams.b.iter().enumerate().take(6) {
             side_two.team[i] = build_pokemon(m);
             side_two.speed_cache[i] = side_two.team[i].speed;
-            side_two.species_names[i] = m.species.clone();
+            side_two.species_names[i] = intern(&m.species);
             side_two.genders[i] = m.gender.clone();
         }
         let state = Self {
@@ -1346,7 +1365,7 @@ impl Default for Boosts {
 /// One team member's full state (in team position order, 0-5).
 #[derive(Debug, Clone, Serialize)]
 pub struct FullSlot {
-    pub species: String,
+    pub species: &'static str,
     pub hp: i16,
     pub maxhp: i16,
     pub fainted: bool,
@@ -1486,7 +1505,7 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<String>) -> FuzzTurnS
                     }
                 };
                 FullSlot {
-                    species: s.species_names[i].clone(),
+                    species: s.species_names[i],
                     hp: p.hp,
                     maxhp: p.maxhp,
                     fainted: p.hp <= 0,

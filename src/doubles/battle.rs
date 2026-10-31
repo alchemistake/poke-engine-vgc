@@ -548,7 +548,7 @@ fn snapshot_full(state: &DoublesState, turn: u32) -> ReplayTurnHp {
                     || s.team[*i].id != crate::pokemon::PokemonName::NONE
             })
             .map(|(i, p)| SlotHp {
-                name: s.species_names[i].clone(),
+                name: s.species_names[i].to_string(),
                 hp: p.hp,
                 maxhp: p.maxhp,
                 fainted: p.hp <= 0,
@@ -630,7 +630,7 @@ pub fn run_battle_replay(state: &mut DoublesState, moves: &[ReplayMove]) -> Batt
             for i in 0..6 {
                 let n = norm(&s.species_names[i]);
                 if !n.is_empty() && (n == want || n.starts_with(&want) || want.starts_with(&n)) {
-                    s.species_names[i] = new_name;
+                    s.species_names[i] = crate::doubles::state::intern(&new_name);
                     break;
                 }
             }
@@ -3006,8 +3006,8 @@ fn execute_action_inner(
             };
         }
         match disguise {
-            Some(t) => sd.species_names[t].clone(),
-            None => sd.species_names[idx as usize].clone(),
+            Some(t) => sd.species_names[t],
+            None => sd.species_names[idx as usize],
         }
     };
     if state.side(side).active()[slot].illusion_target.is_none()

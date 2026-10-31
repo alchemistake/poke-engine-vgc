@@ -13082,6 +13082,19 @@ fn sorted_actives(
         let shown: Vec<_> = hs.iter().map(|&(s, sl, sp)| (ResidualKind::Status(s, sl), sp)).collect();
         eprintln!("ACTIVES {} {:?}", label, shown);
     }
+    // No two equal speeds (the usual case): a plain sort, no draws.
+    let n = hs.len();
+    let tie = (0..n).any(|i| ((i + 1)..n).any(|j| hs[i].2 == hs[j].2));
+    if !tie {
+        for i in 1..n {
+            let mut j = i;
+            while j > 0 && hs[j - 1].2 < hs[j].2 {
+                hs.swap(j - 1, j);
+                j -= 1;
+            }
+        }
+        return hs.into_iter().map(|(s, sl, _)| (s, sl)).collect();
+    }
     // `sort_residual_slice` with every key but speed equal: fastest first,
     // ties shuffled.
     let mut sorted = 0usize;

@@ -49,3 +49,6 @@ fn main() {
     eprintln!("{} games, {} turns, best of {} runs ({})", games.len(), turns, reps, mode);
     println!("{}", best);
 }
+
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;

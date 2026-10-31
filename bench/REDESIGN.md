@@ -203,3 +203,23 @@ core, not more tuning of this one:
   the few mutators, instead of re-scanning after every action.
 
 Both need the fuzzer to guard every divergence and are multi-week work.
+
+### Fast path for plain turns: measured, not built (2026-10-31)
+
+Count over the 5,136 actions of the 100 benchmark games (temporary
+instrumentation, not committed):
+
+| action kind | share |
+|-------------|-------|
+| plain damaging move (no secondary, boost, drain, recoil, status, multi-hit, charge, …) | 20.2 % |
+| no effect with a handler on any of the 4 actives | 7.7 % |
+| plain move **and** no handler on any active | **1.4 %** |
+| plain move and no handler on the attacker | 9.4 % |
+| plain move and at most one active with a handler | 6.8 % |
+
+The benchmark teams are random sets (random moves, abilities), and almost
+every ability has a handler, so a turn where all four actions are plain
+almost never happens. A fast path that needs a plain action plus no
+handlers covers about 1–7 % of actions; even if it made them free, the
+gain is below 7 %. Real competitive teams (Intimidate, items, Protect,
+Fake Out) have even more handlers. Step 7 is therefore dropped.

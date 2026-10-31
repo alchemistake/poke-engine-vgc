@@ -437,6 +437,16 @@ pub struct TeamBoosts {
     pub eva: i8,
 }
 
+/// A slot's cached event-handler effect bits and the inputs outside the
+/// slot they depend on (status, ability, Future Sight / Wish).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FxCache {
+    pub status: crate::state::PokemonStatus,
+    pub ability: crate::engine::abilities::Abilities,
+    pub extra: u8,
+    pub fx: u128,
+}
+
 #[derive(Debug, Clone)]
 pub struct DoublesSide {
     pub team: [Pokemon; 6],
@@ -444,6 +454,10 @@ pub struct DoublesSide {
     /// Per slot: the volatile conditions (`events::vol_mask`) as of the last
     /// read; cleared by `active_mut` / `active_slot_mut`.
     cond_cache: [std::cell::Cell<Option<u64>>; 2],
+    /// Per slot: the event-handler effect bits of the occupant
+    /// (`events::slot_fx`), valid while the key fields still match. Cleared
+    /// with `cond_cache`.
+    pub(crate) fx_cache: [std::cell::Cell<Option<FxCache>>; 2],
     pub side_conditions: SideConditions,
     /// Original species names (including formes) for each team slot, used for
     /// name-based target matching in the replay test.
@@ -514,6 +528,7 @@ impl DoublesSide {
     #[inline]
     pub fn active_mut(&mut self) -> &mut [ActiveSlot; 2] {
         self.cond_cache = Default::default();
+        self.fx_cache = Default::default();
         &mut self.slots
     }
 
@@ -521,6 +536,7 @@ impl DoublesSide {
     #[inline]
     pub fn active_slot_mut(&mut self, slot: usize) -> &mut ActiveSlot {
         self.cond_cache[slot].set(None);
+        self.fx_cache[slot].set(None);
         &mut self.slots[slot]
     }
 
@@ -1240,6 +1256,7 @@ impl DoublesState {
             team: std::array::from_fn(|_| Pokemon::default()),
             slots: [ActiveSlot::empty(), ActiveSlot::empty()],
             cond_cache: Default::default(),
+            fx_cache: Default::default(),
             side_conditions: SideConditions::default(),
             species_names: [""; 6],
             genders: std::array::from_fn(|_| None),
@@ -1262,6 +1279,7 @@ impl DoublesState {
             team: std::array::from_fn(|_| Pokemon::default()),
             slots: [ActiveSlot::empty(), ActiveSlot::empty()],
             cond_cache: Default::default(),
+            fx_cache: Default::default(),
             side_conditions: SideConditions::default(),
             species_names: [""; 6],
             genders: std::array::from_fn(|_| None),

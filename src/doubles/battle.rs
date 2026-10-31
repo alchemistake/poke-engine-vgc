@@ -2614,7 +2614,11 @@ fn status_on_try_hit_fails(
     }
 }
 
+#[inline]
 pub(crate) fn real_ability(state: &DoublesState, side: Side, idx: PokemonIndex) -> Abilities {
+    if state.mold_saved.is_empty() {
+        return state.side(side).team_member(idx).ability;
+    }
     state
         .mold_saved
         .iter()

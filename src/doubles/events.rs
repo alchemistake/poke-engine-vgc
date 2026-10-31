@@ -785,20 +785,39 @@ fn has_any_handler(t: &Tables, ev: &EventTable, state: &DoublesState) -> bool {
     if ev.any_poke == 0 {
         return false;
     }
-    let has = |bit: u8| bit != NO_BIT && ev.any_poke & (1u128 << bit) != 0;
     for side in [Side::One, Side::Two] {
-        let s = state.side(side);
         for slot in 0..2 {
-            let Some(idx) = s.active()[slot].pokemon_index else { continue };
-            if status_index(s.team_member(idx).status).is_some_and(|i| has(t.status_fx[i]))
-                || has(t.ability_bit.get(real_ability(state, side, idx) as usize).copied().unwrap_or(NO_BIT))
-                || (ev.conds != 0 && cond_mask(s, slot) & ev.conds != 0)
-            {
+            if slot_fx(t, state, side, slot) & ev.any_poke != 0 {
                 return true;
             }
         }
     }
     false
+}
+
+/// The effect bits (`Tables::fx`) of everything the slot's occupant holds:
+/// status, ability and conditions. Cached per slot (`DoublesSide::fx_cache`).
+fn slot_fx(t: &Tables, state: &DoublesState, side: Side, slot: usize) -> u128 {
+    let s = state.side(side);
+    let Some(idx) = s.active()[slot].pokemon_index else { return 0 };
+    let status = s.team_member(idx).status;
+    let ability = real_ability(state, side, idx);
+    let extra = s.future_move[slot].is_some() as u8 | (s.wish[slot].is_some() as u8) << 1;
+    if let Some(c) = s.fx_cache[slot].get() {
+        if c.status == status && c.ability == ability && c.extra == extra {
+            return c.fx;
+        }
+    }
+    let bit = |b: u8| if b == NO_BIT { 0 } else { 1u128 << b };
+    let mut fx = status_index(status).map_or(0, |i| bit(t.status_fx[i]));
+    fx |= bit(t.ability_bit.get(ability as usize).copied().unwrap_or(NO_BIT));
+    let mut m = cond_mask(s, slot);
+    while m != 0 {
+        fx |= bit(t.cond_fx[m.trailing_zeros() as usize]);
+        m &= m - 1;
+    }
+    s.fx_cache[slot].set(Some(crate::doubles::state::FxCache { status, ability, extra, fx }));
+    fx
 }
 
 /// Collects the handlers of one `run_event_ties` call. Each slot's effects

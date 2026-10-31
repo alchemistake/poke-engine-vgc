@@ -617,3 +617,21 @@ pub fn defender_damage_modifier(defender: &Pokemon, choice: &Choice) -> i64 {
         _ => 4096,
     }
 }
+
+/// PS `onSwitchInPriority` of an ability (data/abilities.ts); 0 when unset.
+/// Orders its Start against the other incoming pokemon's SwitchIn handlers.
+pub fn switch_in_priority(a: Abilities) -> i8 {
+    match a {
+        Abilities::NEUTRALIZINGGAS | Abilities::TERASHIFT => 2,
+        Abilities::ASONEGLASTRIER | Abilities::ASONESPECTRIER | Abilities::KLUTZ | Abilities::UNNERVE => 1,
+        Abilities::MIMICRY | Abilities::SCHOOLING | Abilities::SHIELDSDOWN => -1,
+        Abilities::COSTAR
+        | Abilities::FLOWERGIFT
+        | Abilities::FORECAST
+        | Abilities::HOSPITALITY
+        | Abilities::ICEFACE
+        | Abilities::PROTOSYNTHESIS
+        | Abilities::QUARKDRIVE => -2,
+        _ => 0,
+    }
+}

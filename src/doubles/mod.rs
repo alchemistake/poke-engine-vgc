@@ -11,6 +11,7 @@ pub mod damage;
 pub mod debug;
 pub mod event_handlers;
 pub mod events;
+pub mod legal;
 pub mod move_targets;
 pub mod rng;
 pub mod species_types;

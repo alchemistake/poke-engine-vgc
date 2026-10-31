@@ -131,6 +131,19 @@ protocol lines, every PRNG draw (with its purpose, see `fuzz_purpose.js`),
 every modifier with the effect that applied it, and every event that changed a
 value. Use it when the PRNG draws line up but a number differs.
 
+## Legal-choice audit
+
+```shell
+node fuzz/legal_audit.js --seed <S> --count <N>
+```
+
+Plays the same battles and, at every move request, compares the engine's
+legal choices (`src/doubles/legal.rs`, the `a_options` / `b_options` of each
+turn snapshot) with PS's: the offered moves, their PP, which are disabled
+(hidden Imprison ones included) and whether the pokemon is trapped.
+Mismatches are grouped by kind with examples. It does not change the fuzz
+score; the comparator ignores those snapshot fields.
+
 ## Speed
 
 - Fast path: battles are checked in chunks of 8 — each whole PS battle is

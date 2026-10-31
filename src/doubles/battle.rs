@@ -1115,16 +1115,20 @@ fn last_damaged_by(state: &DoublesState, side: Side, idx: PokemonIndex) -> Optio
         .copied()
 }
 
-/// Run a doubles battle driven by explicit per-turn controller choices
-/// (fuzz testing). The same choices are fed to pokemon-showdown; the two
-/// simulators must produce identical state.
-pub fn run_battle_fuzz(
-    state: &mut DoublesState,
-    rng: &mut Gen5Rng,
-    choices: &[FuzzTurn],
-    stop_after: Option<u32>,
-) -> FuzzBattleResult {
-    let mut turn_states: Vec<crate::doubles::state::FuzzTurnState> = Vec::new();
+/// A switch request (pivot, Emergency Exit, Revival Blessing) with no answer
+/// in the turn's choices. A step-by-step controller reads these, asks for the
+/// answer and re-runs the turn; the state at the first request is kept so the
+/// controller can show it.
+fn note_unanswered_switch(state: &mut DoublesState, side: Side, slot: usize, revive: bool) {
+    if state.unanswered_switches.is_empty() {
+        state.request_state = Some(Box::new(state.clone()));
+    }
+    state.unanswered_switches.push((side, slot, revive));
+}
+
+/// Start a choice-driven battle: team preview, the leads' switch-in and
+/// their on-switch abilities. `state` must have its leads sent out.
+pub fn start_fuzz_battle(state: &mut DoublesState, rng: &mut Gen5Rng) {
     // On-switch abilities for the leads (Intimidate), in PS send-out order:
     // side A's leads first, then side B's (p1 switches in before p2).
     // PS `runSwitch` for the four leads: speed sort, SwitchIn handlers, then
@@ -1190,41 +1194,20 @@ pub fn run_battle_fuzz(
     // Forecast `onStart` / `onWeatherChange` (PS data/abilities.ts forecast):
     // a lead's Drizzle / Drought sets the weather, and a Castform lead follows it.
     update_forecast(state);
-    // Turn 0: the initial state right after the leads are sent out (stat
-    // calc, species data, leads). Compared before any turn is simulated.
-    if state.record {
-        let mut init = fuzz_snapshot(state, Vec::new());
-        init.turn = 0;
-        turn_states.push(init);
-    }
+}
 
-    let limit = stop_after.unwrap_or(u32::MAX);
-    let mut ci = 0usize;
-    let mut error: Option<String> = None;
-
-    loop {
-        if ci as u32 >= limit {
-            break; // stepwise fuzz mode: stop here, not an error
-        }
-        if state.battle_is_over() != 0.0 {
-            break;
-        }
-
+/// Simulate one turn of a choice-driven battle from the controller's `turn`
+/// choices, end of turn included. Returns the turn's move order. Switch
+/// requests the turn makes that `turn.switches` does not answer are recorded
+/// (`note_unanswered_switch`); unanswered faint replacements leave the slot
+/// empty. `state.turn` is not advanced.
+pub fn run_fuzz_turn(
+    state: &mut DoublesState,
+    rng: &mut Gen5Rng,
+    turn: &FuzzTurn,
+    error: &mut Option<String>,
+) -> Vec<OrderEntry> {
         let turn_no = state.turn;
-        if crate::doubles::debug::flags().dmg {
-            eprintln!("=== TURN index {} (state.turn {})", ci + 1, turn_no);
-        }
-        let turn = match choices.get(ci) {
-            Some(t) => t,
-            None => {
-                error = Some(format!(
-                    "choices exhausted at turn {} but the battle is not over",
-                    turn_no
-                ));
-                break;
-            }
-        };
-
         // Build actions and pending switches from the controller's choices.
         let mut actions: Vec<Action> = Vec::new();
         let mut pending_switches: Vec<(Side, usize, usize)> = Vec::new();
@@ -1233,7 +1216,7 @@ pub fn run_battle_fuzz(
                 let act = match acts.get(slot) {
                     Some(a) => a,
                     None => {
-                        error = Some(format!(
+                    *error = Some(format!(
                             "missing action for side {} slot {} at turn {}",
                             side_tag(side),
                             slot,
@@ -1379,7 +1362,7 @@ pub fn run_battle_fuzz(
             }
         }
         if error.is_some() {
-            break;
+        return Vec::new();
         }
 
         // Sort by priority/speed, shuffling ties (consumes rng draws).
@@ -2058,6 +2041,13 @@ pub fn run_battle_fuzz(
                         state.side_mut(side).slot_scratch_mut(slot).force_switch = true;
                         pivot_repeat = true;
                     }
+            } else if if state.side(side).active()[slot].reviving {
+                    state.side(side).team.iter().any(|p| p.id != crate::pokemon::PokemonName::NONE && p.hp <= 0)
+                } else {
+                    state.side(side).find_replacement().is_some()
+                } {
+                    let revive = state.side(side).active()[slot].reviving;
+                    note_unanswered_switch(state, side, slot, revive);
                 }
             }
             if !batch_in.is_empty() {
@@ -2135,6 +2125,59 @@ pub fn run_battle_fuzz(
             state.side_one.sync_sc_order();
             state.side_two.sync_sc_order();
             sync_vol_order(state);
+        }
+    move_order
+}
+
+/// Run a doubles battle driven by explicit per-turn controller choices
+/// (fuzz testing). The same choices are fed to pokemon-showdown; the two
+/// simulators must produce identical state.
+pub fn run_battle_fuzz(
+    state: &mut DoublesState,
+    rng: &mut Gen5Rng,
+    choices: &[FuzzTurn],
+    stop_after: Option<u32>,
+) -> FuzzBattleResult {
+    let mut turn_states: Vec<crate::doubles::state::FuzzTurnState> = Vec::new();
+    start_fuzz_battle(state, rng);
+    // Turn 0: the initial state right after the leads are sent out (stat
+    // calc, species data, leads). Compared before any turn is simulated.
+    if state.record {
+        let mut init = fuzz_snapshot(state, Vec::new());
+        init.turn = 0;
+        turn_states.push(init);
+    }
+
+    let limit = stop_after.unwrap_or(u32::MAX);
+    let mut ci = 0usize;
+    let mut error: Option<String> = None;
+
+    loop {
+        if ci as u32 >= limit {
+            break; // stepwise fuzz mode: stop here, not an error
+        }
+        if state.battle_is_over() != 0.0 {
+            break;
+        }
+
+        let turn_no = state.turn;
+        if crate::doubles::debug::flags().dmg {
+            eprintln!("=== TURN index {} (state.turn {})", ci + 1, turn_no);
+        }
+        let turn = match choices.get(ci) {
+            Some(t) => t,
+            None => {
+                error = Some(format!(
+                    "choices exhausted at turn {} but the battle is not over",
+                    turn_no
+                ));
+                break;
+            }
+        };
+
+        let move_order = run_fuzz_turn(state, rng, turn, &mut error);
+        if error.is_some() {
+            break;
         }
 
         if state.record {
@@ -2906,6 +2949,10 @@ fn mold_breaker_forget(state: &mut DoublesState, side: Side, idx: PokemonIndex) 
 /// sim/pokemon.ts getMoveTargets; `mustpressure` moves count every foe,
 /// `foeSide` moves none).
 fn pressure_deduct_pp(state: &mut DoublesState, action: &Action) {
+    // PS `deductPP('struggle')` finds no move slot: Struggle loses no PP.
+    if action.choice.move_id == Choices::STRUGGLE {
+        return;
+    }
     let pre = state.tl.pressure_extra.get();
     let extra = if pre >= 0 { pre } else { pressure_extra_count(state, action) };
     // Struggle has no move slot (`deductPP` finds nothing); its `move_index`
@@ -2927,7 +2974,13 @@ fn pressure_deduct_pp(state: &mut DoublesState, action: &Action) {
 /// the number of foes that pay one PP. Evaluated before the hit.
 fn pressure_extra_count(state: &DoublesState, action: &Action) -> i8 {
     let foe = action.side.other();
-    let ty = move_target(action.choice.move_id);
+    // `getMoveTargets` runs after `ModifyMove`: Expanding Force may be a
+    // spread move by then (PS sim/battle-actions.ts useMoveInner).
+    let ty = if expanding_force_spreads(state, action.side, action.slot, &action.choice) {
+        Tgt::AllAdjacentFoes
+    } else {
+        move_target(action.choice.move_id)
+    };
     let all_foes = matches!(
         action.choice.move_id,
         Choices::IMPRISON | Choices::SPIKES | Choices::STEALTHROCK | Choices::TOXICSPIKES
@@ -2942,6 +2995,16 @@ fn pressure_extra_count(state: &DoublesState, action: &Action) -> i8 {
     } else if single && state.tl.pressure_target.get().is_some() {
         // PS `pressureTargets` = the resolved target (post retarget / redirect).
         match state.tl.pressure_target.get().flatten() {
+            // Dragon Darts `getSmartTargets`: the target's ally is a target too
+            // while both have HP (PS sim/pokemon.ts getSmartTargets).
+            Some((ts, tsl)) if ts == foe && action.choice.move_id == Choices::DRAGONDARTS => {
+                let alive = |sl: usize| state.side(foe).slot_pokemon(sl).is_some_and(|p| p.hp > 0);
+                match (alive(tsl), alive(1 - tsl)) {
+                    (true, true) => smallvec::smallvec![tsl, 1 - tsl],
+                    (false, true) => smallvec::smallvec![1 - tsl],
+                    _ => smallvec::smallvec![tsl],
+                }
+            }
             Some((ts, tsl)) if ts == foe => smallvec::smallvec![tsl],
             _ => smallvec::SmallVec::new(),
         }
@@ -3024,8 +3087,9 @@ fn execute_action_body(
     state.tl.pressure_extra.set(-1);
     // PS `runMove`: a locked move (lockedmove / twoturnmove firing turn / uproar)
     // runs with `sourceEffect` = the lock condition, so `useMoveInner`'s Pressure
-    // block (`!sourceEffect || callerMoveForPressure`) is skipped. Externally
-    // called moves keep their caller as the source.
+    // block (`!sourceEffect || callerMoveForPressure`) is skipped; so does a
+    // locked move outside the moveset (`no_pp`: a called two-turn move firing).
+    // Externally called moves keep their caller as the source.
     let pressure_skipped = {
         let a = &state.side(action.side).active()[action.slot];
         // The firing turn of a called charge move (Copycat -> Dig) is a
@@ -14048,7 +14112,7 @@ fn end_turn_disable_moves(state: &DoublesState, rng: &mut Gen5Rng) {
 /// Magnet Pull (Steel target) and Shadow Tag (target without it).
 /// PS data/conditions.ts trapped / partiallytrapped, data/moves.ts ingrain /
 /// fairylock / octolock, data/abilities.ts arenatrap / magnetpull / shadowtag.
-fn try_trap_calls(state: &DoublesState, s: Side, sl: usize) -> usize {
+pub(crate) fn try_trap_calls(state: &DoublesState, s: Side, sl: usize) -> usize {
     let a = &state.side(s).active()[sl];
     let Some(idx) = a.pokemon_index else { return 0 };
     let p = state.side(s).team_member(idx);
@@ -14101,7 +14165,7 @@ fn no_usable_moves(state: &DoublesState, side: Side, slot: usize, idx: PokemonIn
 
 /// PS Imprison `onFoeBeforeMove` (data/moves.ts imprison): true when an active
 /// foe holds Imprison and its pokemon knows `move_id`.
-fn imprison_blocks(state: &DoublesState, side: Side, move_id: Choices) -> bool {
+pub(crate) fn imprison_blocks(state: &DoublesState, side: Side, move_id: Choices) -> bool {
     let other = side.other();
     (0..2).any(|sl| {
         let a = &state.side(other).active()[sl];
@@ -14117,7 +14181,7 @@ fn imprison_blocks(state: &DoublesState, side: Side, move_id: Choices) -> bool {
 /// PS move flag `gravity` (champions data): Gravity blocks these moves.
 /// PS data/moves.ts: splash, bounce, floatyfall, fly, flyingpress, highjumpkick,
 /// jumpkick, magnetrise, skydrop, telekinesis.
-fn has_gravity_flag(move_id: Choices) -> bool {
+pub(crate) fn has_gravity_flag(move_id: Choices) -> bool {
     matches!(
         move_id,
         Choices::SPLASH
@@ -15110,6 +15174,8 @@ fn end_of_turn(
                 // PS `runAction` switches loop: `runPursuitActivation` for every live
                 // pokemon with a `switchFlag` (gen >= 5: `eachEvent('Update')`).
                 each_event_update(state, rng);
+            } else {
+                note_unanswered_switch(state, sd, sl, false);
             }
         }
     }

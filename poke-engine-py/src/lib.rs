@@ -23,6 +23,9 @@ use poke_engine::state::{
 use std::str::FromStr;
 use std::time::Duration;
 
+#[cfg(feature = "champions")]
+mod doubles;
+
 fn movechoice_to_string(side: &Side, move_choice: &MoveChoice) -> String {
     match move_choice {
         MoveChoice::Switch(_) => {
@@ -692,6 +695,7 @@ impl Into<Pokemon> for PyPokemon {
             mega_evolved: self.mega_evolved,
             terastallized: self.terastallized,
             tera_type: PokemonType::from_str(&self.tera_type).unwrap(),
+            attacked_by: Vec::new(),
             moves: PokemonMoves {
                 m0: moves_vec[0].clone().into(),
                 m1: moves_vec[1].clone().into(),
@@ -820,10 +824,6 @@ impl Into<Move> for PyMove {
             id: Choices::from_str(&self.id).unwrap(),
             disabled: self.disabled,
             pp: self.pp,
-            choice: MOVES
-                .get(&Choices::from_str(&self.id).unwrap())
-                .unwrap()
-                .clone(),
         }
     }
 }
@@ -1138,5 +1138,7 @@ fn py_poke_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMove>()?;
     m.add_class::<PyStateInstructions>()?;
     m.add_class::<PyInstruction>()?;
+    #[cfg(feature = "champions")]
+    doubles::register(m)?;
     Ok(())
 }

@@ -320,6 +320,7 @@ version = "0.0.48"
 dependencies = [
  "poke-engine",
  "pyo3",
+ "serde_json",
 ]
 
 [[package]]

@@ -20,7 +20,8 @@ const { spawnSync } = require('child_process');
 
 // Parallel sweep parent: start the workers BEFORE loading pokemon-showdown
 // (the parent only needs it to print a report). See runParallel / main.
-const PARALLEL_PARENT = (() => {
+// Loaded as a module (`fuzz/legal_audit.js`): no CLI run, see the exports.
+const PARALLEL_PARENT = require.main !== module ? null : (() => {
   const o = parseArgs();
   return o.jobs > 1 && o.count > 1 && !o.checkOnly && !o.verbose ? o : null;
 })();
@@ -452,7 +453,7 @@ function prngReport(pe, failTurn) {
 
 // Drive the PS battle turn by turn. `onInit(snap, meta)` is invoked right
 // after team preview (before any move) with the initial state; `onTurn(snap,
-// turns, snapIdx, meta)` at every turn boundary. The fuzzer runs poke-engine
+// turns, snapIdx, meta)` at every turn boundary. Both also get the PS battle. The fuzzer runs poke-engine
 // on the same state/turns so far and exits immediately on the first divergence.
 function stepPSBattle(battleSeed, teamA, teamB, controller, onInit, onTurn) {
   const battle = new (ps().Battle)({
@@ -603,7 +604,7 @@ function stepPSBattle(battleSeed, teamA, teamB, controller, onInit, onTurn) {
 
   // Turn 0: initial state (leads out, full HP) — checked before simulating
   // anything, so stat-calc / species-data / lead errors fail fast.
-  onInit(makeSnapshot(battle, logIdx, orderA, orderB), { leads, battleTeamA, battleTeamB });
+  onInit(makeSnapshot(battle, logIdx, orderA, orderB), { leads, battleTeamA, battleTeamB }, battle);
 
   let guard = 0;
   while (!battle.ended) {
@@ -694,7 +695,7 @@ function stepPSBattle(battleSeed, teamA, teamB, controller, onInit, onTurn) {
       const snap = makeSnapshot(battle, logIdx, orderA, orderB);
       logIdx = battle.log.length;
       snapshots.push(snap);
-      onTurn(snap, turns, snapshots.length - 1, { leads, battleTeamA, battleTeamB });
+      onTurn(snap, turns, snapshots.length - 1, { leads, battleTeamA, battleTeamB }, battle);
     }
   }
 
@@ -1641,4 +1642,12 @@ function main() {
   process.exit(0);
 }
 
-if (!PARALLEL_PARENT) main();
+if (require.main === module && !PARALLEL_PARENT) main();
+
+module.exports = {
+  ps,
+  makeTest,
+  stepPSBattle,
+  engineInput,
+  setTraceDraws: (on) => { TRACE_DRAWS = on; },
+};

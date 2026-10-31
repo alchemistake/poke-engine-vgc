@@ -793,6 +793,12 @@ pub struct DoublesState {
     /// Wonder Room's `onModifyMove` has run since it started (PS fixes the
     /// handler's subOrder only once `state.target` is set).
     pub wonder_room_seen: bool,
+    /// Switch requests this turn made with no answer in the turn's choices:
+    /// (side, slot, revive). A step-by-step controller (`run_fuzz_turn`) reads
+    /// these to ask for the answer and re-run the turn.
+    pub unanswered_switches: Vec<(Side, usize, bool)>,
+    /// The state when the first unanswered switch request was made.
+    pub request_state: Option<Box<DoublesState>>,
 }
 
 impl DoublesState {
@@ -1459,6 +1465,8 @@ impl DoublesState {
             db_faint_pos: None,
             effect_order: 0,
             pending_after_faint: None,
+            unanswered_switches: Vec::new(),
+            request_state: None,
         };
         state
     }
@@ -1594,6 +1602,10 @@ pub struct FuzzTurnState {
     pub b_side_conditions: Vec<SideConditionEntry>,
     /// Execution order this turn, entries "SIDE<slot>:Species:movename".
     pub move_order: Vec<OrderEntry>,
+    /// Legal choices per active slot for the next move request (None = empty
+    /// slot), read by the legality audit (`fuzz/legal_audit.js`).
+    pub a_options: Vec<Option<crate::doubles::legal::SlotOptions>>,
+    pub b_options: Vec<Option<crate::doubles::legal::SlotOptions>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1770,6 +1782,8 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
         a_side_conditions: sc_entries(&state.side_one.side_conditions, &state.side_one.sc_order),
         b_side_conditions: sc_entries(&state.side_two.side_conditions, &state.side_two.sc_order),
         move_order,
+        a_options: (0..2).map(|sl| crate::doubles::legal::slot_options(state, Side::One, sl)).collect(),
+        b_options: (0..2).map(|sl| crate::doubles::legal::slot_options(state, Side::Two, sl)).collect(),
     }
 }
 

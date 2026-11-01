@@ -909,6 +909,12 @@ pub struct MoveScratch {
     /// A spread hit's Substitute drain heal was already applied in the
     /// damage pre-pass (`substitute.onTryPrimaryHit`), so the per-target loop skips it.
     pub sub_drain_done: std::cell::Cell<bool>,
+    /// The running move is a Dancer copy (PS `runMove` with `externalMove`):
+    /// no PP, no `moveUsed`, no Pressure, and no further Dancer.
+    pub dancing: std::cell::Cell<bool>,
+    /// PS `battle.activeTarget` of the running move (its resolved target),
+    /// read by Dancer after the move.
+    pub dance_target: std::cell::Cell<Option<(Side, usize)>>,
 }
 
 #[derive(Debug, Clone)]

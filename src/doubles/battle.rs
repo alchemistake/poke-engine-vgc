@@ -3841,7 +3841,7 @@ fn execute_action_body(
     // block (`!sourceEffect || callerMoveForPressure`) is skipped; so does a
     // locked move outside the moveset (`no_pp`: a called two-turn move firing).
     // Externally called moves keep their caller as the source.
-    let pressure_skipped = {
+    let pressure_skipped = state.tl.dancing.get() || {
         let a = &state.side(action.side).active()[action.slot];
         // The firing turn of a called charge move (Copycat -> Dig) is a
         // `no_pp` action but still runs from its `twoturnmove` lock.
@@ -3973,7 +3973,9 @@ fn execute_action_body(
         // PS `pokemon.moveUsed`: `lastMove` (Encore). The user's current slot
         // (its own Ally Switch moved it).
         if let Some(sl) = (0..2).find(|&sl| state.side(action.side).active()[sl].pokemon_index == Some(action.pokemon_index)) {
-            state.side_mut(action.side).slot_scratch_mut(sl).last_move = Some(action.choice.move_id);
+            if !state.tl.dancing.get() {
+                state.side_mut(action.side).slot_scratch_mut(sl).last_move = Some(action.choice.move_id);
+            }
         }
     }
     // PS runMove `runEvent('AfterMove')`: the handlers are sorted before any of
@@ -4060,6 +4062,107 @@ fn execute_action_body(
     let no_target_fail = state.tl.no_target_fail.get();
     if move_order.len() > order_len && !no_target_fail {
         move_fail_self_damage(state, rng, action.side, action.slot, &action.choice);
+    }
+    if move_order.len() > order_len && !state.tl.dancing.get() && is_dance_move(action.choice.move_id) {
+        let dance_target = state.tl.dance_target.get();
+        run_dancers(state, rng, action, dance_target, move_order, queue);
+    }
+}
+
+/// PS `move.flags.dance` (data/moves.ts).
+fn is_dance_move(m: Choices) -> bool {
+    matches!(
+        m,
+        Choices::AQUASTEP | Choices::CLANGOROUSSOUL | Choices::DRAGONDANCE | Choices::FEATHERDANCE
+            | Choices::FIERYDANCE | Choices::LUNARDANCE | Choices::PETALDANCE | Choices::QUIVERDANCE
+            | Choices::REVELATIONDANCE | Choices::SWORDSDANCE | Choices::TEETERDANCE | Choices::VICTORYDANCE
+    )
+}
+
+/// Dancer (PS sim/battle-actions.ts runMove, after `AfterMove`): when a dance
+/// move did something (`moveDidSomething`, not itself a Dancer copy), every
+/// other active Dancer holder that is not semi-invulnerable uses it too
+/// (`runMove` with `externalMove`: BeforeMove runs, no PP, no `moveUsed`),
+/// lowest stored Speed first. A foe of the user (or an ally when the first
+/// target was on the dancer's side) targets the user; an ally targets the
+/// first dance's foe target. `resolveFaints` runs before each; a dancer that
+/// was not locked into Petal Dance before is not locked after.
+/// TODO(PS parity): equal stored Speed (`abilityState.effectOrder`), a dance
+/// move called by another move (Metronome, Copycat).
+fn run_dancers(
+    state: &mut DoublesState,
+    rng: &mut Gen5Rng,
+    action: &Action,
+    dance_target: Option<(Side, usize)>,
+    move_order: &mut Vec<OrderEntry>,
+    queue: &[Action],
+) {
+    let (us, ui) = (action.side, action.pokemon_index);
+    let Some(usl) = (0..2).find(|&sl| state.side(us).active()[sl].pokemon_index == Some(ui)) else { return };
+    if state.side(us).active()[usl].move_result_this_turn != Some(true) {
+        return;
+    }
+    let mut dancers: Vec<(Side, PokemonIndex, i16)> = Vec::new();
+    for sd in [Side::One, Side::Two] {
+        for sl in 0..2 {
+            let Some(di) = state.side(sd).active()[sl].pokemon_index else { continue };
+            if (sd, di) == (us, ui) {
+                continue;
+            }
+            let p = state.side(sd).team_member(di);
+            if p.hp <= 0 || p.ability != Abilities::DANCER || ally_semi_invulnerable(state, sd, sl) {
+                continue;
+            }
+            dancers.push((sd, di, p.speed));
+        }
+    }
+    dancers.sort_by_key(|d| d.2);
+    for (dsd, di, _) in dancers {
+        resolve_faints(state, rng, |_, _| true);
+        if state.battle_is_over() != 0.0 {
+            break;
+        }
+        let Some(dsl) = (0..2).find(|&sl| state.side(dsd).active()[sl].pokemon_index == Some(di)) else { continue };
+        if state.side(dsd).team_member(di).hp <= 0 {
+            continue;
+        }
+        let Some(usl) = (0..2).find(|&sl| state.side(us).active()[sl].pokemon_index == Some(ui)) else { break };
+        let (ts, tsl) = match dance_target {
+            Some((ts, tsl)) if ts != dsd && us == dsd => (ts, tsl),
+            _ => (us, usl),
+        };
+        let loc = if ts == dsd { -(tsl as i8 + 1) } else { tsl as i8 + 1 };
+        let Some(mut choice) = MOVES.get(&action.choice.move_id).cloned() else { return };
+        if let Some(cat) = champions_move_category(choice.move_id) {
+            choice.category = cat;
+            choice.base_power = 0.0;
+        }
+        let sub = Action {
+            side: dsd,
+            slot: dsl,
+            pokemon_index: di,
+            boost: 0,
+            priority: choice.priority,
+            choice,
+            speed: effective_speed(state, dsd, dsl).unwrap_or(0),
+            target: (loc.unsigned_abs() as usize).saturating_sub(1).min(1),
+            target_loc: loc,
+            fractional: 0,
+            prioritized: false,
+            no_pp: true,
+            recharge: false,
+            orig_target: orig_target_at(state, dsd, loc),
+            curse_self: false,
+        };
+        let was_locked = state.side(dsd).active()[dsl].locked_move.is_some();
+        state.tl.dancing.set(true);
+        execute_action_body(state, rng, &sub, move_order, queue);
+        state.tl.dancing.set(false);
+        if !was_locked {
+            if let Some(sl) = (0..2).find(|&sl| state.side(dsd).active()[sl].pokemon_index == Some(di)) {
+                state.side_mut(dsd).active_slot_mut(sl).locked_move = None;
+            }
+        }
     }
 }
 
@@ -4398,6 +4501,7 @@ fn execute_move_body(
     } else {
         resolved
     };
+    state.tl.dance_target.set(resolved);
     state.tl.pressure_target.set(Some(pressure_resolved));
     let pre_extra = pressure_extra_count(state, action);
     state.tl.pressure_extra.set(pre_extra);
@@ -4733,7 +4837,8 @@ fn execute_move_body(
     // PS `useMove` -> `pokemon.moveUsed` (after `runMove`'s BeforeMove checks,
     // before `onTry`): `lastMove` is set even when the move then fails (Encore's
     // `failencore` check reads it, so a failed Copycat blocks Encore).
-    if !external {
+    // A Dancer copy (`externalMove`) skips `moveUsed`.
+    if !external && !state.tl.dancing.get() {
         state.side_mut(side).slot_scratch_mut(slot).last_move = Some(action.choice.move_id);
         if let Some(loc) = used_target_loc {
             state.side_mut(side).slot_scratch_mut(slot).last_target_loc = loc;
@@ -9979,6 +10084,41 @@ fn execute_move_body(
                     sd != side,
                     !(sd == side && sl == slot),
                 );
+            }
+        }
+
+        // Flower Shield `onHitField` (target all): each active Grass type gets
+        // +1 Def (`boost`, the user as the source), in `getAllActive` order.
+        // Fails when no stat changes. PS data/moves.ts flowershield.
+        if choice.move_id == Choices::FLOWERSHIELD && ti == 0 && !move_failed {
+            let mut targets: Vec<(Side, usize, PokemonIndex)> = Vec::new();
+            for sd in [Side::One, Side::Two] {
+                for sl in 0..2 {
+                    let Some(ai) = state.side(sd).active()[sl].pokemon_index else { continue };
+                    let p = state.side(sd).team_member(ai);
+                    if p.hp > 0
+                        && (p.has_type(&PokemonType::GRASS) || state.side(sd).active()[sl].added_type == PokemonType::GRASS)
+                    {
+                        targets.push((sd, sl, ai));
+                    }
+                }
+            }
+            let mut did = false;
+            for (sd, sl, ai) in targets {
+                let before = state.side(sd).team_boosts[ai as usize].def;
+                apply_boosts_from(
+                    state,
+                    rng,
+                    sd,
+                    ai,
+                    &StatBoosts { defense: 1, ..Default::default() },
+                    sd != side,
+                    !(sd == side && sl == slot),
+                );
+                did |= state.side(sd).team_boosts[ai as usize].def != before;
+            }
+            if !did {
+                move_failed = true;
             }
         }
 
@@ -17039,6 +17179,28 @@ fn refresh_mimicry_slot(state: &mut DoublesState, side: Side, slot: usize) {
     s.team_member_mut(idx).types = want;
 }
 
+/// PS `pokemon.ignoringAbility()` for Neutralizing Gas: another active,
+/// unfainted holder (not under Gastro Acid, which blanks it here) suppresses
+/// the ability, unless it is `cantsuppress` or the pokemon holds Ability
+/// Shield. PS sim/pokemon.ts ignoringAbility.
+/// TODO(PS parity): Neutralizing Gas only gates Start events here; the other
+/// ability handlers and the restart on `onEnd` are not modelled.
+fn neutralizing_gas_suppresses(state: &DoublesState, side: Side, slot: usize) -> bool {
+    let Some(p) = state.side(side).slot_pokemon(slot) else { return false };
+    if gastro_cant_suppress(p.ability)
+        || p.ability == Abilities::NEUTRALIZINGGAS
+        || (p.item == Items::ABILITYSHIELD && !ignoring_item(state, p))
+    {
+        return false;
+    }
+    [Side::One, Side::Two].iter().any(|&sd| {
+        (0..2).any(|sl| {
+            (sd, sl) != (side, slot)
+                && state.side(sd).slot_pokemon(sl).is_some_and(|q| q.hp > 0 && q.ability == Abilities::NEUTRALIZINGGAS)
+        })
+    })
+}
+
 fn slot_has_ability(state: &DoublesState, side: Side, slot: usize, ability: Abilities) -> bool {
     state.side(side).slot_pokemon(slot).is_some_and(|p| p.ability == ability)
 }
@@ -17071,6 +17233,9 @@ fn apply_on_switch_abilities(
                 }
             }
         }
+    }
+    if neutralizing_gas_suppresses(state, side, slot) {
+        return false;
     }
     // Download `onStart`: +1 SpA when the foes' total Def (boosted) is at
     // least their total SpD, else +1 Atk (no foe: nothing). PS data/abilities.ts download.
@@ -17312,26 +17477,27 @@ fn apply_on_switch_abilities(
         Side::One => Side::Two,
         Side::Two => Side::One,
     };
-    let targets: Vec<PokemonIndex> = state
-        .side(foe)
-        .active()
-        .iter()
-        .filter(|a| a.pokemon_index.is_some() && a.substitute_health <= 0)
-        .filter_map(|a| a.pokemon_index)
+    let targets: Vec<(usize, PokemonIndex)> = (0..2)
+        .filter(|&sl| state.side(foe).active()[sl].substitute_health <= 0)
+        .filter_map(|sl| state.side(foe).active()[sl].pokemon_index.map(|i| (sl, i)))
         .collect();
-    for fidx in targets {
+    for (fslot, fidx) in targets {
         let before = state.side(foe).team_boosts[fidx as usize].atk;
         // Intimidate immunity (`onTryBoost`, effect.name === 'Intimidate'):
         // Own Tempo / Oblivious / Inner Focus / Scrappy (data/abilities.ts);
         // Guard Dog turns it into +1 Atk.
         if ability == Abilities::INTIMIDATE {
             match state.side(foe).team_member(fidx).ability {
-                Abilities::OWNTEMPO | Abilities::OBLIVIOUS | Abilities::INNERFOCUS | Abilities::SCRAPPY => continue,
+                Abilities::OWNTEMPO | Abilities::OBLIVIOUS | Abilities::INNERFOCUS | Abilities::SCRAPPY => {
+                    intimidate_adrenaline_orb(state, rng, foe, fslot, fidx, before);
+                    continue;
+                }
                 Abilities::GUARDDOG => {
                     // `getCappedBoost` runs first: at -6 the drop is 0, so Guard
                     // Dog's `boost.atk` check fails and nothing happens.
                     if before > -6 {
                         apply_boosts(state, rng, foe, fidx, &StatBoosts { attack: 1, ..Default::default() }, false);
+                        intimidate_adrenaline_orb(state, rng, foe, fslot, fidx, before);
                     }
                     continue;
                 }
@@ -17347,6 +17513,9 @@ fn apply_on_switch_abilities(
             if let Some(src) = state.side(side).active()[slot].pokemon_index {
                 apply_boosts(state, rng, side, src, &drop, true);
             }
+            if ability == Abilities::INTIMIDATE {
+                intimidate_adrenaline_orb(state, rng, foe, fslot, fidx, before);
+            }
             continue;
         }
         apply_boosts(state, rng, foe, fidx, &drop, true);
@@ -17357,8 +17526,38 @@ fn apply_on_switch_abilities(
         {
             apply_boosts(state, rng, foe, fidx, &StatBoosts { speed: 1, ..Default::default() }, false);
         }
+        if ability == Abilities::INTIMIDATE {
+            intimidate_adrenaline_orb(state, rng, foe, fslot, fidx, before);
+        }
     }
     false
+}
+
+/// Adrenaline Orb `onAfterBoost` after Intimidate: used (+1 Spe, its `boosts`)
+/// unless Speed is at +6 or `getCappedBoost` zeroed the Atk drop (already at
+/// -6, +6 under Contrary); a drop an ability blocked (deleted) still counts.
+/// PS data/items.ts adrenalineorb, sim/pokemon.ts useItem.
+fn intimidate_adrenaline_orb(
+    state: &mut DoublesState,
+    rng: &mut Gen5Rng,
+    side: Side,
+    slot: usize,
+    idx: PokemonIndex,
+    atk_before: i8,
+) {
+    let p = state.side(side).team_member(idx);
+    if p.item != Items::ADRENALINEORB || p.hp <= 0 || ignoring_item(state, p) {
+        return;
+    }
+    if state.side(side).active()[slot].pokemon_index != Some(idx) {
+        return;
+    }
+    let capped = if p.ability == Abilities::CONTRARY { atk_before >= 6 } else { atk_before <= -6 };
+    if capped || state.side(side).team_boosts[idx as usize].spe >= 6 {
+        return;
+    }
+    use_item(state, rng, side, slot, idx, false);
+    apply_boosts(state, rng, side, idx, &StatBoosts { speed: 1, ..Default::default() }, false);
 }
 
 /// Forecast (`onUpdate`, data/abilities.ts): Castform's type follows the

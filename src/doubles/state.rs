@@ -841,6 +841,9 @@ pub struct DoublesState {
     pub gravity: StateTrickRoom,
     /// Fairy Lock pseudo-weather (everything trapped), duration 2.
     pub fairy_lock: StateTrickRoom,
+    /// Mud Sport / Water Sport pseudo-weathers (duration 5).
+    pub mud_sport: StateTrickRoom,
+    pub water_sport: StateTrickRoom,
     pub turn: u32,
     /// Pokemon that reached 0 HP during the current move's hit loop. PS only
     /// resolves faints after the loop, so its per-hit `eachEvent` still sorts
@@ -1600,6 +1603,14 @@ impl DoublesState {
                 active: false,
                 turns_remaining: 0,
             },
+            mud_sport: StateTrickRoom {
+                active: false,
+                turns_remaining: 0,
+            },
+            water_sport: StateTrickRoom {
+                active: false,
+                turns_remaining: 0,
+            },
             turn: 1,
             unresolved_faints: Vec::new(),
             ko_update_ties: Vec::new(),
@@ -1947,6 +1958,8 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
         ("magicroom", &state.magic_room),
         ("gravity", &state.gravity),
         ("fairylock", &state.fairy_lock),
+        ("mudsport", &state.mud_sport),
+        ("watersport", &state.water_sport),
     ]
     .iter()
     .filter(|(_, f)| f.active)

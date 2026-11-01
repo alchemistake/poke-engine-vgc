@@ -5345,6 +5345,18 @@ fn execute_move_body(
             {
                 continue;
             }
+            // Captivate `onTryImmunity` (opposite genders only) and Oblivious
+            // `onTryHit`: the target is immune. PS data/moves.ts captivate.
+            if choice.move_id == Choices::CAPTIVATE {
+                let ag = state.side(side).genders[idx as usize].clone();
+                let dg = state.side(ts).active()[tsl].pokemon_index.and_then(|di| state.side(ts).genders[di as usize].clone());
+                let opposite = matches!((ag.as_deref(), dg.as_deref()), (Some("M"), Some("F")) | (Some("F"), Some("M")));
+                let oblivious = d.ability == Abilities::OBLIVIOUS
+                    && !crate::engine::abilities::ignores_target_ability(state.side(side).team_member(idx), choice, &d.ability);
+                if !opposite || oblivious {
+                    continue;
+                }
+            }
             // Good as Gold: the holder is immune to status / non-damaging moves.
             if d.ability == Abilities::GOODASGOLD
                 && choice.category == MoveCategory::Status
@@ -9691,6 +9703,16 @@ fn execute_move_body(
                 crate::state::StateTrickRoom { active: true, turns_remaining: 5 }
             };
         }
+        // Mud Sport / Water Sport (`pseudoWeather`, duration 5): fails while up.
+        // PS data/moves.ts mudsport / watersport.
+        if matches!(choice.move_id, Choices::MUDSPORT | Choices::WATERSPORT) {
+            let f = if choice.move_id == Choices::MUDSPORT { &mut state.mud_sport } else { &mut state.water_sport };
+            if f.active {
+                move_failed = true;
+            } else {
+                *f = crate::state::StateTrickRoom { active: true, turns_remaining: 5 };
+            }
+        }
         if choice.move_id == Choices::FAIRYLOCK {
             // PS data/moves.ts fairylock: `addPseudoWeather` fails while it is up.
             // Duration 2. The trap (`onTrapPokemon`) is not modeled: PS only
@@ -11402,6 +11424,58 @@ fn any_active_ability(state: &DoublesState, ability: Abilities) -> bool {
         .any(|&sd| (0..2).any(|sl| state.side(sd).slot_pokemon(sl).is_some_and(|p| p.hp > 0 && p.ability == ability)))
 }
 
+/// Shields Down `onStart` / `onResidual` (PS data/abilities.ts shieldsdown):
+/// Minior is Meteor above half HP, its core colour (the set species) at or
+/// below it. A forme change recomputes the stats (same HP) and resets the
+/// types; the cached speed becomes the raw stat (`setSpecies`).
+fn shields_down_check(state: &mut DoublesState, side: Side, slot: usize) {
+    use crate::pokemon::PokemonName as N;
+    let Some(idx) = state.side(side).active()[slot].pokemon_index else { return };
+    let p = state.side(side).team_member(idx);
+    if p.ability != Abilities::SHIELDSDOWN || p.hp <= 0 || state.side(side).transform_save[idx as usize].is_some() {
+        return;
+    }
+    let set_species: String = state.side(side).species_names[idx as usize]
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_lowercase();
+    if !set_species.starts_with("minior") {
+        return;
+    }
+    let meteor = p.hp * 2 > p.maxhp;
+    let (key, id) = if meteor {
+        ("miniormeteor".to_string(), N::MINIORMETEOR)
+    } else {
+        let id = set_species.to_uppercase().parse::<N>().unwrap_or(N::MINIOR);
+        (set_species.clone(), id)
+    };
+    if p.id == id {
+        return;
+    }
+    let Some(data) = crate::doubles::species_types::species_data(&key) else { return };
+    let (e, lvl, nat) = (p.evs, p.level as u8, p.nature.clone());
+    let evs = crate::doubles::state::Evs {
+        hp: e.0 as u16,
+        atk: e.1 as u16,
+        def: e.2 as u16,
+        spa: e.3 as u16,
+        spd: e.4 as u16,
+        spe: e.5 as u16,
+    };
+    let (_, atk, def, spa, spd, spe) = crate::doubles::state::compute_stats(data.base_stats, &evs, lvl, nat);
+    restore_stored_stats(state.side_mut(side), idx);
+    let pm = state.side_mut(side).team_member_mut(idx);
+    pm.id = id;
+    pm.attack = atk;
+    pm.defense = def;
+    pm.special_attack = spa;
+    pm.special_defense = spd;
+    pm.speed = spe;
+    pm.types = (PokemonType::from(data.types.0), PokemonType::from(data.types.1));
+    state.side_mut(side).set_speed_cache(idx as usize, spe as _);
+}
+
 /// A foe's Follow Me / Rage Powder takes this user's move (`onFoeRedirectTarget`
 /// answers: Rage Powder skips a powder-immune user).
 fn center_of_attention_redirects(state: &DoublesState, side: Side, slot: usize, idx: PokemonIndex) -> bool {
@@ -12065,6 +12139,13 @@ fn status_immune_ex(
     effect_is_yawn: bool,
 ) -> bool {
     let Some(target) = state.side(ts).slot_pokemon(tslot) else { return true };
+    // Shields Down `onSetStatus`: Minior-Meteor takes no status.
+    if target.ability == Abilities::SHIELDSDOWN
+        && target.id == crate::pokemon::PokemonName::MINIORMETEOR
+        && state.side(ts).active()[tslot].pokemon_index.is_some_and(|i| state.side(ts).transform_save[i as usize].is_none())
+    {
+        return true;
+    }
     // Safeguard / Substitute block statuses from any other pokemon, allies
     // included (`target !== source`, PS data/moves.ts safeguard.onSetStatus).
     let from_opponent = from_opponent || (ts, tslot) != (src_side, src_slot);
@@ -12646,6 +12727,12 @@ fn compute_hit_damage(
                         {
                             m.push((22, 5325));
                         }
+                    }
+                    // Mud Sport / Water Sport `onBasePower` (priority 1): x1352/4096.
+                    if (state.mud_sport.active && choice.move_type == PokemonType::ELECTRIC)
+                        || (state.water_sport.active && choice.move_type == PokemonType::FIRE)
+                    {
+                        m.push((1, 1352));
                     }
                     // charge.onBasePower (priority 9): x2 for Electric moves.
                     if att_slot.charge && choice.move_type == PokemonType::ELECTRIC {
@@ -14242,6 +14329,10 @@ fn apply_on_switch_abilities(
                 apply_boosts(state, rng, side, idx, &StatBoosts { attack: 1, ..Default::default() }, false);
             }
         }
+        return false;
+    }
+    if ability == Abilities::SHIELDSDOWN {
+        shields_down_check(state, side, slot);
         return false;
     }
     // Frisk / Anticipation `onStart` only log (`-item`, `-ability`): no state
@@ -16193,6 +16284,7 @@ enum ResidualKind {
     Harvest(Side, usize),
     /// Hunger Switch `onResidual` (order 29): Morpeko changes forme.
     HungerSwitch(Side, usize),
+    ShieldsDown(Side, usize),
     /// Ghost `curse` damage (order 12).
     Curse(Side, usize),
     LeechSeed(Side, usize),
@@ -16216,6 +16308,8 @@ enum ResidualKind {
     /// Magic Room duration countdown (order 27, subOrder 6).
     MagicRoom,
     /// Fairy Lock duration countdown (no order, subOrder 5).
+    MudSport,
+    WaterSport,
     FairyLock,
     /// Wonder Room duration countdown (order 27, subOrder 5).
     WonderRoom,
@@ -16320,6 +16414,12 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
     }
     if state.gravity.active {
         push(27, 0, 2, ResidualKind::Gravity);
+    }
+    if state.water_sport.active {
+        push(27, 0, 3, ResidualKind::WaterSport);
+    }
+    if state.mud_sport.active {
+        push(27, 0, 4, ResidualKind::MudSport);
     }
     if state.fairy_lock.active {
         // No `onFieldResidualOrder`; a field condition's default subOrder is 5.
@@ -16613,6 +16713,9 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             }
             if p.ability == Abilities::HUNGERSWITCH {
                 push(29, speed, 7, ResidualKind::HungerSwitch(side, slot));
+            }
+            if p.ability == Abilities::SHIELDSDOWN {
+                push(29, speed, 7, ResidualKind::ShieldsDown(side, slot));
             }
             if p.ability == Abilities::SPEEDBOOST {
                 push(28, speed, 2, ResidualKind::SpeedBoost(side, slot));
@@ -17410,9 +17513,16 @@ fn end_of_turn(
                             state.tl.in_field_event.set(f);
                         }
                     }
-                    if state.weather.weather_type != Weather::SAND {
+                    // Sandstorm / Hail `onWeather`: 1/16 max HP (gen 9 Snow has none).
+                    let hail = state.weather.weather_type == Weather::HAIL;
+                    if state.weather.weather_type != Weather::SAND && !hail {
                         continue;
                     }
+                    let immune_types: &[PokemonType] = if hail {
+                        &[PokemonType::ICE]
+                    } else {
+                        &[PokemonType::ROCK, PokemonType::GROUND, PokemonType::STEEL]
+                    };
                     let Some(idx) = state.side(side).active()[slot].pokemon_index else { continue };
                     // PS `spreadDamage` (Weather effect) -> `runStatusImmunity('sandstorm')`:
                     // the type immunity first (no event), then `runEvent('Immunity')`,
@@ -17420,9 +17530,7 @@ fn end_of_turn(
                     // Veil / Force / Rush, ...) are speed-sorted before they refuse.
                     let types = state.side(side).team_member(idx).types;
                     if state.side(side).team_member(idx).hp <= 0
-                        || [PokemonType::ROCK, PokemonType::GROUND, PokemonType::STEEL]
-                            .iter()
-                            .any(|t| types.0 == *t || types.1 == *t)
+                        || immune_types.iter().any(|t| types.0 == *t || types.1 == *t)
                     {
                         continue;
                     }
@@ -17444,13 +17552,14 @@ fn end_of_turn(
                     let types = p2.types;
                     // `runStatusImmunity('sandstorm')`: types, and the abilities with
                     // `onImmunity` (Overcoat, Sand Veil / Force / Rush).
-                    let immune = [PokemonType::ROCK, PokemonType::GROUND, PokemonType::STEEL]
-                        .iter()
-                        .any(|t| types.0 == *t || types.1 == *t)
-                        || matches!(
-                            p2.ability,
-                            Abilities::OVERCOAT | Abilities::SANDVEIL | Abilities::SANDFORCE | Abilities::SANDRUSH
-                        );
+                    // Safety Goggles `onImmunity` (sandstorm / hail), Ice Body / Snow
+                    // Cloak for hail; Magic Guard `onDamage` refuses any of it.
+                    let immune = immune_types.iter().any(|t| types.0 == *t || types.1 == *t)
+                        || p2.ability == Abilities::OVERCOAT
+                        || p2.ability == Abilities::MAGICGUARD
+                        || (!hail && matches!(p2.ability, Abilities::SANDVEIL | Abilities::SANDFORCE | Abilities::SANDRUSH))
+                        || (hail && matches!(p2.ability, Abilities::ICEBODY | Abilities::SNOWCLOAK))
+                        || (p2.item == Items::SAFETYGOGGLES && !ignoring_item(state, p2));
                     if !immune {
                         // `onWeather` (eachEvent), not `onResidual`: the fuzzer's `onDamage` label.
                         let f = state.tl.in_field_event.replace(false);
@@ -17568,6 +17677,9 @@ fn end_of_turn(
                         }
                     }
                 }
+            }
+            ResidualKind::ShieldsDown(side, slot) => {
+                shields_down_check(state, side, slot);
             }
             ResidualKind::HungerSwitch(side, slot) => {
                 // PS hungerswitch.onResidual: `formeChange` Morpeko <-> Morpeko-Hangry.
@@ -18004,6 +18116,16 @@ fn end_of_turn(
                     state.gravity.turns_remaining -= 1;
                     if state.gravity.turns_remaining == 0 {
                         state.gravity.active = false;
+                        prev_end = true;
+                    }
+                }
+            }
+            ResidualKind::MudSport | ResidualKind::WaterSport => {
+                let f = if matches!(h.kind, ResidualKind::MudSport) { &mut state.mud_sport } else { &mut state.water_sport };
+                if f.turns_remaining > 0 {
+                    f.turns_remaining -= 1;
+                    if f.turns_remaining == 0 {
+                        f.active = false;
                         prev_end = true;
                     }
                 }

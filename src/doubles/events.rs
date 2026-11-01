@@ -518,10 +518,10 @@ fn side_mask(state: &DoublesState, side: Side) -> u32 {
 
 /// Weather, terrain and pseudo-weather ids (PS ids); the field's active ones
 /// are a bit mask over this list (`field_mask`).
-const FIELD_IDS: [&str; 16] = [
+const FIELD_IDS: [&str; 18] = [
     "raindance", "primordialsea", "sunnyday", "desolateland", "sandstorm", "hail", "snowscape",
     "electricterrain", "grassyterrain", "mistyterrain", "psychicterrain",
-    "trickroom", "gravity", "magicroom", "wonderroom", "fairylock",
+    "trickroom", "gravity", "magicroom", "wonderroom", "fairylock", "mudsport", "watersport",
 ];
 
 /// The weathers / terrains of `FIELD_IDS[0..7]` / `FIELD_IDS[7..11]`.
@@ -562,6 +562,8 @@ fn field_mask(state: &DoublesState) -> u32 {
         state.magic_room.active,
         state.wonder_room.active,
         state.fairy_lock.active,
+        state.mud_sport.active,
+        state.water_sport.active,
     ]
     .iter()
     .enumerate()
@@ -1014,7 +1016,9 @@ fn has_any_handler(t: &Tables, ev: &EventTable, state: &DoublesState) -> bool {
             | (state.gravity.active as u32) << 1
             | (state.magic_room.active as u32) << 2
             | (state.wonder_room.active as u32) << 3
-            | (state.fairy_lock.active as u32) << 4;
+            | (state.fairy_lock.active as u32) << 4
+            | (state.mud_sport.active as u32) << 5
+            | (state.water_sport.active as u32) << 6;
         if (ev.field_weather >> (state.weather.weather_type as u32 & 63)) & 1 != 0
             || (ev.field_terrain >> (state.terrain.terrain_type as u32 & 63)) & 1 != 0
             || ev.field_pseudo & pseudo != 0

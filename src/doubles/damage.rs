@@ -582,8 +582,8 @@ pub fn calculate_damage_with(
     let result = (base % 65536 + 65536) % 65536;
     if crate::doubles::debug::flags().dmg {
         eprintln!(
-            "DMGDBG {} (BP {} {}) vs {}: atk={} def={} base_final={} crit={} tm={:?} type={:?}",
-            attacker.id, base_power, choice.move_type, defender.id, attack, defense, result, crit, tm, defender.types
+            "DMGDBG {} (BP {} {}) vs {}: atk={} def={} base_final={} crit={} tm={:?} type={:?} bp={} ps={} lo={} sp={} scr={}",
+            attacker.id, base_power, choice.move_type, defender.id, attack, defense, result, crit, tm, defender.types, ctx.bypass_protect, ctx.parental_second, ctx.life_orb, spread, ctx.screen_handlers
         );
     }
     Some(DamageOutcome {

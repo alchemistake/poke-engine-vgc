@@ -50,6 +50,9 @@ pub struct ActiveSlot {
     pub electrify: bool,
     /// Power Trick is active (Attack and Defense are swapped).
     pub power_trick: bool,
+    /// Attack and Defense are swapped now (Power Trick). A Mega Evolution
+    /// recomputes them unswapped while the volatile stays.
+    pub pt_swapped: bool,
     /// PS `move.hit` (1-based) of the current hit of a multi-hit move.
     pub hit_number: u8,
     pub shed_tailing: bool,
@@ -352,6 +355,7 @@ impl ActiveSlot {
             baton_passing: false,
             electrify: false,
             power_trick: false,
+            pt_swapped: false,
             hit_number: 1,
             shed_tailing: false,
             unburden: false,
@@ -744,6 +748,8 @@ pub struct MoveScratch {
     pub band_pre: std::cell::Cell<u8>,
     /// The residual action is running (PS `!queue.peek()`).
     pub in_residual: std::cell::Cell<bool>,
+    /// The residual `fieldEvent` handler loop is running (draw labels).
+    pub in_field_event: std::cell::Cell<bool>,
     /// The running move's Pressure PP (side, slot, user, move slot, move), still
     /// owed until `pressure_done`: PS takes it before the hit, so a Leppa Berry
     /// eaten mid-move sees it.

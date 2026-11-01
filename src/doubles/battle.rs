@@ -1644,6 +1644,7 @@ pub fn run_fuzz_turn(
                         a.eject_switch = false;
                         each_event_update(state, rng);
                         update_speed(state, rng);
+                        modify_boost_ties(state, rng, side, slot);
                         run_switch_in(state, rng, side, slot, pos);
                     }
                 }
@@ -2043,6 +2044,8 @@ pub fn run_fuzz_turn(
                         // The switch answer (`commitChoices` -> `updateSpeed`),
                         // the `instaswitch` action, then the `runSwitch` action.
                         update_speed(state, rng);
+                        // `resolveAction` of the switch answer: its `getActionSpeed`.
+                        modify_boost_ties(state, rng, side, slot);
                         // Baton Pass (`selfSwitch: 'copyvolatile'`): boosts and
                         // the copyable volatiles move to the replacement.
                         // Baton Pass `copyVolatileFrom`: the passable volatiles.
@@ -2135,6 +2138,7 @@ pub fn run_fuzz_turn(
                             a.vol_synced = u128::MAX;
                             if old.power_trick {
                                 a.power_trick = true;
+                                a.pt_swapped = true;
                                 if let Some(ni) = a.pokemon_index {
                                     let pm = state.side_mut(side).team_member_mut(ni);
                                     std::mem::swap(&mut pm.attack, &mut pm.defense);
@@ -2319,6 +2323,7 @@ pub fn run_fuzz_turn(
             state.tl.in_residual.set(true);
             end_of_turn(state, rng, &pending_switches, &ee_switches);
             state.tl.in_residual.set(false);
+            state.tl.in_field_event.set(false);
             update_forecast(state);
             state.side_one.sync_sc_order();
             state.side_two.sync_sc_order();
@@ -2635,6 +2640,18 @@ fn ps_get_target_inner(
     };
 
     let loc = action.target_loc;
+    // `move.smartTarget` (Dragon Darts), checked first: the pokemon at the
+    // location if it is up (the user itself after an Ally Switch), else
+    // `getRandomTarget` (a fainted ally target retargets to a foe).
+    if action.choice.move_id == Choices::DRAGONDARTS && !action.recharge {
+        if loc != 0 {
+            let (ts, tsl) = if loc > 0 { (foe, (loc - 1) as usize) } else { (side, (-loc - 1) as usize) };
+            if tsl < 2 && alive(ts, tsl) {
+                return Some((ts, tsl));
+            }
+        }
+        return random_target(rng);
+    }
     if loc == 0 {
         // `validTargetLoc(0)` is true but `getAtLoc(0)` is empty.
         return random_target(rng);
@@ -3298,6 +3315,10 @@ fn after_move_handler_ties(state: &DoublesState, rng: &mut Gen5Rng, side: Side, 
             {
                 hs.push((4294967296, cached_speed(state, sd, sl), 7));
             }
+            // White Herb `onAnyAfterMove` (item, subOrder 8).
+            if state.side(sd).slot_pokemon(sl).is_some_and(|p| p.hp > 0 && p.item == Items::WHITEHERB && !ignoring_item(state, p)) {
+                hs.push((4294967296, cached_speed(state, sd, sl), 8));
+            }
         }
     }
     if hs.len() >= 2 {
@@ -3730,6 +3751,9 @@ fn execute_action_inner(
         None
     };
     let resolved = match tracked {
+        // Stalwart's `tracksTarget` is off for `scripted` moves (Counter), so
+        // their `onRedirectTarget` still applies in `getMoveTargets`.
+        Some(t) if move_target(action.choice.move_id) == Tgt::Scripted => Some(redirect_target(state, action, t)),
         Some(t) => Some(t),
         None if scripted_called.is_some() => scripted_called,
         None if bounce_spread_copy && action.target_loc != 0 => {
@@ -5152,11 +5176,15 @@ fn execute_action_inner(
                     state.side_mut(ts).slot_scratch_mut(tsl).bounced = true;
                     let (saved_pt, saved_pe) = (state.tl.pressure_target.get(), state.tl.pressure_extra.get());
                     let (saved_po, saved_pd) = (state.tl.pressure_owed.get(), state.tl.pressure_done.get());
+                    // The reflected move is the bouncer's own: no `infiltrates` from the original user.
+                    let saved_inf = crate::doubles::damage::infiltrator_move();
+                    crate::doubles::damage::set_infiltrator_move(false);
                     execute_action_inner(state, rng, &sub, move_order, will_act, queue);
                     state.tl.pressure_target.set(saved_pt);
                     state.tl.pressure_extra.set(saved_pe);
                     state.tl.pressure_owed.set(saved_po);
                     state.tl.pressure_done.set(saved_pd);
+                    crate::doubles::damage::set_infiltrator_move(saved_inf);
                     state.side_mut(ts).slot_scratch_mut(tsl).external_call = false;
                     state.side_mut(ts).slot_scratch_mut(tsl).bounced = false;
                 }
@@ -5450,11 +5478,15 @@ fn execute_action_inner(
             // scratch values must survive it.
             let (saved_pt, saved_pe) = (state.tl.pressure_target.get(), state.tl.pressure_extra.get());
             let (saved_po, saved_pd) = (state.tl.pressure_owed.get(), state.tl.pressure_done.get());
+            // The reflected move is the bouncer's own: no `infiltrates` from the original user.
+            let saved_inf = crate::doubles::damage::infiltrator_move();
+            crate::doubles::damage::set_infiltrator_move(false);
             execute_action_inner(state, rng, &sub, move_order, will_act, queue);
             state.tl.pressure_target.set(saved_pt);
             state.tl.pressure_extra.set(saved_pe);
             state.tl.pressure_owed.set(saved_po);
             state.tl.pressure_done.set(saved_pd);
+            crate::doubles::damage::set_infiltrator_move(saved_inf);
             {
                 let b = state.side_mut(target_side).slot_scratch_mut(target_slot);
                 if b.pokemon_index == Some(bidx) && b.move_result_this_turn.is_none() {
@@ -6436,11 +6468,21 @@ fn execute_action_inner(
           // PS `spreadDamage`: every target's `Damage` event (Damp) runs after
           // all the rolls and before any secondary.
           // A Substitute target took its hit in `onTryPrimaryHit`: no Damage event.
+          // `spreadDamage` damages each target right after its Damage event: a
+          // holder KO'd by an earlier target's damage has no handler in the
+          // later events (its Damp is gone). Hidden at 0 HP for those calls.
+          let mut kod: smallvec::SmallVec<[(Side, PokemonIndex, i16); 4]> = smallvec::SmallVec::new();
           for (i, &(d, _)) in out.iter().enumerate() {
               let (ts, tsl) = hit_targets[i];
               let sub = !bypass && (ts, tsl) != (side, slot) && state.side(ts).active()[tsl].substitute_health > 0;
               if d > 0 && !sub {
+                  for &(ks, ki, _) in &kod {
+                      state.side_mut(ks).team_member_mut(ki).hp = 0;
+                  }
                   crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::Damage, hit_targets[i], Some((side, slot)));
+                  for &(ks, ki, hp) in &kod {
+                      state.side_mut(ks).team_member_mut(ki).hp = hp;
+                  }
                   // Focus Band's `onDamage` roll belongs to this Damage event.
                   // Disguise's `onDamage` (priority 1) returns 0 first: the event
                   // stops before Focus Band (priority -40).
@@ -6451,6 +6493,21 @@ fn execute_action_inner(
                           let bit = ts as u8 * 2 + tsl as u8;
                           let m = state.tl.band_pre.get() | 1 << bit | (ok as u8) << (bit + 4);
                           state.tl.band_pre.set(m);
+                      }
+                  }
+                  if let Some(pi) = state.side(ts).active()[tsl].pokemon_index {
+                      let p = state.side(ts).team_member(pi);
+                      let bit = ts as u8 * 2 + tsl as u8;
+                      let band_saved = state.tl.band_pre.get() >> (bit + 4) & 1 == 1;
+                      let lethal = p.hp > 0
+                          && d >= p.hp
+                          && !disguised
+                          && !state.side(ts).active()[tsl].endure
+                          && !(p.ability == Abilities::STURDY && p.hp == p.maxhp)
+                          && !(p.item == Items::FOCUSSASH && p.hp == p.maxhp && !ignoring_item(state, p))
+                          && !band_saved;
+                      if lethal {
+                          kod.push((ts, pi, p.hp));
                       }
                   }
               }
@@ -6706,7 +6763,11 @@ fn execute_action_inner(
                     | Choices::EERIESPELL
                     | Choices::PSYCHICNOISE
                     | Choices::CEASELESSEDGE
-                    | Choices::STONEAXE => 1,
+                    | Choices::STONEAXE => {
+                        // King's Rock's pushed flinch follows the custom entry.
+                        let p = state.side(side).team_member(idx);
+                        1 + (p.item == Items::KINGSROCK && !ignoring_item(state, p)) as usize
+                    }
                     // Its table entry stands in for the base-power roll: only a
                     // King's Rock flinch is a real secondary.
                     Choices::FICKLEBEAM => {
@@ -8768,6 +8829,7 @@ fn execute_action_inner(
             std::mem::swap(&mut pm.attack, &mut pm.defense);
             let a = state.side_mut(side).active_slot_mut(slot);
             a.power_trick = !a.power_trick;
+            a.pt_swapped = !a.pt_swapped;
         }
         // Electrify: fails if the target already moved (`onTryHit`); lasts the turn.
         if choice.move_id == Choices::ELECTRIFY && ti == 0 && !move_failed {
@@ -10178,6 +10240,11 @@ fn execute_action_inner(
         }
         let recoil_damage = total_damage - sub_recoil_damage;
         if let (Some(frac), true) = (choice.recoil, recoil_damage > 0) {
+            // `damage(recoil, pokemon, pokemon, 'recoil')`: the Damage event sorts
+            // its handlers (Damp, Rock Head) even when Rock Head then blocks it.
+            if state.side(side).active()[slot].pokemon_index == Some(idx) && state.side(side).team_member(idx).hp > 0 {
+                crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::Damage, (side, slot), Some((side, slot)));
+            }
             if !no_recoil {
                 let recoil = ((recoil_damage as f32) * frac).round().max(1.0) as i16;
                 band_roll(state, rng, side, slot, true);
@@ -12691,14 +12758,20 @@ fn future_move_hit(
     let no_guard = state.side(ss).team_member(si).ability == Abilities::NOGUARD
         || state.side(ts).slot_pokemon(tslot).is_some_and(|p| p.ability == Abilities::NOGUARD)
         || state.side(ts).active()[tslot].glaive_rush;
+    // `hitStepAccuracy`'s events (ModifyAccuracy, the boosts' ModifyBoost,
+    // Accuracy) sort their handlers like a normal hit's.
+    accuracy_event_ties(state, rng, ss, sslot, ts, tslot, mv);
     if !no_guard && !roll_accuracy_boosted(choice.accuracy, ab, eb, mods, rng) {
         return;
     }
     // The delayed hit is its own move: the source slot's base-power doubling
     // flag (left over from its last Payback / Assurance) does not apply.
     let saved_bp_double = std::mem::replace(&mut state.side_mut(ss).slot_scratch_mut(sslot).bp_double, false);
+    // Nor is it a Parental Bond hit (the slot's flags are from its last move).
+    let saved_pb = std::mem::replace(&mut state.side_mut(ss).slot_scratch_mut(sslot).parental_bond, false);
     let (damage, _) = compute_hit_damage(state, rng, ss, sslot, si, ts, tslot, &choice, false, false);
     state.side_mut(ss).slot_scratch_mut(sslot).bp_double = saved_bp_double;
+    state.side_mut(ss).slot_scratch_mut(sslot).parental_bond = saved_pb;
     // A resist berry `onSourceModifyDamage` is eaten during the calc.
     eat_pending_berry(state, rng);
     // Disguise absorbs the hit (a `Move` effect); the bust runs in the first
@@ -13228,6 +13301,16 @@ fn skill_swap(
     for ab in [src_ability, tgt_ability] {
         if matches!(ab, Abilities::CLOUDNINE | Abilities::AIRLOCK) {
             let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+        }
+    }
+    // flashfire / unburden `onEnd` (the old ability's End runs even when the
+    // new one is the same ability): the volatile goes.
+    for (sd, sl, ab) in [(src_side, src_slot, src_ability), (tgt_side, tgt_slot, tgt_ability)] {
+        if ab == Abilities::FLASHFIRE && state.side(sd).active()[sl].flash_fire {
+            state.side_mut(sd).active_slot_mut(sl).flash_fire = false;
+        }
+        if ab == Abilities::UNBURDEN && state.side(sd).active()[sl].unburden {
+            state.side_mut(sd).active_slot_mut(sl).unburden = false;
         }
     }
     state.side_mut(src_side).team_member_mut(si).ability = tgt_ability;
@@ -13942,7 +14025,10 @@ fn update_forecast(state: &mut DoublesState) {
                 if state.side(sd).active()[sl].forecast_weather == Some(weather) {
                     continue;
                 }
-                if state.side(sd).team_member(idx).ability != Abilities::FORECAST {
+                // `pokemon.transformed`: a transformed holder keeps its forme.
+                if state.side(sd).team_member(idx).ability != Abilities::FORECAST
+                    || state.side(sd).transform_save[idx as usize].is_some()
+                {
                     continue;
                 }
                 let pm = state.side_mut(sd).team_member_mut(idx);
@@ -14107,7 +14193,8 @@ fn transform_into(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot:
         p.moves = t.moves.clone();
         for m in [&mut p.moves.m0, &mut p.moves.m1, &mut p.moves.m2, &mut p.moves.m3] {
             if m.id != Choices::NONE {
-                m.pp = 5;
+                // `noPPBoosts` moves (Revival Blessing) keep their max PP.
+                m.pp = if m.id == Choices::REVIVALBLESSING { 1 } else { 5 };
                 m.disabled = false;
             }
         }
@@ -14961,6 +15048,8 @@ fn run_mega_evo(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: u
     };
     let (hp, atk, def, spa, spd, spe) = crate::doubles::state::compute_stats(data.base_stats, &evs, lvl, nat);
     restore_stored_stats(state.side_mut(side), idx);
+    // `setSpecies` recomputes the stats unswapped; a Power Trick volatile stays.
+    state.side_mut(side).slot_scratch_mut(slot).pt_swapped = false;
     {
         let pm = state.side_mut(side).team_member_mut(idx);
         pm.id = mega;
@@ -15056,7 +15145,7 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
     }
     if let Some(old) = state.side(side).active()[slot].pokemon_index {
         release_trapped_by(state, side, old);
-        if state.side(side).active()[slot].power_trick {
+        if state.side(side).active()[slot].pt_swapped {
             let pm = state.side_mut(side).team_member_mut(old);
             std::mem::swap(&mut pm.attack, &mut pm.defense);
         }
@@ -15787,10 +15876,10 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
                 vols.push(("stall", NO_ORDER, 2, ResidualKind::Stall(side, slot)));
             }
             if a.flinched {
-                vols.push(("flinch", NO_ORDER, 2, ResidualKind::Marker));
+                vols.push(("flinch", NO_ORDER, 2, ResidualKind::VolatileEnd(side, slot, 4)));
             }
             if a.helping_hand_mult > 1.0 {
-                vols.push(("helpinghand", NO_ORDER, 2, ResidualKind::Marker));
+                vols.push(("helpinghand", NO_ORDER, 2, ResidualKind::VolatileEnd(side, slot, 3)));
             }
             if a.focus_punch {
                 vols.push(("focuspunch", NO_ORDER, 2, ResidualKind::Marker)); // focuspunch (duration 1)
@@ -16615,6 +16704,7 @@ fn end_of_turn(
     // `resolveFaints` ends the battle (PS sim/battle.ts fieldEvent).
     let mut perish_wipe = false;
     let mut prev_end = false;
+    state.tl.in_field_event.set(true);
     for h in handlers {
         if state.battle_is_over() != 0.0 && (!perish_wipe || !prev_end) {
             return;
@@ -16915,6 +17005,12 @@ fn end_of_turn(
                         item_gained(state, side, slot, idx);
                     }
                 }
+            }
+            ResidualKind::VolatileEnd(side, slot, 3) => {
+                state.side_mut(side).active_slot_mut(slot).helping_hand_mult = 1.0;
+            }
+            ResidualKind::VolatileEnd(side, slot, 4) => {
+                state.side_mut(side).active_slot_mut(slot).flinched = false;
             }
             ResidualKind::VolatileEnd(side, slot, 2) => {
                 // Protect / Endure (duration 1) end here, before a later handler
@@ -17473,6 +17569,7 @@ fn end_of_turn(
         }
     }
 
+    state.tl.in_field_event.set(false);
     // Aborted charge: the move's own condition (duration 2) has now ended.
     for side in [Side::One, Side::Two] {
         for slot in 0..2 {
@@ -17509,7 +17606,12 @@ fn end_of_turn(
             && state.side(sd).find_replacement().is_some()
         {
             if let Some(&(_, _, pos)) = ee_switches.iter().find(|&&(s2, l2, _)| s2 == sd && l2 == sl) {
-                pending_vec.push((sd, sl, pos));
+                // The Emergency Exit switch comes first: a replacement answered
+                // for the same slot replaces it later (it fainted to hazards).
+                match pending_vec.iter().position(|&(s2, l2, _)| (s2, l2) == (sd, sl)) {
+                    Some(k) => pending_vec.insert(k, (sd, sl, pos)),
+                    None => pending_vec.push((sd, sl, pos)),
+                }
                 // PS `runAction` switches loop: `runPursuitActivation` for every live
                 // pokemon with a `switchFlag` (gen >= 5: `eachEvent('Update')`).
                 each_event_update(state, rng);

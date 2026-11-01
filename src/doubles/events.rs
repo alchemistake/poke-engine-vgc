@@ -1222,11 +1222,13 @@ pub fn run_event_ties_on_effect(
             eprintln!("EVENT {} target={:?}{} handlers: {}", event.name(), ts, tsl, d.join(", "));
         }
     }
-    speed_sort_keys(&mut c.hs, rng);
+    // A runEvent inside the residual's `fieldEvent` (no `eachEvent` between).
+    let label = if state.tl.in_field_event.get() { "speed tie (residual)" } else { "speed tie (move order)" };
+    speed_sort_keys(&mut c.hs, rng, label);
 }
 
 /// PS `speedSort` (selection sort, shuffling each group of equal keys).
-fn speed_sort_keys(hs: &mut [Key], rng: &mut Gen5Rng) {
+fn speed_sort_keys(hs: &mut [Key], rng: &mut Gen5Rng, label: &'static str) {
     let cmp = |a: &Key, b: &Key| {
         a.order
             .cmp(&b.order)
@@ -1259,7 +1261,7 @@ fn speed_sort_keys(hs: &mut [Key], rng: &mut Gen5Rng) {
             let end = sorted + next.len();
             let mut i = sorted;
             while i < end - 1 {
-                let j = rng.label("speed tie (move order)").random_range(i, end);
+                let j = rng.label(label).random_range(i, end);
                 hs.swap(i, j);
                 i += 1;
             }

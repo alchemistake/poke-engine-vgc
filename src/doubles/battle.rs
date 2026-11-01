@@ -11470,24 +11470,8 @@ fn execute_move_body(
                     let drop = mirror_armor_bounce(state, rng, target_side, target_slot, side, idx, &drop);
                     apply_boosts_from(state, rng, side, idx, &drop, target_side != side, true);
                 }
-                // Cotton Down `onDamagingHit`: every other non-fainted active
-                // (allies too, in `getAllActive` order) loses 1 Speed stage.
-                // PS data/abilities.ts cottondown.
                 if ability == Abilities::COTTONDOWN {
-                    let drop = StatBoosts { speed: -1, ..Default::default() };
-                    for s in [Side::One, Side::Two] {
-                        for sl in 0..2 {
-                            if (s, sl) == (target_side, target_slot) {
-                                continue;
-                            }
-                            let Some(p) = state.side(s).active()[sl].pokemon_index else { continue };
-                            if state.side(s).team_member(p).hp <= 0 {
-                                continue;
-                            }
-                            let d = mirror_armor_bounce(state, rng, target_side, target_slot, s, p, &drop);
-                            apply_boosts_from(state, rng, s, p, &d, s != target_side, true);
-                        }
-                    }
+                    cotton_down(state, rng, target_side, target_slot);
                 }
             }
             maybe_wandering_spirit(state, side, slot, target_side, target_slot, choice, rng);
@@ -15335,6 +15319,25 @@ fn field_setting_damaging_hit(state: &mut DoublesState, rng: &mut Gen5Rng, abili
     }
 }
 
+/// Cotton Down `onDamagingHit`: every other non-fainted active (allies too,
+/// in `getAllActive` order) loses 1 Speed stage. PS data/abilities.ts cottondown.
+fn cotton_down(state: &mut DoublesState, rng: &mut Gen5Rng, target_side: Side, target_slot: usize) {
+    let drop = StatBoosts { speed: -1, ..Default::default() };
+    for s in [Side::One, Side::Two] {
+        for sl in 0..2 {
+            if (s, sl) == (target_side, target_slot) {
+                continue;
+            }
+            let Some(p) = state.side(s).active()[sl].pokemon_index else { continue };
+            if state.side(s).team_member(p).hp <= 0 {
+                continue;
+            }
+            let d = mirror_armor_bounce(state, rng, target_side, target_slot, s, p, &drop);
+            apply_boosts_from(state, rng, s, p, &d, s != target_side, true);
+        }
+    }
+}
+
 fn resolve_future_move(
     state: &mut DoublesState,
     rng: &mut Gen5Rng,
@@ -15572,6 +15575,11 @@ fn future_move_hit(
         if let Some(didx) = hit_pi {
             let ability = state.side(ts).team_member(didx).ability;
             field_setting_damaging_hit(state, rng, ability, held_item(state, ts, didx));
+            // Cotton Down `onDamagingHit` on the delayed hit too (the holder
+            // still counts when the hit KO'd it, as on a normal hit).
+            if ability == Abilities::COTTONDOWN {
+                cotton_down(state, rng, ts, tslot);
+            }
         }
     }
     // PS trySpreadMoveHit: the hit loop's `eachEvent('Update')`, then
@@ -16464,6 +16472,14 @@ fn mirror_armor_bounce(
     if holder != Abilities::MIRRORARMOR {
         return b.clone();
     }
+    // Clear Amulet `onTryBoost` (priority 1) runs first and deletes the drops,
+    // leaving Mirror Armor nothing to bounce. PS data/items.ts clearamulet.
+    {
+        let m = state.side(ts).team_member(tidx);
+        if m.item == Items::CLEARAMULET && !ignoring_item(state, m) {
+            return b.clone();
+        }
+    }
     // The drop is removed from the holder whatever the source's HP; only the
     // bounce needs a living source (`if (source.hp) this.boost(...)`). A source
     // whose faint already emptied its slot gets nothing either.
@@ -16674,6 +16690,12 @@ fn apply_boosts_from(
                 holder_ability,
                 Abilities::CLEARBODY | Abilities::WHITESMOKE | Abilities::FULLMETALBODY
             );
+        // Clear Amulet `onTryBoost` (priority 1): no drops by another pokemon.
+        // PS data/items.ts clearamulet.
+        let blocks_all = blocks_all || {
+            let m = state.side(side).team_member(idx);
+            m.item == Items::CLEARAMULET && !ignoring_item(state, m)
+        };
         for (n, r) in requested.iter_mut().enumerate() {
             let blocked = blocks_all
                 || (n == 0 && holder_ability == Abilities::HYPERCUTTER)

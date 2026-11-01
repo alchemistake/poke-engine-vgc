@@ -961,6 +961,12 @@ pub struct DoublesState {
     /// Abilities blanked by Mold Breaker for the running move: (side, team
     /// index, real ability). PS `battle.suppressingAbility(target)`.
     pub mold_saved: arrayvec::ArrayVec<(Side, PokemonIndex, Abilities), 3>,
+    /// Abilities blanked by an active Neutralizing Gas holder: (side, team
+    /// index, real ability). PS sim/pokemon.ts ignoringAbility.
+    pub gas_saved: arrayvec::ArrayVec<(Side, PokemonIndex, Abilities), 4>,
+    /// The Neutralizing Gas holder whose `onEnd` is running (PS
+    /// `abilityState.ending`): it no longer suppresses anything.
+    pub gas_ending: Option<(Side, PokemonIndex)>,
     /// Build the fuzz output (per-turn snapshots, move-order entries). Off
     /// for plain simulation; the battle itself is the same either way.
     pub record: bool,
@@ -1783,6 +1789,8 @@ impl DoublesState {
             unresolved_faints: Vec::new(),
             ko_update_ties: Vec::new(),
             mold_saved: arrayvec::ArrayVec::new(),
+            gas_saved: arrayvec::ArrayVec::new(),
+            gas_ending: None,
             record: true,
             record_events: false,
             events: Vec::new(),
@@ -2336,12 +2344,16 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
                     active_slot,
                     boosts,
                     item: ITEM_NAMES[p.item as usize],
-                    // Gastro Acid keeps the ability id (the engine stores NONE).
+                    // Gastro Acid / Neutralizing Gas keep the ability id (the
+                    // engine stores NONE).
                     ability: match active_slot {
                         Some(sl) if s.active()[sl].gastro_acid && p.ability == Abilities::NONE => {
                             ABILITY_NAMES[s.active()[sl].gastro_ability as usize]
                         }
-                        _ => ABILITY_NAMES[p.ability as usize],
+                        _ => match state.gas_saved.iter().find(|&&(gs, gi, _)| gs == sd && gi as usize == i) {
+                            Some(&(_, _, a)) if p.ability == Abilities::NONE => ABILITY_NAMES[a as usize],
+                            _ => ABILITY_NAMES[p.ability as usize],
+                        },
                     },
                     pp: [&p.moves.m0, &p.moves.m1, &p.moves.m2, &p.moves.m3]
                         .iter()

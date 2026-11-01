@@ -11092,6 +11092,7 @@ fn execute_move_body(
                 contact_abilities(state, rng, side, slot, idx, target_side, target_slot, choice);
             }
             cursed_body(state, rng, side, slot, target_side, target_slot, choice);
+            perish_body(state, rng, side, slot, idx, target_side, target_slot, choice);
             // Weak Armor, Steam Engine, ... (shared with the singles engine).
             damaging_hit_self_abilities(state, rng, target_side, target_slot, choice);
             // Sand Spit `onDamagingHit` (PS data/abilities.ts sandspit): the
@@ -15156,6 +15157,45 @@ fn emergency_exit_check(state: &mut DoublesState, ts: Side, tsl: usize, before: 
 /// attacker's move (the move just used; `disable.onStart` shortens the
 /// duration by one when the holder is mid-move, so 4 more end-of-turns).
 // TODO(PS parity): Disable's `cant` BeforeMove, PP check.
+/// Perish Body `onDamagingHit` (PS data/abilities.ts perishbody): a contact hit
+/// (attacker's Protective Pads remove it) gives the attacker and the holder the
+/// `perishsong` volatile, unless the attacker already has it. `addVolatile`
+/// fails on a fainted pokemon, so a holder KO'd by the hit gets none.
+#[allow(clippy::too_many_arguments)]
+fn perish_body(
+    state: &mut DoublesState,
+    rng: &mut Gen5Rng,
+    side: Side,
+    slot: usize,
+    idx: PokemonIndex,
+    target_side: Side,
+    target_slot: usize,
+    choice: &Choice,
+) {
+    let Some(def_idx) = slot_index_or_unresolved(state, target_side, target_slot) else { return };
+    if state.side(target_side).team_member(def_idx).ability != Abilities::PERISHBODY {
+        return;
+    }
+    let attacker = state.side(side).team_member(idx);
+    let pads = attacker.item == Items::PROTECTIVEPADS && !ignoring_item(state, attacker);
+    if !choice.flags.contact || pads {
+        return;
+    }
+    let att_active = state.side(side).active()[slot].pokemon_index == Some(idx);
+    if att_active && state.side(side).active()[slot].perish > 0 {
+        return;
+    }
+    for (s, sl, pi) in [(side, slot, idx), (target_side, target_slot, def_idx)] {
+        let up = state.side(s).active()[sl].pokemon_index == Some(pi)
+            && state.side(s).team_member(pi).hp > 0
+            && !(pi == idx && s == side && is_selfdestruct_always(choice.move_id));
+        if up && state.side(s).active()[sl].perish == 0 {
+            try_add_volatile_ties(state, rng, s, sl);
+            state.side_mut(s).active_slot_mut(sl).perish = 4;
+        }
+    }
+}
+
 fn cursed_body(
     state: &mut DoublesState,
     rng: &mut Gen5Rng,

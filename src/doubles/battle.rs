@@ -6179,6 +6179,13 @@ fn execute_move_body(
                     continue;
                 }
             }
+            // A target lifted by Sky Drop is semi-invulnerable too (PS
+            // skydrop.condition `onAnyInvulnerability`): no accuracy draw.
+            if state.side(ts).active()[tsl].sky_lifted_by.is_some()
+                && semi_invulnerable_blocks(state, side, idx, choice.move_id, ts, tsl)
+            {
+                continue;
+            }
             // Magic Bounce `onTryHit` on a spread move (PS `hitStepTryHitEvent`,
             // data/abilities.ts magicbounce): a reflectable move that reaches the
             // holder is used back by the holder on its user, before this move's
@@ -6294,19 +6301,23 @@ fn execute_move_body(
             {
                 continue;
             }
+            let (id_view, id_added) = identified_view(state, ts, tsl, &choice.move_type, &d);
             if damaging
                 && crate::doubles::damage::type_mod_with_added(
                     state.side(side).team_member(idx),
                     &choice.move_type,
                     &crate::doubles::damage::smackdown_ground_view(
                         &choice.move_type,
-                        &d,
+                        &id_view,
+                        // Thousand Arrows `ignoreImmunity: {Ground}` + `onEffectiveness`
+                        // (Flying neutral): it hits like Smack Down. PS data/moves.ts thousandarrows.
                         state.side(ts).active()[tsl].smackdown
+                            || choice.move_id == Choices::THOUSANDARROWS
                             || state.side(ts).active()[tsl].ingrain
                             || (d.item == Items::IRONBALL && !ignoring_item(state, &d)),
                         ignoring_item(state, &d),
                     ),
-                    state.side(ts).active()[tsl].added_type,
+                    id_added,
                 )
                 .is_none()
             {
@@ -6808,15 +6819,16 @@ fn execute_move_body(
             let ground_immune = choice.move_type == PokemonType::GROUND
                 && choice.move_id != Choices::THOUSANDARROWS
                 && !ground_immunity_grounded(state, target_side, target_slot);
-            let added = state.side(target_side).active()[target_slot].added_type;
+            let (id_view, added) = identified_view(state, target_side, target_slot, &choice.move_type, def);
             if ground_immune
                 || crate::doubles::damage::type_mod_with_added(
                     state.side(side).team_member(idx),
                     &choice.move_type,
                     &crate::doubles::damage::smackdown_ground_view(
                         &choice.move_type,
-                        def,
+                        &id_view,
                         state.side(target_side).active()[target_slot].smackdown
+                            || choice.move_id == Choices::THOUSANDARROWS
                             || state.side(target_side).active()[target_slot].ingrain
                             || (def.item == Items::IRONBALL && !ignoring_item(state, def)),
                         ignoring_item(state, def),
@@ -7228,6 +7240,21 @@ fn execute_move_body(
                 }
             }
         }
+    }
+
+    // Sky Drop `onTryHit` (move-level, after accuracy) on the release turn: a
+    // Flying target (`hasType`, so an added type counts) is `-immune`, no
+    // damage. PS data/moves.ts skydrop.
+    if choice.move_id == Choices::SKYDROP
+        && state.side(side).active()[slot].twoturn_fired
+        && state.side(target_side).slot_pokemon(target_slot).is_some_and(|d| {
+            d.has_type(&PokemonType::FLYING)
+                || state.side(target_side).active()[target_slot].added_type == PokemonType::FLYING
+        })
+    {
+        state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
+        push_order(move_order);
+        return;
     }
 
     // OHKO moves (`hitStepAccuracy`): immune when the target out-levels the user
@@ -13612,6 +13639,37 @@ fn slot_grounded(p: &crate::state::Pokemon, a: &ActiveSlot, gravity: bool, magic
 /// a slot. A held Ring Target (`onNegateImmunity: false`, PS data/items.ts
 /// ringtarget) skips only the Flying check; Levitate, Air Balloon, Magnet Rise
 /// and Telekinesis still lift the holder.
+/// Foresight / Odor Sleuth (`foresight`) and Miracle Eye (`miracleeye`)
+/// `onNegateImmunity`: Normal / Fighting moves hit a Ghost target, Psychic moves
+/// a Dark one (the chart's immune entry is then neutral). The target with those
+/// types dropped, and its added type (Trick-or-Treat) dropped likewise.
+/// PS data/moves.ts foresight, miracleeye.
+fn identified_view<'a>(
+    state: &DoublesState,
+    side: Side,
+    slot: usize,
+    move_type: &PokemonType,
+    p: &'a crate::state::Pokemon,
+) -> (std::borrow::Cow<'a, crate::state::Pokemon>, PokemonType) {
+    let a = &state.side(side).active()[slot];
+    let negates = (a.foresight && matches!(*move_type, PokemonType::NORMAL | PokemonType::FIGHTING))
+        || (a.miracle_eye && *move_type == PokemonType::PSYCHIC);
+    if !negates {
+        return (std::borrow::Cow::Borrowed(p), a.added_type);
+    }
+    let added = match crate::doubles::damage::ring_target_view(move_type, &crate::state::Pokemon {
+        types: (a.added_type, PokemonType::TYPELESS),
+        ..p.clone()
+    }) {
+        Some(_) => PokemonType::TYPELESS,
+        None => a.added_type,
+    };
+    match crate::doubles::damage::ring_target_view(move_type, p) {
+        Some(v) => (std::borrow::Cow::Owned(v), added),
+        None => (std::borrow::Cow::Borrowed(p), added),
+    }
+}
+
 fn ground_immunity_grounded(state: &DoublesState, side: Side, slot: usize) -> bool {
     let Some(p) = state.side(side).slot_pokemon(slot) else {
         return false;
@@ -14623,12 +14681,15 @@ fn compute_hit_damage(
         .side(target_side)
         .slot_pokemon(target_slot)
         .expect("target must be present");
+    let (id_view, id_added) = identified_view(state, target_side, target_slot, &choice.move_type, defender_actual);
     let defender_view = crate::doubles::damage::smackdown_ground_view(
         &choice.move_type,
-        defender_actual,
+        &id_view,
         // Ingrain and Iron Ball ground like Smack Down (PS `isGrounded`; Iron
         // Ball's `onEffectiveness` makes the Flying part neutral).
+        // Thousand Arrows grounds its target too (PS data/moves.ts thousandarrows).
         state.side(target_side).active()[target_slot].smackdown
+            || choice.move_id == Choices::THOUSANDARROWS
             || state.side(target_side).active()[target_slot].ingrain
             || (defender_actual.item == Items::IRONBALL && !ignoring_item(state, defender_actual)),
         ignoring_item(state, defender_actual),
@@ -14776,7 +14837,7 @@ fn compute_hit_damage(
                 resist_berry_type(defender.item).map(|t| (t, defender.ability == Abilities::RIPEN))
             },
             ripen_weaken: defender.ability == Abilities::RIPEN && state.side(target_side).active()[target_slot].berry_weaken.get(),
-            added_type: state.side(target_side).active()[target_slot].added_type,
+            added_type: id_added,
             attacker_added_type: state.side(side).active()[slot].added_type,
             attack_base: base_atk,
             attack_boost: atk_boost_stat,

@@ -299,3 +299,47 @@ def test_fake_out_only_on_first_turn():
     assert fake_out().id == "fakeout" and not fake_out().disabled
     battle.choose([DoublesAction.move(0, 1), DoublesAction.move(0, 1)], [DoublesAction.move(0, 1)] * 2)
     assert fake_out().disabled
+
+
+def test_events_off_by_default():
+    battle = DoublesBattle(TEAM_A, TEAM_B, SEED)
+    battle.choose([DoublesAction.move(0, 1)] * 2, [DoublesAction.move(0, 1)] * 2)
+    assert battle.events == []
+
+
+@pytest.mark.parametrize("seed", range(10))
+def test_events_match_hp_and_faints(seed):
+    import random
+
+    battle = DoublesBattle(PIVOT_A, TEAM_B, (seed, 2, 3, 4), events=True)
+    plain = DoublesBattle(PIVOT_A, TEAM_B, (seed, 2, 3, 4))
+    rng = random.Random(seed)
+    before = battle.state
+    while battle.waiting_for != "over" and battle.turn < 60:
+        if battle.waiting_for == "switch":
+            req = battle.requests[0]
+            options = req.options + ([None] if req.can_pass else [])
+            pick = rng.choice(options)
+            battle.switch(req.side, req.slot, pick)
+            plain.switch(req.side, req.slot, pick)
+        else:
+            acts = [list(rng.choice(battle.legal_joint_actions(side))) for side in "ab"]
+            battle.choose(*acts)
+            plain.choose(*acts)
+        if battle.waiting_for == "switch":
+            continue
+        after = battle.state
+        events = battle.events
+        assert all(e["kind"] != "move" or e["move"] for e in events)
+        for side in "ab":
+            for i, (p0, p1) in enumerate(zip(getattr(before, side), getattr(after, side))):
+                mine = [e for e in events if e["target_side"] == side and e["target"] == i]
+                dmg = sum(e["value"] for e in mine if e["kind"] == "damage")
+                heal = sum(e["value"] for e in mine if e["kind"] == "heal")
+                assert dmg - heal == p0.hp - p1.hp, (battle.turn, side, i, events)
+                faints = [e for e in events if e["kind"] == "faint" and e["side"] == side and e["actor"] == i]
+                assert len(faints) == (1 if p0.hp > 0 and p1.hp == 0 else 0)
+        before = after
+    # Recording does not change the battle.
+    assert battle.winner == plain.winner
+    assert [p.hp for p in battle.state.a + battle.state.b] == [p.hp for p in plain.state.a + plain.state.b]

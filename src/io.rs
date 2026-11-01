@@ -890,6 +890,7 @@ fn run_doubles_fuzz_input(
             b: vec![0, 1],
         });
     dstate.send_out_leads(&leads.a, &leads.b);
+    dstate.record_events = input.events;
     let mut rng = crate::doubles::rng::Gen5Rng::new(input.seed);
     rng.trace = trace;
     crate::doubles::battle::run_battle_fuzz(&mut dstate, &mut rng, &choices, input.stop_after)

@@ -906,6 +906,20 @@ pub struct DoublesState {
     /// Build the fuzz output (per-turn snapshots, move-order entries). Off
     /// for plain simulation; the battle itself is the same either way.
     pub record: bool,
+    /// Record typed battle events into `events` (off by default; the battle
+    /// is the same either way).
+    pub record_events: bool,
+    /// The events of the current turn (cleared at turn start) when
+    /// `record_events` is on.
+    pub events: Vec<BattleEvent>,
+    /// The move being executed (user side, user team index, move): the
+    /// `actor` of the damage that move deals.
+    pub ev_move: Option<(Side, PokemonIndex, Choices)>,
+    /// The next switch-in is a drag (Roar, Whirlwind, Dragon Tail, Red Card).
+    pub ev_drag: bool,
+    /// The field / status / item / ability values the events have reported
+    /// so far (`ev_sync` emits the differences).
+    pub ev_snap: Option<Box<EvSnap>>,
     /// The `disabled` volatile each pokemon had when it fainted. PS keeps the
     /// volatiles until `faintMessages`, so a DamagingHit handler that runs after
     /// a Destiny Bond KO of its attacker still sees the attacker's Disable.
@@ -1107,6 +1121,9 @@ pub struct BattleInput {
     /// mode: the driver re-runs the engine with one more turn each step).
     #[serde(default)]
     pub stop_after: Option<u32>,
+    /// Record typed battle events into each turn's snapshot (`events`).
+    #[serde(default)]
+    pub events: bool,
 }
 
 /// One controller action for one active slot.
@@ -1672,6 +1689,11 @@ impl DoublesState {
             ko_update_ties: Vec::new(),
             mold_saved: arrayvec::ArrayVec::new(),
             record: true,
+            record_events: false,
+            events: Vec::new(),
+            ev_move: None,
+            ev_drag: false,
+            ev_snap: None,
             faint_disabled: Vec::new(),
             db_alive_pending: Vec::new(),
             pending_disguise: Vec::new(),
@@ -1787,6 +1809,264 @@ pub struct SideConditionEntry {
     pub duration: Option<i8>,
 }
 
+/// What a `BattleEvent` reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventKind {
+    Move,
+    Switch,
+    Drag,
+    Faint,
+    Damage,
+    Heal,
+    Status,
+    CureStatus,
+    Boost,
+    Unboost,
+    Weather,
+    FieldStart,
+    FieldEnd,
+    SideStart,
+    SideEnd,
+    Crit,
+    SuperEffective,
+    Resisted,
+    Immune,
+    Miss,
+    Fail,
+    Item,
+    EndItem,
+    Ability,
+    Mega,
+    Cant,
+}
+
+impl EventKind {
+    pub fn id(self) -> &'static str {
+        match self {
+            EventKind::Move => "move",
+            EventKind::Switch => "switch",
+            EventKind::Drag => "drag",
+            EventKind::Faint => "faint",
+            EventKind::Damage => "damage",
+            EventKind::Heal => "heal",
+            EventKind::Status => "status",
+            EventKind::CureStatus => "curestatus",
+            EventKind::Boost => "boost",
+            EventKind::Unboost => "unboost",
+            EventKind::Weather => "weather",
+            EventKind::FieldStart => "fieldstart",
+            EventKind::FieldEnd => "fieldend",
+            EventKind::SideStart => "sidestart",
+            EventKind::SideEnd => "sideend",
+            EventKind::Crit => "crit",
+            EventKind::SuperEffective => "supereffective",
+            EventKind::Resisted => "resisted",
+            EventKind::Immune => "immune",
+            EventKind::Miss => "miss",
+            EventKind::Fail => "fail",
+            EventKind::Item => "item",
+            EventKind::EndItem => "enditem",
+            EventKind::Ability => "ability",
+            EventKind::Mega => "mega",
+            EventKind::Cant => "cant",
+        }
+    }
+}
+
+/// What the recorded events have reported (see `DoublesState::ev_snap`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct EvSnap {
+    pub weather: Weather,
+    pub terrain: Terrain,
+    pub pseudo: [bool; 7],
+    pub sc: [[i8; 13]; 2],
+    pub status: [[PokemonStatus; 6]; 2],
+    pub item: [[Items; 6]; 2],
+    pub ability: [[Abilities; 6]; 2],
+}
+
+/// Pseudo-weather ids in `EvSnap::pseudo` order.
+pub const EV_PSEUDO: [&str; 7] = ["trickroom", "wonderroom", "magicroom", "gravity", "fairylock", "mudsport", "watersport"];
+/// Side condition ids in `EvSnap::sc` order.
+pub const EV_SIDE: [&str; 13] = [
+    "reflect", "lightscreen", "auroraveil", "tailwind", "safeguard", "luckychant", "mist", "spikes",
+    "toxicspikes", "stealthrock", "stickyweb", "quickguard", "wideguard",
+];
+
+impl EvSnap {
+    pub fn of(state: &DoublesState) -> Self {
+        let sc = |s: &DoublesSide| {
+            let c = &s.side_conditions;
+            [
+                c.reflect, c.light_screen, c.aurora_veil, c.tailwind, c.safeguard, c.lucky_chant, c.mist, c.spikes,
+                c.toxic_spikes, c.stealth_rock, c.sticky_web, c.quick_guard, c.wide_guard,
+            ]
+        };
+        EvSnap {
+            weather: state.weather.weather_type,
+            terrain: state.terrain.terrain_type,
+            pseudo: [
+                state.trick_room.active,
+                state.wonder_room.active,
+                state.magic_room.active,
+                state.gravity.active,
+                state.fairy_lock.active,
+                state.mud_sport.active,
+                state.water_sport.active,
+            ],
+            sc: [sc(&state.side_one), sc(&state.side_two)],
+            status: [
+                std::array::from_fn(|i| state.side_one.team[i].status),
+                std::array::from_fn(|i| state.side_two.team[i].status),
+            ],
+            item: [
+                std::array::from_fn(|i| state.side_one.team[i].item),
+                std::array::from_fn(|i| state.side_two.team[i].item),
+            ],
+            ability: [
+                std::array::from_fn(|i| state.side_one.team[i].ability),
+                std::array::from_fn(|i| state.side_two.team[i].ability),
+            ],
+        }
+    }
+}
+
+/// One typed battle event (`DoublesState::events`).
+///
+/// `side` / `actor` is the pokemon that acts (a move's user, the pokemon
+/// that switches in, faints, mega evolves or can't move, the attacker whose
+/// move deals damage); `target_side` / `target` is the pokemon it happens
+/// to (a move's target, the pokemon that takes damage, heals, gets a status
+/// or a boost, loses an item). Team indexes, -1 for none. `value` is the
+/// exact HP change (damage, heal), the boost amount (boost, unboost), the
+/// slot (switch, drag), the layer count (sidestart) or the turns (weather,
+/// fieldstart).
+#[derive(Debug, Clone, Copy)]
+pub struct BattleEvent {
+    pub kind: EventKind,
+    pub side: Option<Side>,
+    pub actor: i8,
+    pub target_side: Option<Side>,
+    pub target: i8,
+    pub mv: Choices,
+    pub status: PokemonStatus,
+    pub effect: &'static str,
+    pub item: Items,
+    pub ability: Abilities,
+    pub value: i32,
+}
+
+impl BattleEvent {
+    pub fn new(kind: EventKind) -> Self {
+        BattleEvent {
+            kind,
+            side: None,
+            actor: -1,
+            target_side: None,
+            target: -1,
+            mv: Choices::NONE,
+            status: PokemonStatus::NONE,
+            effect: "",
+            item: Items::NONE,
+            ability: Abilities::NONE,
+            value: 0,
+        }
+    }
+    pub fn actor(mut self, side: Side, idx: impl EvIndex) -> Self {
+        self.side = Some(side);
+        self.actor = idx.ev_index();
+        self
+    }
+    pub fn target(mut self, side: Side, idx: impl EvIndex) -> Self {
+        self.target_side = Some(side);
+        self.target = idx.ev_index();
+        self
+    }
+    pub fn mv(mut self, mv: Choices) -> Self {
+        self.mv = mv;
+        self
+    }
+    pub fn status(mut self, status: PokemonStatus) -> Self {
+        self.status = status;
+        self
+    }
+    pub fn effect(mut self, effect: &'static str) -> Self {
+        self.effect = effect;
+        self
+    }
+    pub fn item(mut self, item: Items) -> Self {
+        self.item = item;
+        self
+    }
+    pub fn ability(mut self, ability: Abilities) -> Self {
+        self.ability = ability;
+        self
+    }
+    pub fn value(mut self, value: i32) -> Self {
+        self.value = value;
+        self
+    }
+}
+
+/// A team index for `BattleEvent` (a `PokemonIndex` or a team position).
+pub trait EvIndex {
+    fn ev_index(self) -> i8;
+}
+impl EvIndex for PokemonIndex {
+    fn ev_index(self) -> i8 {
+        self as i8
+    }
+}
+impl EvIndex for usize {
+    fn ev_index(self) -> i8 {
+        self as i8
+    }
+}
+
+impl Serialize for BattleEvent {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let side = |x: Option<Side>| match x {
+            Some(Side::One) => "a",
+            Some(Side::Two) => "b",
+            None => "",
+        };
+        let mv = if self.mv == Choices::NONE { String::new() } else { format!("{:?}", self.mv).to_lowercase() };
+        let status = if self.status == PokemonStatus::NONE { "" } else { normalize_status(self.status) };
+        let mut m = s.serialize_map(Some(11))?;
+        m.serialize_entry("kind", self.kind.id())?;
+        m.serialize_entry("side", side(self.side))?;
+        m.serialize_entry("actor", &self.actor)?;
+        m.serialize_entry("target_side", side(self.target_side))?;
+        m.serialize_entry("target", &self.target)?;
+        m.serialize_entry("move", &mv)?;
+        m.serialize_entry("status", status)?;
+        m.serialize_entry("effect", self.effect)?;
+        m.serialize_entry("item", if self.item == Items::NONE { "" } else { ITEM_NAMES[self.item as usize] })?;
+        m.serialize_entry(
+            "ability",
+            if self.ability == Abilities::NONE { "" } else { ABILITY_NAMES[self.ability as usize] },
+        )?;
+        m.serialize_entry("value", &self.value)?;
+        m.end()
+    }
+}
+
+/// PS weather condition id of `w` ("sunnyday", "raindance", ...).
+pub fn weather_id(w: Weather) -> &'static str {
+    match w {
+        Weather::NONE => "none",
+        Weather::SUN => "sunnyday",
+        Weather::HARSHSUN => "harshsun",
+        Weather::RAIN => "raindance",
+        Weather::HEAVYRAIN => "heavyrain",
+        Weather::SAND => "sandstorm",
+        Weather::HAIL => "hail",
+        Weather::SNOW => "snowscape",
+        Weather::DELTASTREAM => "deltastream",
+    }
+}
+
 /// One move-order entry; serialized as `"<A|B><slot>:<species>:<MOVE>"`.
 #[derive(Debug, Clone, Copy)]
 pub struct OrderEntry {
@@ -1835,6 +2115,9 @@ pub struct FuzzTurnState {
     /// slot), read by the legality audit (`fuzz/legal_audit.js`).
     pub a_options: Vec<Option<crate::doubles::legal::SlotOptions>>,
     pub b_options: Vec<Option<crate::doubles::legal::SlotOptions>>,
+    /// The turn's events (`record_events`), absent when off.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub events: Vec<BattleEvent>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2032,17 +2315,7 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
     let pseudo_weather_turns: Vec<i8> = pseudo.iter().map(|(_, t)| *t).collect();
     // pokemon-showdown reports the weather CONDITION id (e.g. "raindance",
     // "sunnyday", "sandstorm"), not the engine's enum name.
-    let weather_name = match state.weather.weather_type {
-        Weather::NONE => "none",
-        Weather::SUN => "sunnyday",
-        Weather::HARSHSUN => "harshsun",
-        Weather::RAIN => "raindance",
-        Weather::HEAVYRAIN => "heavyrain",
-        Weather::SAND => "sandstorm",
-        Weather::HAIL => "hail",
-        Weather::SNOW => "snowscape",
-        Weather::DELTASTREAM => "deltastream",
-    };
+    let weather_name = weather_id(state.weather.weather_type);
     FuzzTurnState {
         turn: state.turn,
         a: snap_side(&state.side_one, Side::One),
@@ -2065,6 +2338,7 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
         move_order,
         a_options: (0..2).map(|sl| crate::doubles::legal::slot_options(state, Side::One, sl)).collect(),
         b_options: (0..2).map(|sl| crate::doubles::legal::slot_options(state, Side::Two, sl)).collect(),
+        events: state.events.clone(),
     }
 }
 

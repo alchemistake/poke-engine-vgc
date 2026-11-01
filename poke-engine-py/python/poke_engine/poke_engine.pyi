@@ -1,4 +1,4 @@
-from typing import List, Tuple, Set, Optional
+from typing import Any, Dict, List, Tuple, Set, Optional
 
 from poke_engine import Weather, Terrain, PokemonIndex
 
@@ -537,13 +537,15 @@ class DoublesAction:
     target: int
     struggle: bool
     position: int
+    mega: bool
 
     @staticmethod
-    def move(slot: int, target: int = 1, struggle: bool = False) -> DoublesAction:
+    def move(slot: int, target: int = 1, struggle: bool = False, mega: bool = False) -> DoublesAction:
         """
         Use the move in move slot ``slot`` (0-3). ``target`` is a
         pokemon-showdown location: 1/2 = foe slot, -1/-2 = own slot.
-        It is ignored for moves without a target.
+        It is ignored for moves without a target. ``mega``: Mega Evolve
+        first (the pokemon holds its Mega Stone).
         """
         ...
     @staticmethod
@@ -721,6 +723,7 @@ class DoublesBattle:
     :param leads_a: Side A's two lead team positions
     :param leads_b: Side B's two lead team positions
     :param trace: Record every PRNG draw in ``prng_draws``
+    :param events: Record each turn's typed events in ``events``
     """
 
     state: DoublesTurnState
@@ -737,6 +740,28 @@ class DoublesBattle:
     history: List[DoublesTurnChoices]
     """Every finished turn's choices, switch answers included."""
     prng_draws: List[int]
+    events: List[Dict[str, Any]]
+    """
+    The last turn's events in order (up to the pending switch request while
+    one waits; the battle start's before the first turn). Empty unless made
+    with ``events=True``. Each is a dict:
+
+    - ``kind``: move, switch, drag, faint, damage, heal, status, curestatus,
+      boost, unboost, weather, fieldstart, fieldend, sidestart, sideend, crit,
+      supereffective, resisted, immune, miss, fail, item, enditem, ability,
+      mega, cant
+    - ``side`` / ``actor``: the pokemon that acts ("a" / "b", team index; ""
+      / -1 for none): a move's user, the pokemon that switches in, faints,
+      mega evolves or can't move, the attacker whose move deals the damage
+    - ``target_side`` / ``target``: the pokemon it happens to (a move's
+      target, the pokemon that takes damage, heals, gets a status, a boost or
+      loses an item); ``target_side`` alone for side conditions
+    - ``move``, ``status``, ``item``, ``ability``: ids ("" for none)
+    - ``effect``: the cause or detail (stat for boosts, condition id for field
+      and side events, "indirect", "hazard", "berry", "flinch", ...)
+    - ``value``: exact HP change (damage, heal), boost amount, slot (switch,
+      drag, faint), layers (sidestart), turns (weather, fieldstart)
+    """
 
     def __init__(
         self,
@@ -746,6 +771,7 @@ class DoublesBattle:
         leads_a: List[int] = [0, 1],
         leads_b: List[int] = [0, 1],
         trace: bool = False,
+        events: bool = False,
     ) -> None: ...
     def choose(
         self, a: List[DoublesAction], b: List[DoublesAction], check: bool = True

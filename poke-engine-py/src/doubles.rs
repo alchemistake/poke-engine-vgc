@@ -175,6 +175,8 @@ pub struct PyDoublesAction {
     pub target: i8,
     pub struggle: bool,
     pub position: usize,
+    /// Mega Evolve before moving (the pokemon holds its Mega Stone).
+    pub mega: bool,
 }
 
 impl Into<FuzzAction> for PyDoublesAction {
@@ -184,6 +186,7 @@ impl Into<FuzzAction> for PyDoublesAction {
                 slot: self.slot,
                 target: self.target,
                 struggle: self.struggle,
+                mega: self.mega,
             },
             "switch" => FuzzAction::Switch {
                 position: self.position,
@@ -199,8 +202,8 @@ impl PyDoublesAction {
     /// 1/2 = foe slot, -1/-2 = own slot (ally moves); ignored for moves
     /// that do not take a target.
     #[staticmethod]
-    #[pyo3(name = "move", signature = (slot, target=1, struggle=false))]
-    fn move_(slot: usize, target: i8, struggle: bool) -> PyResult<Self> {
+    #[pyo3(name = "move", signature = (slot, target=1, struggle=false, mega=false))]
+    fn move_(slot: usize, target: i8, struggle: bool, mega: bool) -> PyResult<Self> {
         if slot > 3 {
             return Err(PyValueError::new_err(format!("move slot must be 0-3, got {}", slot)));
         }
@@ -210,6 +213,7 @@ impl PyDoublesAction {
             target,
             struggle,
             position: 0,
+            mega,
         })
     }
     /// Switch in the team member at 0-based team `position`.
@@ -221,6 +225,7 @@ impl PyDoublesAction {
             target: 0,
             struggle: false,
             position,
+            mega: false,
         }
     }
     /// Do nothing (empty active slot with no replacement available).
@@ -233,15 +238,17 @@ impl PyDoublesAction {
             target: 0,
             struggle: false,
             position: 0,
+            mega: false,
         }
     }
     fn __repr__(&self) -> String {
         match self.kind.as_str() {
             "move" => format!(
-                "DoublesAction.move({}, target={}{})",
+                "DoublesAction.move({}, target={}{}{})",
                 self.slot,
                 self.target,
-                if self.struggle { ", struggle=True" } else { "" }
+                if self.struggle { ", struggle=True" } else { "" },
+                if self.mega { ", mega=True" } else { "" }
             ),
             "switch" => format!("DoublesAction.switch({})", self.position),
             _ => "DoublesAction.pass_()".to_string(),
@@ -324,12 +331,13 @@ impl Into<FuzzTurn> for PyDoublesTurnChoices {
 impl From<&FuzzTurn> for PyDoublesTurnChoices {
     fn from(turn: &FuzzTurn) -> Self {
         let action = |a: &FuzzAction| match a {
-            FuzzAction::Move { slot, target, struggle } => PyDoublesAction {
+            FuzzAction::Move { slot, target, struggle, mega } => PyDoublesAction {
                 kind: "move".to_string(),
                 slot: *slot,
                 target: *target,
                 struggle: *struggle,
                 position: 0,
+                mega: *mega,
             },
             FuzzAction::Switch { position } => PyDoublesAction::switch(*position),
             FuzzAction::Pass => PyDoublesAction::pass(),
@@ -858,6 +866,7 @@ impl PyDoublesSlotOptions {
                     target,
                     struggle: m.struggle,
                     position: 0,
+                    mega: false,
                 });
             }
         }
@@ -1098,7 +1107,7 @@ impl PyDoublesBattle {
 #[pymethods]
 impl PyDoublesBattle {
     #[new]
-    #[pyo3(signature = (team_a, team_b, seed, leads_a=vec![0, 1], leads_b=vec![0, 1], trace=false))]
+    #[pyo3(signature = (team_a, team_b, seed, leads_a=vec![0, 1], leads_b=vec![0, 1], trace=false, events=false))]
     fn new(
         team_a: Vec<PyDoublesPokemon>,
         team_b: Vec<PyDoublesPokemon>,
@@ -1106,6 +1115,7 @@ impl PyDoublesBattle {
         leads_a: Vec<usize>,
         leads_b: Vec<usize>,
         trace: bool,
+        events: bool,
     ) -> PyResult<Self> {
         check_team(&team_a, "a")?;
         check_team(&team_b, "b")?;
@@ -1114,6 +1124,7 @@ impl PyDoublesBattle {
         let teams = to_teams(team_a, team_b);
         let (state, rng) = catch_engine_panic(|| {
             let mut state = build_state(&teams, &leads_a, &leads_b);
+            state.record_events = events;
             let mut rng = Gen5Rng::new(seed);
             rng.trace = trace;
             start_fuzz_battle(&mut state, &mut rng);
@@ -1312,6 +1323,20 @@ impl PyDoublesBattle {
     #[getter]
     fn history(&self) -> Vec<PyDoublesTurnChoices> {
         self.history.iter().map(PyDoublesTurnChoices::from).collect()
+    }
+
+    /// The typed events of the last turn (list of dicts: kind, side, actor,
+    /// target_side, target, move, status, effect, item, ability, value), up
+    /// to the pending switch request while one waits. Battle start events
+    /// (lead abilities) before the first turn. Empty unless the battle was
+    /// made with `events=True`.
+    #[getter]
+    fn events<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let events = match &self.pending {
+            Some(p) => &p.view.events,
+            None => &self.state.events,
+        };
+        pythonize::pythonize(py, events).map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
     #[getter]

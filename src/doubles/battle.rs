@@ -8,6 +8,7 @@
 use crate::engine::items::Items;
 use crate::doubles::move_targets::Tgt;
 use crate::doubles::state::OrderEntry;
+use crate::doubles::state::{BattleEvent, EventKind};
 use crate::choices::{ChargeSetup, Choice, Choices, Effect, MoveCategory, MoveTarget, StatBoosts, MOVES};
 use crate::doubles::damage::{calculate_damage, roll_accuracy, roll_accuracy_boosted, roll_accuracy_boosted_labeled, DamageCtx, DamageOutcome};
 use crate::doubles::rng::Gen5Rng;
@@ -367,6 +368,7 @@ fn release_trapped_by(state: &mut DoublesState, side: Side, idx: PokemonIndex) {
 /// the end-of-turn switch).
 fn faint_pokemon(state: &mut DoublesState, side: Side, slot: usize) {
     if let Some(idx) = state.side(side).active()[slot].pokemon_index {
+        emit(state, |_| BattleEvent::new(EventKind::Faint).actor(side, idx).value(slot as i32));
         state.unresolved_faints.push((side, slot, idx));
         state.faint_log.push(side);
         state.side_mut(side).fainted_this_turn = true;
@@ -415,7 +417,9 @@ fn faint_pokemon(state: &mut DoublesState, side: Side, slot: usize) {
                 if state.side(att_side).team_member(att_idx).hp > 0 {
                     let lock = state.side(att_side).active()[att_slot].locked_move;
                     state.db_alive_pending.push((att_side, att_idx, lock));
+                    let hp0_ev = state.side(att_side).team_member(att_idx).hp;
                     state.side_mut(att_side).team_member_mut(att_idx).hp = 0;
+                    hp_event(state, att_side, att_idx, hp0_ev, "destinybond");
                     faint_pokemon(state, att_side, att_slot);
                     state.db_faint_pos = Some(state.faint_log.len() - 1);
                 }
@@ -669,11 +673,169 @@ fn apply_direct_damage(state: &mut DoublesState, side: Side, slot: usize, amount
     fainted
 }
 
+/// Record `e` when `record_events` is on (the closure only runs then).
+#[inline]
+fn emit(state: &mut DoublesState, e: impl FnOnce(&DoublesState) -> BattleEvent) {
+    if state.record_events {
+        let e = e(state);
+        push_event(state, e);
+    }
+}
+
+/// Push `e` after the changes not reported yet (`ev_sync`).
+fn push_event(state: &mut DoublesState, e: BattleEvent) {
+    ev_sync(state);
+    state.events.push(e);
+}
+
+/// Report the weather, terrain, pseudo-weather, side condition, status, item
+/// and ability changes since the last report (`ev_snap`): those values are
+/// written in many places, so they are reported by difference, before the
+/// next event and at each action / residual step.
+fn ev_sync(state: &mut DoublesState) {
+    use crate::doubles::state::{EvSnap, EV_PSEUDO, EV_SIDE};
+    if !state.record_events {
+        return;
+    }
+    let now = EvSnap::of(state);
+    let Some(old) = state.ev_snap.take() else {
+        state.ev_snap = Some(Box::new(now));
+        return;
+    };
+    if *old == now {
+        state.ev_snap = Some(old);
+        return;
+    }
+    let mut out: Vec<BattleEvent> = Vec::new();
+    if old.weather != now.weather {
+        let w = crate::doubles::state::weather_id(now.weather);
+        out.push(BattleEvent::new(EventKind::Weather).effect(w).value(state.weather.turns_remaining as i32));
+    }
+    let terrain_id = |t: crate::engine::state::Terrain| match t {
+        crate::engine::state::Terrain::ELECTRICTERRAIN => "electricterrain",
+        crate::engine::state::Terrain::PSYCHICTERRAIN => "psychicterrain",
+        crate::engine::state::Terrain::MISTYTERRAIN => "mistyterrain",
+        crate::engine::state::Terrain::GRASSYTERRAIN => "grassyterrain",
+        _ => "",
+    };
+    if old.terrain != now.terrain {
+        if old.terrain != crate::engine::state::Terrain::NONE {
+            out.push(BattleEvent::new(EventKind::FieldEnd).effect(terrain_id(old.terrain)));
+        }
+        if now.terrain != crate::engine::state::Terrain::NONE {
+            out.push(BattleEvent::new(EventKind::FieldStart).effect(terrain_id(now.terrain)).value(state.terrain.turns_remaining as i32));
+        }
+    }
+    for k in 0..7 {
+        if old.pseudo[k] != now.pseudo[k] {
+            let kind = if now.pseudo[k] { EventKind::FieldStart } else { EventKind::FieldEnd };
+            out.push(BattleEvent::new(kind).effect(EV_PSEUDO[k]));
+        }
+    }
+    for (si, side) in [Side::One, Side::Two].iter().enumerate() {
+        for k in 0..13 {
+            let (a, b) = (old.sc[si][k], now.sc[si][k]);
+            let kind = if a <= 0 && b > 0 || (k == 7 || k == 8) && b > a {
+                EventKind::SideStart
+            } else if a > 0 && b <= 0 {
+                EventKind::SideEnd
+            } else {
+                continue;
+            };
+            let mut e = BattleEvent::new(kind).effect(EV_SIDE[k]).value(b.max(0) as i32);
+            e.target_side = Some(*side);
+            out.push(e);
+        }
+        for i in 0..6 {
+            if old.status[si][i] != now.status[si][i] {
+                let e = if now.status[si][i] == PokemonStatus::NONE {
+                    BattleEvent::new(EventKind::CureStatus).status(old.status[si][i])
+                } else {
+                    BattleEvent::new(EventKind::Status).status(now.status[si][i])
+                };
+                out.push(e.target(*side, i));
+            }
+            if old.item[si][i] != now.item[si][i] {
+                if old.item[si][i] != Items::NONE {
+                    out.push(BattleEvent::new(EventKind::EndItem).target(*side, i).item(old.item[si][i]));
+                }
+                if now.item[si][i] != Items::NONE {
+                    out.push(BattleEvent::new(EventKind::Item).target(*side, i).item(now.item[si][i]));
+                }
+            }
+            if old.ability[si][i] != now.ability[si][i] {
+                out.push(BattleEvent::new(EventKind::Ability).target(*side, i).ability(now.ability[si][i]));
+            }
+        }
+    }
+    state.events.extend(out);
+    state.ev_snap = Some(Box::new(now));
+}
+
+/// Start the change reports from the current state (nothing to report).
+fn ev_reset(state: &mut DoublesState) {
+    if state.record_events {
+        state.ev_snap = Some(Box::new(crate::doubles::state::EvSnap::of(state)));
+    }
+}
+
+/// Record the HP change of team member `idx` of `side` since `before` as a
+/// damage or heal event. Damage outside `effect` names the running move's
+/// user as the actor.
+fn hp_event(state: &mut DoublesState, side: Side, idx: impl crate::doubles::state::EvIndex, before: i16, effect: &'static str) {
+    if !state.record_events {
+        return;
+    }
+    let idx = idx.ev_index();
+    let after = state.side(side).team[idx as usize].hp.max(0);
+    let before = before.max(0);
+    if after == before {
+        return;
+    }
+    let mut e = if after < before {
+        BattleEvent::new(EventKind::Damage).value((before - after) as i32)
+    } else {
+        BattleEvent::new(EventKind::Heal).value((after - before) as i32)
+    };
+    e = e.target(side, idx as usize).effect(effect);
+    if let Some((us, ui, m)) = state.ev_move {
+        e = e.mv(m);
+        if after < before && effect.is_empty() {
+            e = e.actor(us, ui);
+        }
+    }
+    push_event(state, e);
+}
+
 /// Apply damage to a specific slot; returns true if the pokemon fainted.
 fn apply_damage(state: &mut DoublesState, side: Side, slot: usize, amount: i16) -> bool {
+    apply_damage_fx(state, side, slot, amount, "")
+}
+
+/// `apply_damage` with the event's `effect` ("" = the running move's damage).
+fn apply_damage_fx(state: &mut DoublesState, side: Side, slot: usize, amount: i16, effect: &'static str) -> bool {
     if amount <= 0 {
         return false;
     }
+    if state.record_events {
+        if let Some(idx) = state.side(side).active()[slot].pokemon_index {
+            let before = state.side(side).team_member(idx).hp;
+            let r = apply_damage_raw(state, side, slot, amount);
+            // The faint event (in `faint_pokemon`) follows the damage.
+            let n = state.events.len();
+            hp_event(state, side, idx, before, effect);
+            if state.events.len() > n && r {
+                let e = state.events.pop().unwrap();
+                let at = state.events.iter().rposition(|x| x.kind == EventKind::Faint && x.side == Some(side) && x.actor == idx as i8).unwrap_or(n);
+                state.events.insert(at.min(n), e);
+            }
+            return r;
+        }
+    }
+    apply_damage_raw(state, side, slot, amount)
+}
+
+fn apply_damage_raw(state: &mut DoublesState, side: Side, slot: usize, amount: i16) -> bool {
     let s = state.side_mut(side);
     if let Some(idx) = s.active()[slot].pokemon_index {
         let p = s.team_member_mut(idx);
@@ -1326,6 +1488,7 @@ fn note_unanswered_switch(state: &mut DoublesState, side: Side, slot: usize, rev
 /// Start a choice-driven battle: team preview, the leads' switch-in and
 /// their on-switch abilities. `state` must have its leads sent out.
 pub fn start_fuzz_battle(state: &mut DoublesState, rng: &mut Gen5Rng) {
+    ev_reset(state);
     // On-switch abilities for the leads (Intimidate), in PS send-out order:
     // side A's leads first, then side B's (p1 switches in before p2).
     // PS `runSwitch` for the four leads: speed sort, SwitchIn handlers, then
@@ -1410,6 +1573,7 @@ pub fn start_fuzz_battle(state: &mut DoublesState, rng: &mut Gen5Rng) {
     // Forecast `onStart` / `onWeatherChange` (PS data/abilities.ts forecast):
     // a lead's Drizzle / Drought sets the weather, and a Castform lead follows it.
     update_forecast(state);
+    ev_sync(state);
 }
 
 /// Simulate one turn of a choice-driven battle from the controller's `turn`
@@ -1423,6 +1587,8 @@ pub fn run_fuzz_turn(
     turn: &FuzzTurn,
     error: &mut Option<String>,
 ) -> Vec<OrderEntry> {
+        state.events.clear();
+        ev_reset(state);
         let turn_no = state.turn;
         // Build actions and pending switches from the controller's choices.
         let mut actions: Vec<Action> = Vec::new();
@@ -2416,6 +2582,7 @@ pub fn run_fuzz_turn(
             state.side_two.sync_sc_order();
             sync_vol_order(state);
         }
+        ev_sync(state);
     move_order
 }
 
@@ -3020,6 +3187,7 @@ fn drag_in_all(state: &mut DoublesState, rng: &mut Gen5Rng) -> Vec<(Side, Pokemo
                 dragged.push((side, out));
             }
             switch_out_end_event(state, rng, side, slot);
+            state.ev_drag = true;
             switch_in(state, rng, side, slot, pick);
             let _ = sorted_actives(state, rng, "speed tie (switch-in)");
             apply_sticky_web(state, rng, side, slot);
@@ -3737,7 +3905,80 @@ fn execute_action(
     let before = state.side(action.side).active()[action.slot].charging;
     state.copy_called = false;
     let logged_before = move_order.len();
+    let ev_at = state.events.len();
+    let ev_target = if state.record_events {
+        let (ts, tsl) = match action.target_loc {
+            l if l > 0 => (action.side.other(), (l - 1) as usize),
+            l if l < 0 => (action.side, (-l - 1) as usize),
+            _ => (action.side, usize::MAX),
+        };
+        (tsl < 2).then(|| state.side(ts).active()[tsl].pokemon_index.map(|i| (ts, i))).flatten()
+    } else {
+        None
+    };
+    let ev_cant = if state.record_events {
+        let a = &state.side(action.side).active()[action.slot];
+        let st = state.side(action.side).team_member(action.pokemon_index).status;
+        Some(if a.recharging {
+            "recharge"
+        } else {
+            match st {
+                PokemonStatus::SLEEP => "slp",
+                PokemonStatus::FREEZE => "frz",
+                PokemonStatus::PARALYZE => "par",
+                _ => "",
+            }
+        })
+    } else {
+        None
+    };
+    let prev_move = state.ev_move.replace((action.side, action.pokemon_index, action.choice.move_id));
     execute_action_body(state, rng, action, move_order, queue);
+    ev_sync(state);
+    state.ev_move = prev_move;
+    if let Some(reason) = ev_cant {
+        let (sd, sl, ui, m) = (action.side, action.slot, action.pokemon_index, action.choice.move_id);
+        let here = state.side(sd).active()[sl].pokemon_index == Some(ui) && state.side(sd).team_member(ui).hp > 0;
+        if move_order.len() == logged_before {
+            // No move: the user could not act (sleep, paralysis, flinch, ...).
+            if here {
+                let reason = if state.side(sd).active()[sl].flinched { "flinch" } else { reason };
+                state.events.push(BattleEvent::new(EventKind::Cant).actor(sd, ui).mv(m).effect(reason));
+            }
+        } else if state.side(sd).active()[sl].move_result_this_turn == Some(false)
+            && !state.events[ev_at.min(state.events.len())..].iter().any(|e| {
+                matches!(e.kind, EventKind::Miss | EventKind::Immune | EventKind::Fail) && e.side == Some(sd) && e.actor == ui as i8
+            })
+        {
+            // The move failed: `immune` when its type can't touch the target.
+            let immune = ev_target.is_some_and(|(ts, ti)| {
+                action.choice.category != MoveCategory::Status
+                    && crate::doubles::damage::type_mod(&action.choice.move_type, state.side(ts).team_member(ti)).is_none()
+            });
+            let mut e = BattleEvent::new(if immune { EventKind::Immune } else { EventKind::Fail }).actor(sd, ui).mv(m);
+            if let Some((ts, ti)) = ev_target {
+                e = e.target(ts, ti);
+            }
+            state.events.push(e);
+        }
+    }
+    // A `move` event per logged entry: the action's own at its start, a
+    // bounced copy (Magic Bounce / Magic Coat) where it ended.
+    if state.record_events {
+        for (k, o) in move_order[logged_before..].iter().enumerate() {
+            let s = state.side(o.side);
+            let Some(ui) = s.active()[o.slot as usize].pokemon_index else { continue };
+            let mut e = BattleEvent::new(EventKind::Move).actor(o.side, ui).mv(o.mv);
+            if k == 0 {
+                if let Some((ts, ti)) = ev_target {
+                    e = e.target(ts, ti);
+                }
+                state.events.insert(ev_at.min(state.events.len()), e);
+            } else {
+                state.events.push(e);
+            }
+        }
+    }
     // PS beakblast `onAfterMove`: the user's Beak Blast volatile ends with its move.
     // A failed BeforeMove (flinch, sleep, ...) skips AfterMove (PS sim/battle-actions.ts
     // runMove), so the volatile stays until its duration ends in the residual.
@@ -5073,7 +5314,9 @@ fn execute_move_body(
                 _ => 1.0,
             };
             let heal = crate::doubles::damage::modify(p.maxhp as i64, fraction, 1.0) as i16;
+            let hp0_ev = p.hp;
             p.hp = (p.hp + heal).min(p.maxhp);
+            hp_event(state, side, idx, hp0_ev, "");
             end_stockpile(state, rng, side, slot);
             each_event_update(state, rng);
             each_event_update(state, rng);
@@ -6373,6 +6616,7 @@ fn execute_move_body(
             let user_no_guard = state.side(side).team_member(idx).ability == Abilities::NOGUARD
                 && !matches!(choice.move_id, Choices::EXPLOSION | Choices::MISTYEXPLOSION | Choices::SELFDESTRUCT);
             let ignore_eva = ignores_evasion(evasion_ability(state, side, idx, choice.move_id), choice.move_id);
+            let ev_before = if state.record_events { spread_list.clone() } else { Default::default() };
             let st = &*state;
             spread_list.retain(|&(ts, tsl)| {
                 accuracy_event_ties(st, rng, side, slot, ts, tsl, choice.move_id);
@@ -6406,6 +6650,9 @@ fn execute_move_body(
                 let ab = if unaware_zeroes_accuracy(st, side, idx, ts, tsl, choice) { 0 } else { ab };
                 roll_accuracy_boosted(roll_accuracy_of(choice), ab, eb, accuracy_ability_mods(st, side, idx, ts, tsl, choice), rng)
             });
+            for &(ts, tsl) in ev_before.iter().filter(|t| !spread_list.contains(t)) {
+                miss_event(state, side, idx, ts, tsl, choice.move_id);
+            }
         }
         smart_hits = smart_target && spread_list.len() == 2;
         if spread_list.is_empty() {
@@ -6454,6 +6701,7 @@ fn execute_move_body(
         };
         let mods = accuracy_ability_mods(state, side, idx, target_side, target_slot, choice);
         if !roll_accuracy_boosted(roll_accuracy_of(choice), ab, eb, mods, rng) {
+            miss_event(state, side, idx, target_side, target_slot, choice.move_id);
             state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
             if matches!(choice.move_id, Choices::EXPLOSION | Choices::MISTYEXPLOSION | Choices::SELFDESTRUCT) {
                 selfdestruct_user_faint(state, rng, side, slot);
@@ -6872,7 +7120,9 @@ fn execute_move_body(
                       if !ooze && heal > 0 && state.side(side).active()[slot].heal_block == 0 {
                           let heal = big_root(state, side, idx, heal);
                           let pm = state.side_mut(side).team_member_mut(idx);
+                          let hp0_ev = pm.hp;
                           pm.hp = (pm.hp + heal).min(pm.maxhp);
+                          hp_event(state, side, idx, hp0_ev, "");
                       } else if ooze && heal > 0 {
                           // Liquid Ooze (`onSourceTryHeal`) turns it into damage.
                           apply_indirect_damage(state, rng, side, slot, heal);
@@ -7056,7 +7306,9 @@ fn execute_move_body(
                 if let Some(tidx) = state.side(target_side).active()[target_slot].pokemon_index {
                     let pm = state.side_mut(target_side).team_member_mut(tidx);
                     if pm.hp > 0 && pm.hp < pm.maxhp {
+                        let hp0_ev = pm.hp;
                         pm.hp = (pm.hp + pm.maxhp / 2).min(pm.maxhp);
+                        hp_event(state, target_side, tidx, hp0_ev, "");
                         pollen_not_fail = false;
                     }
                 }
@@ -7103,6 +7355,9 @@ fn execute_move_body(
                 .get(ti)
                 .copied()
                 .unwrap_or_else(|| compute_hit_damage(state, rng, side, slot, idx, target_side, target_slot, choice, ate_boosted, false));
+            if state.record_events && choice.category != MoveCategory::Status {
+                hit_flag_events(state, side, idx, target_side, target_slot, choice, was_crit);
+            }
             eat_pending_berry(state, rng);
             // Substitute `onTryPrimaryHit`: a damaging move hits the substitute
             // instead (sound moves and Infiltrator bypass it). No further
@@ -7191,7 +7446,9 @@ fn execute_move_body(
                         let heal = big_root(state, side, idx, heal);
                         let s = state.side_mut(side);
                         let pm = s.team_member_mut(idx);
+                        let hp0_ev = pm.hp;
                         pm.hp = (pm.hp + heal).min(pm.maxhp);
+                        hp_event(state, side, idx, hp0_ev, "");
                     }
                 }
                 // `selfDrops` (Close Combat, ...) still runs for a hit on the
@@ -7509,7 +7766,9 @@ fn execute_move_body(
                     if let Some(p) = state.side(side).active()[slot].pokemon_index {
                         let heal = big_root(state, side, p, heal);
                         let pm = state.side_mut(side).team_member_mut(p);
+                        let hp0_ev = pm.hp;
                         pm.hp = (pm.hp + heal).min(pm.maxhp);
+                        hp_event(state, side, p, hp0_ev, "");
                     }
                 }
             }
@@ -7728,12 +7987,16 @@ fn execute_move_body(
                     // TODO(PS parity): Mold Breaker on the user.
                     if sl != slot && pm.hp > 0 && matches!(pm.ability, Abilities::WATERABSORB | Abilities::DRYSKIN) {
                         if pm.hp < pm.maxhp {
+                            let hp0_ev = pm.hp;
                             pm.hp = (pm.hp + (pm.maxhp / 4).max(1)).min(pm.maxhp);
+                            hp_event(state, side, tidx, hp0_ev, "waterabsorb");
                         }
                         continue;
                     }
                     if pm.hp > 0 && pm.hp < pm.maxhp {
+                        let hp0_ev = pm.hp;
                         pm.hp = (pm.hp + ((pm.maxhp as f32 / 4.0).round() as i16).max(1)).min(pm.maxhp);
+                        hp_event(state, side, tidx, hp0_ev, "");
                         healed = true;
                     }
                 }
@@ -7833,7 +8096,9 @@ fn execute_move_body(
                             not_fail_result = true;
                         }
                     }
+                    let hp0_ev = pm.hp;
                     pm.hp = (pm.hp + amount).min(pm.maxhp);
+                    hp_event(state, ts, tidx, hp0_ev, "");
                 }
             }
         }
@@ -8197,6 +8462,7 @@ fn execute_move_body(
                             ee_before.push((ts, tslot, hp + cost));
                         }
                         state.side_mut(ts).team_member_mut(tidx).hp -= cost;
+                        hp_event(state, ts, tidx, hp, "substitute");
                         let a = state.side_mut(ts).active_slot_mut(tslot);
                         a.substitute_health = maxhp / 4;
                         a.partial_trap = None;
@@ -8642,7 +8908,9 @@ fn execute_move_body(
                 // (`-fail|heal`) before the target is healed.
                 let full = pm.hp >= pm.maxhp || blocked;
                 if !full {
+                    let hp0_ev = pm.hp;
                     pm.hp = (pm.hp + amount).min(pm.maxhp);
+                    hp_event(state, target_side, tidx, hp0_ev, "");
                 }
                 if full {
                     // PS `onHit` returns NOT_FAIL on a failed heal (`-fail`): the
@@ -8936,7 +9204,9 @@ fn execute_move_body(
                     // Big Root `onTryHeal` (Strength Sap is on its list).
                     let heal = big_root(state, side, idx, atk);
                     let pm = state.side_mut(side).team_member_mut(idx);
+                    let hp0_ev = pm.hp;
                     pm.hp = (pm.hp + heal).min(pm.maxhp);
+                    hp_event(state, side, idx, hp0_ev, "");
                 }
             }
         }
@@ -9618,7 +9888,9 @@ fn execute_move_body(
                 set_status(state, rng, side, idx, PokemonStatus::SLEEP);
                 let pm = state.side_mut(side).team_member_mut(idx);
                 pm.sleep_turns = 3;
+                let hp0_ev = pm.hp;
                 pm.hp = pm.maxhp;
+                hp_event(state, side, idx, hp0_ev, "");
             }
         }
 
@@ -9822,8 +10094,10 @@ fn execute_move_body(
                 // PS `swapPosition`: `runEvent('Swap', ally)` then `('Swap', user)`.
                 // Slot conditions (Healing Wish / Lunar Dance) stay with their slot,
                 // so the pokemon that arrives in a waiting slot is healed.
-                healing_wish_on_switch_in(sd, slot);
-                healing_wish_on_switch_in(sd, 1 - slot);
+                let hw = [healing_wish_on_switch_in(sd, slot), healing_wish_on_switch_in(sd, 1 - slot)];
+                for (i, b) in hw.into_iter().flatten() {
+                    hp_event(state, side, *i, *b, "healingwish");
+                }
             } else {
                 // PS data/moves.ts allyswitch.onHit returns NOT_FAIL after its
                 // `-fail`: the hit still runs its two `eachEvent('Update')`s, and
@@ -9865,9 +10139,13 @@ fn execute_move_body(
                 let uhp = state.side(side).team_member(idx).hp;
                 let avg = (((thp + uhp) / 2) as i16).max(1);
                 let t = state.side_mut(target_side).team_member_mut(tidx);
+                let hp0_ev = t.hp;
                 t.hp = avg.min(t.maxhp);
+                hp_event(state, target_side, tidx, hp0_ev, "");
                 let u = state.side_mut(side).team_member_mut(idx);
+                let hp0_ev = u.hp;
                 u.hp = avg.min(u.maxhp);
+                hp_event(state, side, idx, hp0_ev, "");
                 // Champions `spreadMoveHit` runs EmergencyExit for a single
                 // target with `hurtThisTurn + move.totalDamage` (0 here) as the
                 // original HP (PS data/mods/champions/scripts.ts).
@@ -10355,7 +10633,9 @@ fn execute_move_body(
                             let s = state.side_mut(ts);
                             let pm = s.team_member_mut(tidx);
                             let amt = (pm.maxhp as f32 * amount).round() as i16;
+                            let hp0_ev = pm.hp;
                             pm.hp = (pm.hp + amt).min(pm.maxhp);
+                            hp_event(state, ts, tidx, hp0_ev, "");
                         }
                     }
                     Effect::VolatileStatus(PokemonVolatileStatus::FLINCH) => {
@@ -11239,7 +11519,9 @@ fn execute_move_body(
                 Items::SHELLBELL if real_damage > 0 && state.side(side).active()[slot].heal_block == 0 => {
                     let h = (real_damage / 8).max(1);
                     let m = state.side_mut(side).team_member_mut(idx);
+                    let hp0_ev = m.hp;
                     m.hp = (m.hp + h).min(m.maxhp);
+                    hp_event(state, side, idx, hp0_ev, "shellbell");
                 }
                 _ => {}
             }
@@ -12199,7 +12481,7 @@ fn apply_indirect_damage(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side
             }
         }
     }
-    apply_damage(state, side, slot, dmg)
+    apply_damage_fx(state, side, slot, dmg, "indirect")
 }
 
 /// Illusion `onBeforeSwitchIn`: the last unfainted pokemon after the holder in
@@ -12376,6 +12658,13 @@ fn end_stockpile(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: 
 /// (champions conditions): sleep lasts `sample([2, 3, 3])` turns, freeze 3,
 /// toxic restarts its counter.
 fn set_status(state: &mut DoublesState, rng: &mut Gen5Rng, ts: Side, tidx: PokemonIndex, st: PokemonStatus) {
+    emit(state, |st_| {
+        let mut e = BattleEvent::new(EventKind::Status).target(ts, tidx).status(st);
+        if let Some((us, ui, m)) = st_.ev_move {
+            e = e.actor(us, ui).mv(m);
+        }
+        e
+    });
     let s = state.side_mut(ts);
     let pm = s.team_member_mut(tidx);
     pm.status = st;
@@ -12387,6 +12676,7 @@ fn set_status(state: &mut DoublesState, rng: &mut Gen5Rng, ts: Side, tidx: Pokem
         PokemonStatus::TOXIC => s.toxic_stage[tidx as usize] = 1,
         _ => {}
     }
+    ev_reset(state);
     // Lum Berry `onAfterSetStatus`: eaten at once (before the move's later
     // effects, e.g. Thief's steal). PS data/items.ts lumberry.
     if let Some(slot) = (0..2).find(|&k| state.side(ts).active()[k].pokemon_index == Some(tidx)) {
@@ -12892,6 +13182,48 @@ fn yawn_volatile_blocked(state: &DoublesState, ts: Side, tslot: usize, src_side:
             || (state.side(ts).side_conditions.safeguard > 0 && !(infiltrates && ts != src_side)))
 }
 
+
+/// A `miss` event: the user's move missed the pokemon in `ts` / `tsl`.
+fn miss_event(state: &mut DoublesState, side: Side, idx: PokemonIndex, ts: Side, tsl: usize, m: Choices) {
+    emit(state, |st| {
+        let mut e = BattleEvent::new(EventKind::Miss).actor(side, idx).mv(m);
+        if let Some(ti) = st.side(ts).active()[tsl].pokemon_index {
+            e = e.target(ts, ti);
+        }
+        e
+    });
+}
+
+/// The `supereffective` / `resisted` and `crit` events of a hit on a target.
+fn hit_flag_events(
+    state: &mut DoublesState,
+    side: Side,
+    idx: PokemonIndex,
+    target_side: Side,
+    target_slot: usize,
+    choice: &Choice,
+    crit: bool,
+) {
+    let Some(tidx) = state.side(target_side).active()[target_slot].pokemon_index else { return };
+    let steps = if choice.base_power > 0.0 {
+        crate::doubles::damage::type_mod_by(
+            state.side(side).team_member(idx),
+            &choice.move_type,
+            state.side(target_side).team_member(tidx),
+        )
+        .unwrap_or(0)
+    } else {
+        0
+    };
+    let m = choice.move_id;
+    if steps != 0 {
+        let kind = if steps > 0 { EventKind::SuperEffective } else { EventKind::Resisted };
+        emit(state, |_| BattleEvent::new(kind).actor(side, idx).target(target_side, tidx).mv(m).value(steps));
+    }
+    if crit {
+        emit(state, |_| BattleEvent::new(EventKind::Crit).actor(side, idx).target(target_side, tidx).mv(m));
+    }
+}
 
 /// One target's damage for a hit (fixed / OHKO / `calculate_damage`), without
 /// applying it. Draws crit + damage roll. PS `getDamage`.
@@ -13730,7 +14062,9 @@ fn try_absorb(state: &mut DoublesState, rng: &mut Gen5Rng, ts: Side, tsl: usize,
             // so the target is still immune (`-immune`) but gains no HP.
             if state.side(ts).active()[tsl].heal_block == 0 {
                 let pm = state.side_mut(ts).team_member_mut(tidx);
+                let hp0_ev = pm.hp;
                 pm.hp = (pm.hp + (pm.maxhp / 4).max(1)).min(pm.maxhp);
+                hp_event(state, ts, tidx, hp0_ev, "waterabsorb");
             }
         }
         A::Boost(b) => apply_boosts(state, rng, ts, tidx, &b, false),
@@ -14829,6 +15163,7 @@ fn apply_boosts_from(
     // reaction is a separate boost and does not count (it can cancel the drop).
     let mut any_changed = false;
     let mut gained = [0i8; 7];
+    let mut ev_b: smallvec::SmallVec<[(u8, i8); 8]> = smallvec::SmallVec::new();
     for (n, &req) in requested.iter().enumerate() {
         if req == 0 {
             continue;
@@ -14847,6 +15182,10 @@ fn apply_boosts_from(
         let old = *cur;
         *cur = (old + req).clamp(-6, 6);
         let changed = *cur != old;
+        let delta = *cur - old;
+        if changed {
+            ev_b.push((n as u8, delta));
+        }
         any_changed |= changed;
         if changed && req > 0 {
             gained[n] = *cur - old;
@@ -14861,16 +15200,29 @@ fn apply_boosts_from(
                         let before = tb.atk;
                         tb.atk = (tb.atk + amount).clamp(-6, 6);
                         gained[0] += (tb.atk - before).max(0);
+                        ev_b.push((0, tb.atk - before));
                     }
                     PokemonBoostableStat::SpecialAttack => {
                         let before = tb.spa;
                         tb.spa = (tb.spa + amount).clamp(-6, 6);
                         gained[2] += (tb.spa - before).max(0);
+                        ev_b.push((2, tb.spa - before));
                     }
                     _ => {}
                 }
             }
         }
+    }
+    for &(n, d) in ev_b.iter().filter(|x| x.1 != 0) {
+        const STATS: [&str; 7] = ["atk", "def", "spa", "spd", "spe", "accuracy", "evasion"];
+        emit(state, |st| {
+            let kind = if d > 0 { EventKind::Boost } else { EventKind::Unboost };
+            let mut e = BattleEvent::new(kind).target(side, idx).effect(STATS[n as usize]).value(d as i32);
+            if let Some((us, ui, m)) = st.ev_move {
+                e = e.actor(us, ui).mv(m);
+            }
+            e
+        });
     }
     // statsLoweredThisTurn (PS `boost`): set when a drop actually applied.
     if lowered {
@@ -15202,7 +15554,9 @@ fn apply_on_switch_abilities(
             let heal_blocked = ally_slot.heal_block > 0;
             let p = state.side_mut(side).team_member_mut(ally);
             if p.hp > 0 && !heal_blocked {
+                let hp0_ev = p.hp;
                 p.hp = (p.hp + p.maxhp / 4).min(p.maxhp);
+                hp_event(state, side, ally, hp0_ev, "hospitality");
             }
         }
         return false;
@@ -15643,7 +15997,9 @@ fn damaging_hit_items(
             use_item(state, rng, ts, tslot, tidx, true);
             let m = state.side_mut(ts).team_member_mut(tidx);
             let heal = (m.maxhp / 4) * if ripen { 2 } else { 1 };
+            let hp0_ev = m.hp;
             m.hp = (m.hp + heal).min(m.maxhp);
+            hp_event(state, ts, tidx, hp0_ev, "berry");
             cheek_pouch(state, ts, tslot, tidx);
         }
         // Sticky Barb `onHit`: a contact attacker with no item takes it.
@@ -15865,7 +16221,9 @@ fn berry_effect(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: u
             let amount = if item == Items::SITRUSBERRY { maxhp / 4 } else { 10 } * if ripen { 2 } else { 1 };
             let m = state.side_mut(side).team_member_mut(idx);
             if m.hp > 0 {
+                let hp0_ev = m.hp;
                 m.hp = (m.hp + amount.max(1)).min(m.maxhp);
+                hp_event(state, side, idx, hp0_ev, "berry");
             }
         }
         // Stat pinch berries `onEat`: +1 (Ripen: +2). PS data/items.ts.
@@ -15925,7 +16283,9 @@ fn berry_effect(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: u
             let amount = (p.maxhp / 3) * if ripen { 2 } else { 1 };
             if !heal_blocked && p.hp > 0 {
                 let m = state.side_mut(side).team_member_mut(idx);
+                let hp0_ev = m.hp;
                 m.hp = (m.hp + amount.max(1)).min(m.maxhp);
+                hp_event(state, side, idx, hp0_ev, "berry");
             }
             let nat = state.side(side).team_member(idx).nature.clone();
             let dislikes = match item {
@@ -16040,7 +16400,9 @@ fn item_update(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: us
         if hp * 2 <= maxhp && !heal_blocked {
             use_item(state, rng, side, slot, idx, false);
             let m = state.side_mut(side).team_member_mut(idx);
+            let hp0_ev = m.hp;
             m.hp = (m.hp + 20).min(m.maxhp);
+            hp_event(state, side, idx, hp0_ev, "berryjuice");
         }
         return;
     }
@@ -16054,7 +16416,9 @@ fn item_update(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: us
             use_item(state, rng, side, slot, idx, true);
             let amount = if item == Items::SITRUSBERRY { maxhp / 4 } else { 10 } * if ripen { 2 } else { 1 };
             let m = state.side_mut(side).team_member_mut(idx);
+            let hp0_ev = m.hp;
             m.hp = (m.hp + amount.max(1)).min(m.maxhp);
+            hp_event(state, side, idx, hp0_ev, "berry");
             cheek_pouch(state, side, slot, idx);
         }
         _ if cures(status) || (matches!(item, Items::LUMBERRY | Items::PERSIMBERRY | Items::MIRACLEBERRY | Items::BITTERBERRY) && a.confusion > 0) => {
@@ -16267,6 +16631,7 @@ fn use_item(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize
     if item == Items::NONE {
         return;
     }
+    emit(state, |_| BattleEvent::new(EventKind::EndItem).target(side, idx).item(item).effect(if eaten { "eat" } else { "" }));
     {
         let s = state.side_mut(side);
         s.last_item[idx as usize] = item;
@@ -16275,6 +16640,7 @@ fn use_item(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize
         }
         s.team_member_mut(idx).item = Items::NONE;
     }
+    ev_reset(state);
     if state.side(side).active()[slot].pokemon_index == Some(idx) {
         state.side_mut(side).slot_scratch_mut(slot).used_item_this_turn = true;
     }
@@ -16343,7 +16709,9 @@ fn cheek_pouch(state: &mut DoublesState, side: Side, slot: usize, idx: PokemonIn
     let blocked = state.side(side).active()[slot].pokemon_index == Some(idx) && state.side(side).active()[slot].heal_block > 0;
     let p = state.side_mut(side).team_member_mut(idx);
     if p.ability == Abilities::CHEEKPOUCH && p.hp > 0 && p.hp < p.maxhp && !blocked {
+        let hp0_ev = p.hp;
         p.hp = (p.hp + (p.maxhp / 3).max(1)).min(p.maxhp);
+        hp_event(state, side, idx, hp0_ev, "cheekpouch");
     }
 }
 
@@ -16488,6 +16856,50 @@ fn terrain_turns(item: Items) -> i8 {
 
 /// `source` item: Light Clay makes Reflect / Light Screen / Aurora Veil last 8.
 fn apply_side_condition(state: &mut DoublesState, side: Side, c: PokemonSideCondition, source_item: Items) -> bool {
+    ev_sync(state);
+    let ok = apply_side_condition_raw(state, side, c, source_item);
+    if ok && state.record_events {
+        let e = (|st: &DoublesState| {
+            let sc = &st.side(side).side_conditions;
+            let layers = match c {
+                PokemonSideCondition::Spikes => sc.spikes as i32,
+                PokemonSideCondition::ToxicSpikes => sc.toxic_spikes as i32,
+                _ => 1,
+            };
+            let mut e = BattleEvent::new(EventKind::SideStart).effect(side_condition_id(c)).value(layers);
+            e.target_side = Some(side);
+            if let Some((us, ui, m)) = st.ev_move {
+                e = e.actor(us, ui).mv(m);
+            }
+            e
+        })(state);
+        state.events.push(e);
+        ev_reset(state);
+    }
+    ok
+}
+
+/// PS id of a side condition ("reflect", "spikes", ...).
+fn side_condition_id(c: PokemonSideCondition) -> &'static str {
+    match c {
+        PokemonSideCondition::Reflect => "reflect",
+        PokemonSideCondition::LightScreen => "lightscreen",
+        PokemonSideCondition::AuroraVeil => "auroraveil",
+        PokemonSideCondition::Tailwind => "tailwind",
+        PokemonSideCondition::Safeguard => "safeguard",
+        PokemonSideCondition::LuckyChant => "luckychant",
+        PokemonSideCondition::Mist => "mist",
+        PokemonSideCondition::Spikes => "spikes",
+        PokemonSideCondition::ToxicSpikes => "toxicspikes",
+        PokemonSideCondition::Stealthrock => "stealthrock",
+        PokemonSideCondition::StickyWeb => "stickyweb",
+        PokemonSideCondition::QuickGuard => "quickguard",
+        PokemonSideCondition::WideGuard => "wideguard",
+        _ => "",
+    }
+}
+
+fn apply_side_condition_raw(state: &mut DoublesState, side: Side, c: PokemonSideCondition, source_item: Items) -> bool {
     let snow = matches!(effective_weather(state), Weather::HAIL | Weather::SNOW);
     let screen = if source_item == Items::LIGHTCLAY { 8 } else { 5 };
     let s = state.side_mut(side);
@@ -16534,6 +16946,12 @@ fn apply_side_condition(state: &mut DoublesState, side: Side, c: PokemonSideCond
 /// Revival Blessing `revivalblessing` action: the fainted party member at
 /// battle-team `position` returns with floor(maxhp / 2) HP (min 1) and no status.
 fn revive_member(state: &mut DoublesState, side: Side, position: usize) {
+    let hp0_ev = state.side(side).team[position].hp;
+    revive_member_raw(state, side, position);
+    hp_event(state, side, position, hp0_ev, "revivalblessing");
+}
+
+fn revive_member_raw(state: &mut DoublesState, side: Side, position: usize) {
     let s = state.side_mut(side);
     s.ver = s.ver.wrapping_add(1);
     let p = &mut s.team[position];
@@ -16616,7 +17034,9 @@ fn run_mega_evo(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: u
     let Some((mega, ability)) = crate::doubles::megas::mega_forme(p.item, p.id) else { return };
     let key = format!("{:?}", mega).to_lowercase();
     let Some(data) = crate::doubles::species_types::species_data(&key) else { return };
+    let stone = p.item;
     let (e, lvl, nat) = (p.evs, p.level as u8, p.nature.clone());
+    emit(state, |_| BattleEvent::new(EventKind::Mega).actor(side, idx).item(stone));
     let evs = crate::doubles::state::Evs {
         hp: e.0 as u16,
         atk: e.1 as u16,
@@ -16629,6 +17049,7 @@ fn run_mega_evo(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: u
     restore_stored_stats(state.side_mut(side), idx);
     // `setSpecies` recomputes the stats unswapped; a Power Trick volatile stays.
     state.side_mut(side).slot_scratch_mut(slot).pt_swapped = false;
+    let hp0_ev = state.side(side).team_member(idx).hp;
     {
         let pm = state.side_mut(side).team_member_mut(idx);
         pm.id = mega;
@@ -16647,6 +17068,7 @@ fn run_mega_evo(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: u
             pm.weight_kg = w;
         }
     }
+    hp_event(state, side, idx, hp0_ev, "mega");
     set_species_types(state, side, slot, idx, (PokemonType::from(data.types.0), PokemonType::from(data.types.1)));
     // A permanent forme change: the Mega is the new `baseSpecies` (Mimicry's
     // no-terrain types).
@@ -16704,22 +17126,36 @@ fn switch_in(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: usiz
 /// (speed sort subOrder 3) runs before the side-condition hazards (subOrder 4),
 /// so it is called before Spikes / Stealth Rock damage in `switch_in_inner`.
 /// TODO(PS parity): Lunar Dance also restores PP (and triggers on PP).
-fn healing_wish_on_switch_in(s: &mut DoublesSide, slot: usize) {
+fn healing_wish_on_switch_in(s: &mut DoublesSide, slot: usize) -> Option<(PokemonIndex, i16)> {
     if s.healing_wish_slot[slot] {
         if let Some(idx) = s.active()[slot].pokemon_index {
             let p = s.team_member_mut(idx);
             if p.hp > 0 && (p.hp < p.maxhp || p.status != PokemonStatus::NONE) {
+                let hp0 = p.hp;
                 p.hp = p.maxhp;
                 p.status = PokemonStatus::NONE;
                 p.sleep_turns = 0;
                 s.toxic_stage[idx as usize] = 0;
                 s.healing_wish_slot[slot] = false;
+                return Some((idx, hp0));
             }
         }
     }
+    None
 }
 
 fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: usize) {
+    let drag = std::mem::take(&mut state.ev_drag);
+    emit(state, |st| {
+        let kind = if drag { EventKind::Drag } else { EventKind::Switch };
+        let mut e = BattleEvent::new(kind).value(slot as i32);
+        e.side = Some(side);
+        e.actor = position as i8;
+        if let Some(old) = st.side(side).active()[slot].pokemon_index {
+            e = e.target(side, old);
+        }
+        e
+    });
     // PS `switchIn` swaps the two pokemon's places in `side.pokemon`.
     {
         let order = &mut state.side_mut(side).ps_order;
@@ -16735,6 +17171,7 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
         }
         // `SwitchOut` abilities (PS data/abilities.ts): Regenerator heals
         // floor(baseMaxhp / 3); Natural Cure clears the status.
+        let hp0_ev = state.side(side).team_member(old).hp;
         {
             let p = state.side_mut(side).team_member_mut(old);
             if p.hp > 0 {
@@ -16748,6 +17185,7 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
                 }
             }
         }
+        hp_event(state, side, old, hp0_ev, "regenerator");
         // Zero to Hero `onSwitchOut` (PS data/abilities.ts zerotohero): a
         // Palafin leaving the field becomes Palafin-Hero for good
         // (`formeChange(..., true)`), with the Hero stats.
@@ -16963,7 +17401,9 @@ fn entry_hazards(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: 
     // Healing Wish / Lunar Dance heal and cure first, so the Toxic Spikes
     // check below sees the cured pokemon.
     if state.side(side).team_member(idx).hp > 0 {
-        healing_wish_on_switch_in(state.side_mut(side), slot);
+        if let Some((i, b)) = healing_wish_on_switch_in(state.side_mut(side), slot) {
+            hp_event(state, side, i, b, "healingwish");
+        }
     }
     // Read hazard layers + incoming pokemon data before mutating.
     let (spikes, toxic_spikes, types, alive) = {
@@ -17076,6 +17516,7 @@ fn entry_hazards(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: 
             dmg_events.push((pos("spikes"), spikes_dmg));
         }
         dmg_events.sort_by_key(|e| e.0);
+        let hz_hp0 = s.team_member(idx).hp;
         let mut apply_dmg = |s: &mut DoublesSide, rng: &mut Gen5Rng, d: i16| {
             if s.team_member(idx).hp <= 0 {
                 return;
@@ -17124,8 +17565,12 @@ fn entry_hazards(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: 
         for &(_, d) in dmg_events.iter().filter(|e| e.0 > ts_pos) {
             apply_dmg(s, rng, d);
         }
-        if s.team_member(idx).hp <= 0 {
+        let ko = s.team_member(idx).hp <= 0;
+        if ko {
             s.team_member_mut(idx).hp = 0;
+        }
+        hp_event(state, side, idx, hz_hp0, "hazard");
+        if ko {
             faint_pokemon(state, side, slot);
         }
     }
@@ -18393,6 +18838,8 @@ fn end_of_turn(
     let uproar_left = [Side::One, Side::Two].map(|sd| [0, 1].map(|sl| state.side(sd).active()[sl].uproar));
     state.tl.in_field_event.set(true);
     for h in handlers {
+        // Report each handler's field / status changes before the next one.
+        ev_sync(state);
         if state.battle_is_over() != 0.0 && (!perish_wipe || !prev_end) {
             return;
         }
@@ -18480,7 +18927,9 @@ fn end_of_turn(
                         if heal > 0 && hp > 0 && state.side(side).active()[slot].heal_block == 0 {
                             if let Some(idx) = state.side(side).active()[slot].pokemon_index {
                                 let m = state.side_mut(side).team_member_mut(idx);
+                                let hp0_ev = m.hp;
                                 m.hp = (m.hp + heal.max(1)).min(m.maxhp);
+                                hp_event(state, side, idx, hp0_ev, "residual");
                             }
                         } else if sun && hp > 0 && matches!(ab, Abilities::DRYSKIN | Abilities::SOLARPOWER) {
                             // `onWeather` (eachEvent), not `onResidual`: the fuzzer's `onDamage` label.
@@ -18580,7 +19029,9 @@ fn end_of_turn(
             {
                 if state.side(side).active()[slot].heal_block == 0 {
                     let pm = state.side_mut(side).team_member_mut(idx);
+                    let hp0_ev = pm.hp;
                     pm.hp = (pm.hp + (pm.maxhp / 8).max(1)).min(pm.maxhp);
+                    hp_event(state, side, idx, hp0_ev, "poisonheal");
                 }
             } else if dmg > 0 {
                 apply_indirect_damage(state, rng, side, slot, dmg);
@@ -18834,7 +19285,9 @@ fn end_of_turn(
                 if p.hp > 0 && p.hp < p.maxhp && !ignoring_item(state, p) && state.side(side).active()[slot].heal_block == 0 {
                     let heal = (p.maxhp / 16).max(1);
                     let m = state.side_mut(side).team_member_mut(idx);
+                    let hp0_ev = m.hp;
                     m.hp = (m.hp + heal).min(m.maxhp);
+                    hp_event(state, side, idx, hp0_ev, "residual");
                 }
             }
             ResidualKind::WhiteHerb(side, slot) => {
@@ -18864,7 +19317,9 @@ fn end_of_turn(
                     * if p.ability == Abilities::RIPEN { 2 } else { 1 };
                 use_item(state, rng, side, slot, idx, true);
                 let m = state.side_mut(side).team_member_mut(idx);
+                let hp0_ev = m.hp;
                 m.hp = (m.hp + amount).min(m.maxhp);
+                hp_event(state, side, idx, hp0_ev, "berry");
                 cheek_pouch(state, side, slot, idx);
             }
             ResidualKind::StatusOrb(side, slot) => {
@@ -18894,7 +19349,9 @@ fn end_of_turn(
                     if p.hp < p.maxhp && state.side(side).active()[slot].heal_block == 0 {
                         let heal = (p.maxhp / 16).max(1);
                         let m = state.side_mut(side).team_member_mut(idx);
+                        let hp0_ev = m.hp;
                         m.hp = (m.hp + heal).min(m.maxhp);
+                        hp_event(state, side, idx, hp0_ev, "residual");
                     }
                 } else if p.ability != Abilities::MAGICGUARD {
                     let d = (p.maxhp / 8).max(1);
@@ -19008,7 +19465,9 @@ fn end_of_turn(
                         let heal = (pm.maxhp / 16).max(1);
                         let heal = big_root(state, side, idx, heal);
                         let pm = state.side_mut(side).team_member_mut(idx);
+                        let hp0_ev = pm.hp;
                         pm.hp = (pm.hp + heal).min(pm.maxhp);
+                        hp_event(state, side, idx, hp0_ev, "residual");
                     }
                 }
             }
@@ -19080,7 +19539,9 @@ fn end_of_turn(
                         let heal = big_root(state, ss, sidx, dealt);
                         let m = state.side_mut(ss).team_member_mut(sidx);
                         if !blocked {
+                            let hp0_ev = m.hp;
                             m.hp = (m.hp + heal).min(m.maxhp);
+                            hp_event(state, ss, sidx, hp0_ev, "residual");
                         }
                     }
                 }
@@ -19135,7 +19596,9 @@ fn end_of_turn(
                             if p.hp > 0 && state.side(side).active()[slot].heal_block == 0 {
                                 let idx = state.side(side).active()[slot].pokemon_index.unwrap();
                                 let pm = state.side_mut(side).team_member_mut(idx);
+                                let hp0_ev = pm.hp;
                                 pm.hp = (pm.hp + hp).min(pm.maxhp);
+                                hp_event(state, side, idx, hp0_ev, "wish");
                             }
                         }
                     }
@@ -19147,7 +19610,9 @@ fn end_of_turn(
                         let idx = state.side(side).active()[slot].pokemon_index.unwrap();
                         let heal = big_root(state, side, idx, (p.maxhp / 16).max(1));
                         let pm = state.side_mut(side).team_member_mut(idx);
+                        let hp0_ev = pm.hp;
                         pm.hp = (pm.hp + heal).min(pm.maxhp);
+                        hp_event(state, side, idx, hp0_ev, "residual");
                     }
                 }
             }
@@ -19385,6 +19850,7 @@ fn end_of_turn(
                     let h = (maxhp / 16).max(1);
                     let s = state.side_mut(side);
                     s.team_member_mut(idx).hp = (hp + h).min(maxhp);
+                    hp_event(state, side, idx, hp, "grassyterrain");
                 }
             }
             ResidualKind::SpeedBoost(side, slot) => {

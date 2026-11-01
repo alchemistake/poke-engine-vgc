@@ -359,6 +359,9 @@ pub struct ActiveSlot {
     /// PS `lastMoveTargetLoc`: the target location of the last move (signed:
     /// foe slot + 1, own slot -(slot + 1)); a locked move reuses it.
     pub last_target_loc: i8,
+    /// PS `lastMoveUsed.type`: the type of the last move this pokemon used,
+    /// after `ModifyType` (Conversion 2 reads it). Cleared on switch-out.
+    pub last_move_used_type: Option<PokemonType>,
     /// `lockedmove` volatile (Outrage, Thrash, Petal Dance): (duration,
     /// trueDuration) from PS data/conditions.ts.
     pub locked_move: Option<(u8, u8)>,
@@ -541,6 +544,7 @@ impl ActiveSlot {
             stall: None,
             endure: false,
             last_target_loc: 0,
+            last_move_used_type: None,
             locked_move: None,
             locked_move_id: None,
             disabled: None,

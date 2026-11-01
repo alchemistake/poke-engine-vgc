@@ -113,6 +113,13 @@ pub fn type_effectiveness_modifier(attacking_type: &PokemonType, defender: &Poke
     _type_effectiveness_modifier(attacking_type, &defending_types)
 }
 
+/// One attacking type against one defending type (PS `damageTaken`):
+/// 0.5 is resisted, 0.0 immune.
+pub fn type_matchup(attacking_type: &PokemonType, defending_type: &PokemonType) -> f32 {
+    TYPE_MATCHUP_DAMAGE_MULTIPICATION[type_enum_to_type_matchup_int(attacking_type)]
+        [type_enum_to_type_matchup_int(defending_type)]
+}
+
 fn _type_effectiveness_modifier(
     attacking_type: &PokemonType,
     defending_types: &(PokemonType, PokemonType),

@@ -993,6 +993,8 @@ pub struct DoublesState {
     pub ev_move: Option<(Side, PokemonIndex, Choices)>,
     /// The next switch-in is a drag (Roar, Whirlwind, Dragon Tail, Red Card).
     pub ev_drag: bool,
+    /// Ion Deluge's one-turn `iondeluge` pseudo-weather: Normal moves are Electric.
+    pub ion_deluge: bool,
     /// The field / status / item / ability values the events have reported
     /// so far (`ev_sync` emits the differences).
     pub ev_snap: Option<Box<EvSnap>>,
@@ -1808,6 +1810,7 @@ impl DoublesState {
             events: Vec::new(),
             ev_move: None,
             ev_drag: false,
+            ion_deluge: false,
             ev_snap: None,
             faint_disabled: Vec::new(),
             db_alive_pending: Vec::new(),

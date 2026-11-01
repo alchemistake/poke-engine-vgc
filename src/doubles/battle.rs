@@ -1992,6 +1992,28 @@ pub fn run_fuzz_turn(
                         run_mega_evo(state, rng, side, slot);
                     }
                     each_event_update(state, rng);
+                    // An Eject Pack used after the Mega Evolution switches its
+                    // holder out at once (`instaswitch`).
+                    for sd in [Side::One, Side::Two] {
+                        for sl in 0..2 {
+                            while state.side(sd).active()[sl].force_switch {
+                                let key = if sd == Side::One { "a" } else { "b" };
+                                let found = turn.switches.iter().enumerate().find(|(k, sw)| {
+                                    !used_switches[*k] && sw.pivot && sw.side == key && sw.slot == sl && sw.position.is_some()
+                                });
+                                let Some((k, sw)) = found else { break };
+                                used_switches[k] = true;
+                                let pos = sw.position.unwrap();
+                                let a = state.side_mut(sd).slot_scratch_mut(sl);
+                                a.force_switch = false;
+                                a.eject_switch = false;
+                                each_event_update(state, rng);
+                                update_speed(state, rng);
+                                modify_boost_ties(state, rng, sd, sl);
+                                run_switch_in(state, rng, sd, sl, pos);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -2875,6 +2897,9 @@ fn redirect_move_type(state: &DoublesState, action: &Action) -> PokemonType {
         };
     }
     if state.side(action.side).active()[action.slot].electrify && action.choice.move_id != Choices::STRUGGLE {
+        return PokemonType::ELECTRIC;
+    }
+    if state.ion_deluge && action.choice.move_type == PokemonType::NORMAL {
         return PokemonType::ELECTRIC;
     }
     // Terrain Pulse / Weather Ball `onModifyType` and the -ate abilities'
@@ -4095,7 +4120,9 @@ fn execute_action_body(
     // Electrify makes any move Electric).
     let used_type = {
         let a = &state.side(action.side).active()[action.slot];
-        if a.electrify && action.choice.move_id != Choices::STRUGGLE {
+        if (a.electrify && action.choice.move_id != Choices::STRUGGLE)
+            || (state.ion_deluge && action.choice.move_type == PokemonType::NORMAL)
+        {
             PokemonType::ELECTRIC
         } else if action.choice.move_id == Choices::AURAWHEEL
             && state.side(action.side).team_member(action.pokemon_index).id == crate::pokemon::PokemonName::MORPEKOHANGRY
@@ -5177,6 +5204,11 @@ fn execute_move_body(
     }
     // Electrify `onModifyType` (priority -2): any move but Struggle becomes Electric.
     if state.side(side).active()[slot].electrify && modified.move_id != Choices::STRUGGLE {
+        modified.move_type = PokemonType::ELECTRIC;
+    }
+    // Ion Deluge `onModifyType` (priority -2): Normal moves become Electric.
+    // PS data/moves.ts iondeluge.condition.
+    if state.ion_deluge && modified.move_type == PokemonType::NORMAL {
         modified.move_type = PokemonType::ELECTRIC;
     }
     // Rollout / Ice Ball `onModifyMove`: a user not asleep with a target and no
@@ -6840,6 +6872,9 @@ fn execute_move_body(
         // Natural Gift past `onPrepareHit` has the berry's power (its type from
         // `onModifyType`), so the immunity step applies. PS data/moves.ts naturalgift.
         || choice.move_id == Choices::NATURALGIFT
+        // Present's heal variant is still a Physical Normal move: a Ghost
+        // target is immune. PS data/moves.ts present.
+        || choice.move_id == Choices::PRESENT
         // `damageCallback` moves (Endeavor, ...) are attacks: type immunity applies.
         || (!is_self
             && !is_field
@@ -7515,8 +7550,9 @@ fn execute_move_body(
     // checks each target in the hit loop instead. Nature Power's `onTryHit`
     // (`useMove` of the terrain move, then `return null`) runs before it, so
     // the Substitute never sees it (PS data/moves.ts naturepower).
+    // Mirror Move's `onTryHit` (`useMove` of the copied move) does the same.
     if choice.category == MoveCategory::Status
-        && choice.move_id != Choices::NATUREPOWER
+        && !matches!(choice.move_id, Choices::NATUREPOWER | Choices::MIRRORMOVE)
         && !is_self
         && !is_field
         && !is_spread
@@ -8817,6 +8853,17 @@ fn execute_move_body(
         // PS data/moves.ts aromatherapy.
         if matches!(choice.move_id, Choices::HEALBELL | Choices::AROMATHERAPY) && ti == 0 {
             let aroma = choice.move_id == Choices::AROMATHERAPY;
+            // Sap Sipper `onAllyTryHitSide`: an active ally holder gets +1 Atk
+            // from the Grass side move. PS data/abilities.ts sapsipper.
+            if aroma {
+                let al = 1 - slot;
+                if let Some(ai) = state.side(side).active()[al].pokemon_index {
+                    let p = state.side(side).team_member(ai);
+                    if p.hp > 0 && p.ability == Abilities::SAPSIPPER {
+                        apply_boosts(state, rng, side, ai, &StatBoosts { attack: 1, ..Default::default() }, false);
+                    }
+                }
+            }
             let infiltrates = state.side(side).team_member(idx).ability == Abilities::INFILTRATOR
                 || crate::doubles::damage::infiltrator_move();
             let mut cured = false;
@@ -10853,6 +10900,54 @@ fn execute_move_body(
                     gastro_acid_start(state, rng, target_side, target_slot, tidx);
                 }
             }
+        }
+
+        // Smelling Salts / Wake-Up Slap `onHit`: the target's paralysis / sleep
+        // is cured. PS data/moves.ts smellingsalts, wakeupslap.
+        if matches!(choice.move_id, Choices::SMELLINGSALTS | Choices::WAKEUPSLAP) && !move_failed {
+            let st = if choice.move_id == Choices::SMELLINGSALTS { PokemonStatus::PARALYZE } else { PokemonStatus::SLEEP };
+            if let Some(tidx) = state.side(target_side).active()[target_slot].pokemon_index {
+                let pm = state.side_mut(target_side).team_member_mut(tidx);
+                if pm.hp > 0 && pm.status == st {
+                    pm.status = PokemonStatus::NONE;
+                    pm.sleep_turns = 0;
+                }
+            }
+        }
+
+        // Psycho Shift `onTryHit`: fails without a status on the user; else
+        // `move.status` is the user's status (`trySetStatus` on the target),
+        // and `self.onHit` cures the user. PS data/moves.ts psychoshift.
+        if choice.move_id == Choices::PSYCHOSHIFT && ti == 0 && !move_failed {
+            let st = state.side(side).team_member(idx).status;
+            let tidx = state.side(target_side).active()[target_slot].pokemon_index;
+            match tidx {
+                Some(tidx) if st != PokemonStatus::NONE => {
+                    let already = state.side(target_side).team_member(tidx).status != PokemonStatus::NONE;
+                    if already || status_immune(state, target_side, target_slot, st, target_side != side, side, slot) {
+                        move_failed = true;
+                    } else {
+                        set_status(state, rng, target_side, tidx, st);
+                        let pm = state.side_mut(side).team_member_mut(idx);
+                        pm.status = PokemonStatus::NONE;
+                        pm.sleep_turns = 0;
+                        state.side_mut(side).toxic_stage[idx as usize] = 0;
+                    }
+                }
+                _ => move_failed = true,
+            }
+        }
+        // Ion Deluge `pseudoWeather` (fails while up); Plasma Fists `onAfterMove`
+        // adds it too. PS data/moves.ts iondeluge, plasmafists.
+        if choice.move_id == Choices::IONDELUGE && ti == 0 {
+            if state.ion_deluge {
+                move_failed = true;
+            } else {
+                state.ion_deluge = true;
+            }
+        }
+        if choice.move_id == Choices::PLASMAFISTS && ti == 0 {
+            state.ion_deluge = true;
         }
 
         // Clear Smog `onHit`: `target.clearBoosts()` (PS data/moves.ts clearsmog).
@@ -13757,6 +13852,9 @@ fn power_construct_check(state: &mut DoublesState, side: Side, slot: usize) {
     restore_stored_stats(state.side_mut(side), idx);
     let pm = state.side_mut(side).team_member_mut(idx);
     pm.id = N::ZYGARDECOMPLETE;
+    if let Some(w) = crate::doubles::species_weights::species_weight_kg("zygardecomplete") {
+        pm.weight_kg = w;
+    }
     pm.attack = atk;
     pm.defense = def;
     pm.special_attack = spa;
@@ -13857,6 +13955,9 @@ fn zygarde_complete_faint_revert(s: &mut crate::doubles::state::DoublesSide, idx
     restore_stored_stats(s, idx);
     let pm = s.team_member_mut(idx);
     pm.id = id;
+    if let Some(w) = crate::doubles::species_weights::species_weight_kg(&key) {
+        pm.weight_kg = w;
+    }
     pm.attack = atk;
     pm.defense = def;
     pm.special_attack = spa;
@@ -14335,6 +14436,16 @@ fn dynamic_base_power(
             }
         }
         Choices::LASTRESPECTS => m::last_respects_power(total_fainted),
+        // PS smellingsalts / wakeupslap basePowerCallback: x2 on a paralyzed /
+        // sleeping target.
+        Choices::SMELLINGSALTS | Choices::WAKEUPSLAP => {
+            let st = if choice.move_id == Choices::SMELLINGSALTS { PokemonStatus::PARALYZE } else { PokemonStatus::SLEEP };
+            if defender.is_some_and(|d| d.status == st || (st == PokemonStatus::SLEEP && d.ability == Abilities::COMATOSE)) {
+                choice.base_power * 2.0
+            } else {
+                choice.base_power
+            }
+        }
         // PS trumpcard.basePowerCallback: by the PP left in its slot (after
         // this use); 40 without one (called by another move).
         Choices::TRUMPCARD => {
@@ -14578,9 +14689,10 @@ fn try_partial_trap(
     }
     // `addVolatile`: Immunity / TryAddVolatile sorts before `onStart`'s draw.
     try_add_volatile_ties(state, rng, ts, tslot);
-    let d = rng.label("volatile duration").random_range(5, 7) as u8;
     let src = state.side(src_side).team_member(src_idx);
     let src_item = if ignoring_item(state, src) { Items::NONE } else { src.item };
+    // `durationCallback`: 8 with the binder's Grip Claw (no draw), else random(5, 7).
+    let d = if src_item == Items::GRIPCLAW { 8 } else { rng.label("volatile duration").random_range(5, 7) as u8 };
     state.side_mut(ts).active_slot_mut(tslot).partial_trap = Some(crate::doubles::state::PartialTrap {
         duration: d,
         source_side: src_side,
@@ -17998,6 +18110,17 @@ fn apply_on_switch_abilities(
         schooling_check(state, side, slot);
         return false;
     }
+    // Truant `onStart`: the volatile is removed, then re-added for a pokemon
+    // that has been in and has moved this turn (or is moving now: it is no
+    // longer in the queue). PS data/abilities.ts truant.
+    if ability == Abilities::TRUANT {
+        let a = &state.side(side).active()[slot];
+        let idx = a.pokemon_index;
+        let moving = state.ev_move.is_some_and(|(s2, i, _)| s2 == side && Some(i) == idx);
+        let on = a.active_turns > 0 && (a.move_result_this_turn.is_some() || moving);
+        state.side_mut(side).active_slot_mut(slot).truant = on;
+        return false;
+    }
     if matches!(ability, Abilities::PROTOSYNTHESIS | Abilities::QUARKDRIVE) {
         paradox_check(state, rng, side, slot);
         return false;
@@ -18037,15 +18160,14 @@ fn apply_on_switch_abilities(
         state.side_mut(side).slot_scratch_mut(slot).trace_seek = !blocked;
         if !blocked {
             if let Some(copied) = trace_copy(state, side, slot, rng) {
-                ability = copied;
                 refresh_mimicry_slot(state, side, slot);
+                // `setAbility` runs the copied ability's `onStart`: all of
+                // them, including the ones checked above (Slow Start,
+                // Intrepid Sword, ...).
+                let _ = copied;
+                return apply_on_switch_abilities(state, side, slot, rng);
             }
         }
-    }
-    // A traced Slow Start starts its counter too (its `onStart`).
-    if ability == Abilities::SLOWSTART {
-        state.side_mut(side).active_slot_mut(slot).slow_start = 5;
-        return false;
     }
     // Supreme Overlord `onStart` (also when Traced): `fallen = min(side.totalFainted, 5)`.
     if ability == Abilities::SUPREMEOVERLORD {
@@ -20082,6 +20204,8 @@ fn run_mega_evo(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: u
             white_herb(state, rng, sd, sl);
         }
     }
+    // Eject Pack `onAnyAfterMega` (a drop from the Mega's Intimidate).
+    eject_pack_fire(state, rng);
 }
 
 fn switch_in(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize, position: usize) {
@@ -21885,6 +22009,8 @@ fn end_of_turn(
     pending_in: &[(Side, usize, usize)],
     ee_switches: &[(Side, usize, usize)],
 ) {
+    // Ion Deluge (duration 1) ends with the turn.
+    state.ion_deluge = false;
     // PS `runAction`: HP of every active before the action, for `EmergencyExit`.
     let hp_before: smallvec::SmallVec<[(Side, usize, i16); 4]> = [(Side::One, 0usize), (Side::One, 1), (Side::Two, 0), (Side::Two, 1)]
         .iter()

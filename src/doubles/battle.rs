@@ -386,6 +386,7 @@ fn faint_pokemon(state: &mut DoublesState, side: Side, slot: usize) {
         s.clear_member_boosts(idx);
         // `clearVolatile` -> `setSpecies(baseSpecies)`: battle-only formes and
         // Transform end (Megas are permanent in champions).
+        let untransformed = s.transform_save[idx as usize].is_some();
         if let Some(t) = s.transform_save[idx as usize].take() {
             let p = s.team_member_mut(idx);
             p.id = t.id;
@@ -408,13 +409,16 @@ fn faint_pokemon(state: &mut DoublesState, side: Side, slot: usize) {
                 _ => {}
             }
         }
-        if let Some(t) = s.active_slot_mut(slot).roost_orig.take() {
-            s.team_member_mut(idx).types = t;
+        let roost = s.active_slot_mut(slot).roost_orig.take();
+        if !untransformed {
+            if let Some(t) = roost {
+                s.team_member_mut(idx).types = t;
+            }
+            if let Some(t) = s.active()[slot].type_change {
+                s.team_member_mut(idx).types = t;
+            }
         }
-        if let Some(t) = s.active()[slot].type_change {
-            s.team_member_mut(idx).types = t;
-        }
-        if s.active()[slot].added_grass {
+        if s.active()[slot].added_grass && !untransformed {
             s.team_member_mut(idx).types.1 = PokemonType::TYPELESS;
         }
         // The status stays until PS `checkFainted` (end of turn, only for a
@@ -9164,15 +9168,24 @@ fn execute_move_body(
         // Tidy Up `onHit` (PS data/moves.ts tidyup): remove every Substitute and
         // the entry hazards of both sides (the +1 Atk / Spe is the move's boost).
         if choice.move_id == Choices::TIDYUP && ti == 0 {
+            // `return !!this.boost(...) || success`: a removed Substitute or
+            // hazard makes the move succeed even with no stat raised.
+            let mut tidied = false;
             for sd in [Side::One, Side::Two] {
                 for sl in 0..2 {
+                    tidied |= state.side(sd).active()[sl].substitute_health > 0;
                     state.side_mut(sd).active_slot_mut(sl).substitute_health = 0;
                 }
+                let c = &state.side(sd).side_conditions;
+                tidied |= c.spikes > 0 || c.toxic_spikes > 0 || c.stealth_rock > 0 || c.sticky_web > 0;
                 let sc = &mut state.side_mut(sd).side_conditions;
                 sc.spikes = 0;
                 sc.toxic_spikes = 0;
                 sc.stealth_rock = 0;
                 sc.sticky_web = 0;
+            }
+            if tidied {
+                move_failed = false;
             }
         }
 
@@ -15423,8 +15436,10 @@ fn run_mega_evo(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: u
     state.side_mut(side).mega_used = true;
     // `setAbility(species.abilities['0'], null, null, true)`: a new ability
     // state (effect order), the old ability ends (Cloud Nine / Air Lock `onEnd`:
-    // a WeatherChange sort), the new one starts.
-    if matches!(real_ability(state, side, idx), Abilities::CLOUDNINE | Abilities::AIRLOCK) {
+    // a WeatherChange sort), the new one starts. `singleEvent('End')` runs
+    // under Gastro Acid too (only Mold Breaker suppresses a singleEvent).
+    let old = if state.side(side).active()[slot].gastro_acid { state.side(side).active()[slot].gastro_ability } else { real_ability(state, side, idx) };
+    if matches!(old, Abilities::CLOUDNINE | Abilities::AIRLOCK) {
         let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
     }
     mold_breaker_forget(state, side, idx);
@@ -15555,6 +15570,7 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
         let p = s.team_member_mut(old);
         p.ability = p.base_ability;
         // `clearVolatile`: `transformed = false`, own moves and species back.
+        let untransformed = s.transform_save[old as usize].is_some();
         if let Some(t) = s.transform_save[old as usize].take() {
             let p = s.team_member_mut(old);
             p.id = t.id;
@@ -15603,14 +15619,19 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
                 p.special_defense = spd;
             }
         }
-        if let Some(t) = s.active_slot_mut(slot).roost_orig.take() {
-            s.team_member_mut(old).types = t;
-        }
-        if let Some(t) = s.active()[slot].type_change {
-            s.team_member_mut(old).types = t;
-        }
-        if s.active()[slot].added_grass {
-            s.team_member_mut(old).types.1 = PokemonType::TYPELESS;
+        // A transformed pokemon's type changes were made to the copied types:
+        // `setSpecies(baseSpecies)` brings its own back.
+        let roost = s.active_slot_mut(slot).roost_orig.take();
+        if !untransformed {
+            if let Some(t) = roost {
+                s.team_member_mut(old).types = t;
+            }
+            if let Some(t) = s.active()[slot].type_change {
+                s.team_member_mut(old).types = t;
+            }
+            if s.active()[slot].added_grass {
+                s.team_member_mut(old).types.1 = PokemonType::TYPELESS;
+            }
         }
         // `setSpecies(baseSpecies)`: a Castform forme's type goes back to Normal.
         if s.team_member(old).id == crate::pokemon::PokemonName::CASTFORM {
@@ -16298,7 +16319,7 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
                 vols.push(("perishsong", 24, 2, ResidualKind::Perish(side, slot)));
             }
             if a.follow_me > 0 {
-                vols.push(("followme", NO_ORDER, 2, ResidualKind::Marker)); // followme / ragepowder (duration 1)
+                vols.push(("followme", NO_ORDER, 2, ResidualKind::VolatileEnd(side, slot, 7))); // followme / ragepowder (duration 1)
             }
             if a.aqua_ring {
                 vols.push(("aquaring", 6, 2, ResidualKind::AquaRing(side, slot)));
@@ -17379,6 +17400,11 @@ fn end_of_turn(
                         item_gained(state, rng, side, slot, idx);
                     }
                 }
+            }
+            ResidualKind::VolatileEnd(side, slot, 7) => {
+                state.side_mut(side).active_slot_mut(slot).follow_me = 0;
+                // The duration ran out: an `end` call, no `resolveFaints`.
+                prev_end = true;
             }
             ResidualKind::VolatileEnd(side, slot, 5) => {
                 state.side_mut(side).active_slot_mut(slot).counter_vol = None;

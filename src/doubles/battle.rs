@@ -6071,6 +6071,14 @@ fn execute_move_body(
         let newly = state.side(target_side).active()[target_slot].newly_switched;
         state.side_mut(side).slot_scratch_mut(slot).bp_double = !will_move && !newly;
     }
+    // Fishious Rend / Bolt Beak `basePowerCallback`: doubled when the target
+    // is newly switched in or still has to move. PS data/moves.ts fishiousrend.
+    if matches!(choice.move_id, Choices::FISHIOUSREND | Choices::BOLTBEAK) && !is_self && !is_field {
+        let tidx = state.side(target_side).active()[target_slot].pokemon_index;
+        let will_move = queue.iter().any(|a| a.side == target_side && Some(a.pokemon_index) == tidx);
+        let newly = state.side(target_side).active()[target_slot].newly_switched;
+        state.side_mut(side).slot_scratch_mut(slot).bp_double = will_move || newly;
+    }
 
     // Future Sight / Doom Desire `onTry`: queue the delayed hit on the target's
     // slot (fails if one is pending). NOT_FAIL: no accuracy roll now.
@@ -7833,6 +7841,7 @@ fn execute_move_body(
       let mut hit_landed = false;
       let mut hit_pi_by: smallvec::SmallVec<[_; 4]> = smallvec::smallvec![None; hit_targets.len()];
       let mut anger_point_hit: smallvec::SmallVec<[Option<PokemonIndex>; 4]> = smallvec::smallvec![None; hit_targets.len()];
+      let mut status_spread_fails = 0usize;
       for (ti, &(hts, htsl)) in hit_targets.iter().enumerate() {
         target_side = hts;
         target_slot = htsl;
@@ -8608,7 +8617,8 @@ fn execute_move_body(
         // Jungle Healing `onHit` (`target: allies`): heal `modify(maxhp, 0.25)`
         // and cure the status of the user and its ally; fails only when it
         // did neither for anyone. PS data/moves.ts junglehealing.
-        if choice.move_id == Choices::JUNGLEHEALING && ti == 0 {
+        // Lunar Blessing has the same `onHit` (PS data/moves.ts lunarblessing).
+        if matches!(choice.move_id, Choices::JUNGLEHEALING | Choices::LUNARBLESSING) && ti == 0 {
             let mut any = false;
             let user_breaks_gold = crate::engine::abilities::ignores_target_ability(
                 state.side(side).team_member(idx),
@@ -8682,6 +8692,14 @@ fn execute_move_body(
                     // (truncated) and the move does not hit it, so Life Dew's own
                     // heal (rounded) does not apply to that ally. Not a success.
                     // TODO(PS parity): Mold Breaker on the user.
+                    // Storm Drain `onTryHit`: the ally absorbs the Water move for
+                    // +1 SpA instead (PS data/abilities.ts stormdrain).
+                    if sl != slot && pm.hp > 0 && pm.ability == Abilities::STORMDRAIN {
+                        let b = StatBoosts { special_attack: 1, ..Default::default() };
+                        apply_boosts(state, rng, side, tidx, &b, false);
+                        continue;
+                    }
+                    let pm = state.side_mut(side).team_member_mut(tidx);
                     if sl != slot && pm.hp > 0 && matches!(pm.ability, Abilities::WATERABSORB | Abilities::DRYSKIN) {
                         if pm.hp < pm.maxhp {
                             let hp0_ev = pm.hp;
@@ -8746,7 +8764,7 @@ fn execute_move_body(
             }
         }
 
-        if let Some(h) = choice.heal.as_ref().filter(|_| !matches!(choice.move_id, Choices::LIFEDEW | Choices::STEELBEAM | Choices::JUNGLEHEALING)) {
+        if let Some(h) = choice.heal.as_ref().filter(|_| !matches!(choice.move_id, Choices::LIFEDEW | Choices::STEELBEAM | Choices::JUNGLEHEALING | Choices::LUNARBLESSING)) {
             // Milk Drink (champions `target: adjacentAllyOrSelf`): heals the
             // chosen target, the user or its ally. PS data/mods/champions/moves.ts.
             let (ts, tslot) = if choice.move_id == Choices::MILKDRINK {
@@ -8940,7 +8958,11 @@ fn execute_move_body(
                     set_status_event_tie(state, rng, ts, tslot, st.status, ts != side, sub_blocks);
                 }
                 if already || status_immune_ex(state, ts, tslot, st.status, ts != side, side, slot, sub_blocks, true, false) {
-                    move_failed = true;
+                    if hit_targets.len() > 1 {
+                        status_spread_fails += 1;
+                    } else {
+                        move_failed = true;
+                    }
                 } else {
                     set_status(state, rng, ts, tidx, st.status);
                     // Synchronize copies non-sleep/freeze status back to the
@@ -11795,6 +11817,11 @@ fn execute_move_body(
         hit_damage_by[ti] = hit_damage;
         hit_pi_by[ti] = hit_target_pi;
       }
+      // A spread status move fails only when it failed on every target (PS
+      // `hitStepMoveHitLoop`: `moveDamage.some(val => val !== false)`).
+      if status_spread_fails > 0 && status_spread_fails == hit_targets.len() {
+          move_failed = true;
+      }
       // DamagingHit pass (PS `spreadMoveHit`, after the secondaries of every target).
       // PS collects the DamagingHit handlers once, before any of them runs, so the
       // attacker's Poison Touch still fires after a target's Mummy has already
@@ -12340,6 +12367,21 @@ fn execute_move_body(
                 continue;
             }
             let Some(tsl) = (0..2).find(|&k| state.side(ts).active()[k].pokemon_index == Some(ti)) else { continue };
+            // Color Change `onAfterMoveSecondary`: the holder becomes the move's
+            // type when it does not have it (`setType`). PS data/abilities.ts colorchange.
+            {
+                let t = state.side(ts).team_member(ti);
+                let mt = choice.move_type;
+                if t.hp > 0
+                    && t.ability == Abilities::COLORCHANGE
+                    && mt != PokemonType::TYPELESS
+                    && !t.has_type(&mt)
+                    && state.side(ts).active()[tsl].added_type != mt
+                    && !set_type_blocked(state, ts, ti)
+                {
+                    move_set_type(state, ts, tsl, ti, (mt, PokemonType::TYPELESS));
+                }
+            }
             let t = state.side(ts).team_member(ti);
             // Pickpocket `onAfterMoveSecondary`: an empty-handed holder takes the
             // contact attacker's item. PS data/abilities.ts pickpocket.

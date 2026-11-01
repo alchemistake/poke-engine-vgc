@@ -61,6 +61,8 @@ pub struct ActiveSlot {
     pub shed_tailing: bool,
     /// Unburden's volatile: the holder lost its item (Speed x2).
     pub unburden: bool,
+    /// Slow Start's `abilityState.counter` (turns left at x0.5 Atk / Spe).
+    pub slow_start: u8,
     /// The `gem` volatile: a Normal Gem powers up this move (x1.3).
     pub gem: bool,
     /// The running move is Parental Bond's two-hit version.
@@ -422,6 +424,7 @@ impl ActiveSlot {
             hit_number: 1,
             shed_tailing: false,
             unburden: false,
+            slow_start: 0,
             gem: false,
             parental_bond: false,
             metronome_last: None,

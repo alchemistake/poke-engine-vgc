@@ -552,6 +552,17 @@ pub fn take_lock_num(item: Items) -> Option<u16> {
     }
 }
 
+/// Drives' `onDrive` (the `Drive` event Techno Blast runs). PS data/items.ts.
+pub fn drive_type(item: Items) -> Option<PokemonType> {
+    match item {
+        Items::BURNDRIVE => Some(PokemonType::FIRE),
+        Items::CHILLDRIVE => Some(PokemonType::ICE),
+        Items::DOUSEDRIVE => Some(PokemonType::WATER),
+        Items::SHOCKDRIVE => Some(PokemonType::ELECTRIC),
+        _ => None,
+    }
+}
+
 /// Memories' `onMemory` (the `Memory` event Multi-Attack runs). PS data/items.ts.
 pub fn memory_type(item: Items) -> Option<PokemonType> {
     match item {

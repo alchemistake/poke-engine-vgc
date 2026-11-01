@@ -2831,6 +2831,15 @@ fn multi_attack_type(state: &DoublesState, user: &crate::state::Pokemon) -> Opti
     crate::doubles::item_data::memory_type(user.item)
 }
 
+/// Techno Blast `onModifyType`: the held Drive's type (none while the item is
+/// ignored). PS data/moves.ts technoblast.
+fn techno_blast_type(state: &DoublesState, user: &crate::state::Pokemon) -> Option<PokemonType> {
+    if ignoring_item(state, user) {
+        return None;
+    }
+    crate::doubles::item_data::drive_type(user.item)
+}
+
 /// Revelation Dance `onModifyType`: the user's first current type ("???" falls
 /// through to the second type). PS data/moves.ts revelationdance.
 fn revelation_dance_type(types: (PokemonType, PokemonType)) -> PokemonType {
@@ -2865,6 +2874,11 @@ fn redirect_move_type(state: &DoublesState, action: &Action) -> PokemonType {
         }
         Choices::MULTIATTACK => {
             if let Some(t) = multi_attack_type(state, user) {
+                c.move_type = t;
+            }
+        }
+        Choices::TECHNOBLAST => {
+            if let Some(t) = techno_blast_type(state, user) {
                 c.move_type = t;
             }
         }
@@ -4960,6 +4974,11 @@ fn execute_move_body(
         }
         Choices::MULTIATTACK => {
             if let Some(t) = multi_attack_type(state, state.side(side).team_member(idx)) {
+                modified.move_type = t;
+            }
+        }
+        Choices::TECHNOBLAST => {
+            if let Some(t) = techno_blast_type(state, state.side(side).team_member(idx)) {
                 modified.move_type = t;
             }
         }
@@ -8662,7 +8681,13 @@ fn execute_move_body(
         // nobody was cured. Bench members count too. PS data/moves.ts healbell,
         // sim/pokemon.ts cureStatus.
         // TODO(PS parity): Mold Breaker / Gastro Acid suppression of the ally's ability.
-        if choice.move_id == Choices::HEALBELL && ti == 0 {
+        // Aromatherapy: the same, with Sap Sipper in place of Soundproof, and an
+        // active ally behind a Substitute is skipped unless the move infiltrates.
+        // PS data/moves.ts aromatherapy.
+        if matches!(choice.move_id, Choices::HEALBELL | Choices::AROMATHERAPY) && ti == 0 {
+            let aroma = choice.move_id == Choices::AROMATHERAPY;
+            let infiltrates = state.side(side).team_member(idx).ability == Abilities::INFILTRATOR
+                || crate::doubles::damage::infiltrator_move();
             let mut cured = false;
             for t in crate::state::pokemon_index_iter() {
                 let (hp, status, ability) = {
@@ -8672,8 +8697,17 @@ fn execute_move_body(
                 if hp <= 0 || status == PokemonStatus::NONE {
                     continue;
                 }
-                if t != idx
-                    && matches!(ability, Abilities::SOUNDPROOF | Abilities::GOODASGOLD)
+                let blocker = if aroma { Abilities::SAPSIPPER } else { Abilities::SOUNDPROOF };
+                if t != idx && (ability == blocker || ability == Abilities::GOODASGOLD) {
+                    continue;
+                }
+                if aroma
+                    && t != idx
+                    && !infiltrates
+                    && (0..2).any(|k| {
+                        let a = &state.side(side).active()[k];
+                        a.pokemon_index == Some(t) && a.substitute_health > 0
+                    })
                 {
                     continue;
                 }

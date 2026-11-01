@@ -184,7 +184,7 @@ pub struct ActiveSlot {
     /// `rollout` volatile (Rollout / Ice Ball lock): (hitCount, contactHitCount,
     /// duration, the base-power multiplier of the current hit).
     pub rollout: Option<(u8, u8, u8, u8)>,
-    /// The `rollout` lock came from Ice Ball: PS names the volatile `iceball`.
+    /// The `rollout` volatile is Ice Ball's (`onLockMove: 'iceball'`), not Rollout's.
     pub rollout_ice: bool,
     /// `defensecurl` volatile (doubles Rollout / Ice Ball).
     pub defense_curl: bool,

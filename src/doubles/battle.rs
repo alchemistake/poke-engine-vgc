@@ -1539,6 +1539,8 @@ pub fn start_fuzz_battle(state: &mut DoublesState, rng: &mut Gen5Rng) {
             let s = state.side_mut(sd);
             if let Some(idx) = s.active()[sl].pokemon_index {
                 if s.team_member(idx).ability == Abilities::ILLUSION {
+                    // Neutralizing Gas (any lead) ends it: its lead `onSwitchIn`
+                    // runs after every lead's `onBeforeSwitchIn`.
                     s.slot_scratch_mut(sl).illusion_target = Some(illusion_disguise(s, idx));
                 }
             }
@@ -13484,6 +13486,18 @@ fn apply_indirect_damage(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side
 
 /// Illusion `onBeforeSwitchIn`: the last unfainted pokemon after the holder in
 /// `side.pokemon` order.
+/// PS `ignoringAbility()` for team member `idx` of `side` due to Neutralizing
+/// Gas: an active holder (a Gastro Acid'd ability reads NONE here), unless
+/// `idx` holds an Ability Shield. PS sim/pokemon.ts ignoringAbility.
+fn neutralizing_gas_on(state: &DoublesState, side: Side, idx: PokemonIndex) -> bool {
+    if state.side(side).team_member(idx).item == Items::ABILITYSHIELD {
+        return false;
+    }
+    [Side::One, Side::Two]
+        .iter()
+        .any(|&s| (0..2).any(|sl| state.side(s).slot_pokemon(sl).is_some_and(|p| p.ability == Abilities::NEUTRALIZINGGAS && p.hp > 0)))
+}
+
 fn illusion_disguise(sd: &crate::doubles::state::DoublesSide, idx: PokemonIndex) -> Option<usize> {
     let len = sd.ps_order.iter().filter(|&&t| sd.team[t].id != crate::pokemon::PokemonName::NONE).count();
     let own = sd.ps_order.iter().position(|&t| t == idx as usize).unwrap_or(0);
@@ -16911,6 +16925,19 @@ fn apply_on_switch_abilities(
             None => return false,
         }
     };
+    // Neutralizing Gas `onSwitchIn` (priority 2): every active Illusion holder
+    // without an Ability Shield loses its disguise (`singleEvent('End')`).
+    // PS data/abilities.ts neutralizinggas.
+    if ability == Abilities::NEUTRALIZINGGAS {
+        for sd in [Side::One, Side::Two] {
+            for sl in 0..2 {
+                let Some(p) = state.side(sd).slot_pokemon(sl) else { continue };
+                if p.ability == Abilities::ILLUSION && p.item != Items::ABILITYSHIELD {
+                    state.side_mut(sd).slot_scratch_mut(sl).illusion_broken = true;
+                }
+            }
+        }
+    }
     // Download `onStart`: +1 SpA when the foes' total Def (boosted) is at
     // least their total SpD, else +1 Atk (no foe: nothing). PS data/abilities.ts download.
     if ability == Abilities::DOWNLOAD {
@@ -19110,8 +19137,12 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
         if s.team_member(idx).status == PokemonStatus::TOXIC {
             s.toxic_stage[idx as usize] = 1;
         }
+        let gas = neutralizing_gas_on(state, side, idx);
+        let s = state.side_mut(side);
         s.slot_scratch_mut(slot).illusion_target = if s.team_member(idx).ability == Abilities::ILLUSION {
-            Some(illusion_disguise(s, idx))
+            // Illusion's `onBeforeSwitchIn` is skipped while Neutralizing Gas
+            // suppresses it (PS `runEvent` -> `ignoringAbility`).
+            Some(if gas { None } else { illusion_disguise(s, idx) })
         } else {
             None
         };
@@ -21912,6 +21943,32 @@ fn end_of_turn(
             terrain_seed(state, rng, sd, sl);
         }
     }
+    // Eject Pack `onAnySwitchIn` (priority -4, after the abilities and seeds):
+    // a pack armed by a drop (Intimidate) is used; its switch request is the
+    // pivot-style answer for that slot, as a new replacement round.
+    // PS data/items.ts ejectpack.
+    let mut eject_round: Vec<(Side, usize, usize)> = Vec::new();
+    if !pending_switches.is_empty() {
+        eject_pack_fire(state, rng);
+        for sd in [Side::One, Side::Two] {
+            for sl in 0..2 {
+                let a = &state.side(sd).active()[sl];
+                if !(a.force_switch && a.eject_switch) {
+                    continue;
+                }
+                let a = state.side_mut(sd).slot_scratch_mut(sl);
+                a.force_switch = false;
+                a.eject_switch = false;
+                match ee_switches.iter().find(|&&(s2, l2, _)| s2 == sd && l2 == sl) {
+                    Some(&(_, _, pos)) if !ee_used.contains(&(sd, sl)) => {
+                        ee_used.push((sd, sl));
+                        eject_round.push((sd, sl, pos));
+                    }
+                    _ => note_unanswered_switch(state, sd, sl, false),
+                }
+            }
+        }
+    }
     if !pending_switches.is_empty() {
         // A replacement KO'd by the hazards is resolved (`fieldEvent` ->
         // `resolveFaints`) before the action's closing eachEvent, which no
@@ -21940,6 +21997,7 @@ fn end_of_turn(
             }
         }
     }
+    ee_round.extend(eject_round);
     if !ee_round.is_empty() {
         rounds.push_front(ee_round);
     }

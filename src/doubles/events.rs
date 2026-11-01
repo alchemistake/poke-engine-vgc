@@ -64,7 +64,7 @@ pub fn pokemon_effects(state: &DoublesState, side: Side, slot: usize) -> Vec<(St
 
 /// The volatile and slot conditions `visit_pokemon_effects` reports, in
 /// report order (`cond_mask`).
-const CONDS: [(&str, HandlerKind); 83] = [
+const CONDS: [(&str, HandlerKind); 84] = [
     ("confusion", HandlerKind::Volatile),
     ("flinch", HandlerKind::Volatile),
     ("mustrecharge", HandlerKind::Volatile),
@@ -146,6 +146,7 @@ const CONDS: [(&str, HandlerKind); 83] = [
     ("embargo", HandlerKind::Volatile),
     ("foresight", HandlerKind::Volatile),
     ("miracleeye", HandlerKind::Volatile),
+    ("iceball", HandlerKind::Volatile),
     ("futuremove", HandlerKind::Slot),
     ("wish", HandlerKind::Slot),
 ];
@@ -226,7 +227,8 @@ pub(crate) fn vol_mask(a: &crate::doubles::state::ActiveSlot) -> u128 {
         m |= 1 << 68;
     }
     if a.rollout.is_some() {
-        m |= 1 << 69;
+        // Ice Ball's lock is its own `iceball` volatile. PS data/moves.ts iceball.
+        m |= if a.rollout_ice { 1 << 81 } else { 1 << 69 };
     }
     if a.defense_curl {
         m |= 1 << 70;

@@ -552,6 +552,30 @@ pub fn take_lock_num(item: Items) -> Option<u16> {
     }
 }
 
+/// Memories' `onMemory` (the `Memory` event Multi-Attack runs). PS data/items.ts.
+pub fn memory_type(item: Items) -> Option<PokemonType> {
+    match item {
+        Items::BUGMEMORY => Some(PokemonType::BUG),
+        Items::DARKMEMORY => Some(PokemonType::DARK),
+        Items::DRAGONMEMORY => Some(PokemonType::DRAGON),
+        Items::ELECTRICMEMORY => Some(PokemonType::ELECTRIC),
+        Items::FAIRYMEMORY => Some(PokemonType::FAIRY),
+        Items::FIGHTINGMEMORY => Some(PokemonType::FIGHTING),
+        Items::FIREMEMORY => Some(PokemonType::FIRE),
+        Items::FLYINGMEMORY => Some(PokemonType::FLYING),
+        Items::GHOSTMEMORY => Some(PokemonType::GHOST),
+        Items::GRASSMEMORY => Some(PokemonType::GRASS),
+        Items::GROUNDMEMORY => Some(PokemonType::GROUND),
+        Items::ICEMEMORY => Some(PokemonType::ICE),
+        Items::POISONMEMORY => Some(PokemonType::POISON),
+        Items::PSYCHICMEMORY => Some(PokemonType::PSYCHIC),
+        Items::ROCKMEMORY => Some(PokemonType::ROCK),
+        Items::STEELMEMORY => Some(PokemonType::STEEL),
+        Items::WATERMEMORY => Some(PokemonType::WATER),
+        _ => None,
+    }
+}
+
 /// Type-boosting held items (`onBasePower` x4915/4096 for one move type).
 pub fn type_boost_item(item: Items) -> Option<PokemonType> {
     match item {

@@ -4798,6 +4798,9 @@ fn execute_move_body(
             modified.self_boost_chance = (modified.self_boost_chance * 2.0).min(100.0);
         }
     }
+    // PS `useMoveInner`: `pokemon.lastMoveUsed = move`, the same ActiveMove the
+    // `ModifyType` handlers then change (Conversion 2 reads its type).
+    state.side_mut(side).slot_scratch_mut(slot).last_move_used_type = Some(modified.move_type);
     let choice = &modified;
     let mut target_side = side.other();
 
@@ -8276,45 +8279,7 @@ fn execute_move_body(
         // `setType` refuses on Arceus / Silvally (`species.num 493 / 773`).
         // TODO(PS parity): Tera, substitutes in front of the target.
         if choice.move_id == Choices::REFLECTTYPE && !is_self {
-            let user_locked = matches!(
-                state.side(side).team_member(idx).id,
-                crate::pokemon::PokemonName::ARCEUS
-                    | crate::pokemon::PokemonName::ARCEUSBUG
-                    | crate::pokemon::PokemonName::ARCEUSDARK
-                    | crate::pokemon::PokemonName::ARCEUSDRAGON
-                    | crate::pokemon::PokemonName::ARCEUSELECTRIC
-                    | crate::pokemon::PokemonName::ARCEUSFAIRY
-                    | crate::pokemon::PokemonName::ARCEUSFIGHTING
-                    | crate::pokemon::PokemonName::ARCEUSFIRE
-                    | crate::pokemon::PokemonName::ARCEUSFLYING
-                    | crate::pokemon::PokemonName::ARCEUSGHOST
-                    | crate::pokemon::PokemonName::ARCEUSGRASS
-                    | crate::pokemon::PokemonName::ARCEUSGROUND
-                    | crate::pokemon::PokemonName::ARCEUSICE
-                    | crate::pokemon::PokemonName::ARCEUSPOISON
-                    | crate::pokemon::PokemonName::ARCEUSPSYCHIC
-                    | crate::pokemon::PokemonName::ARCEUSROCK
-                    | crate::pokemon::PokemonName::ARCEUSSTEEL
-                    | crate::pokemon::PokemonName::ARCEUSWATER
-                    | crate::pokemon::PokemonName::SILVALLY
-                    | crate::pokemon::PokemonName::SILVALLYBUG
-                    | crate::pokemon::PokemonName::SILVALLYDARK
-                    | crate::pokemon::PokemonName::SILVALLYDRAGON
-                    | crate::pokemon::PokemonName::SILVALLYELECTRIC
-                    | crate::pokemon::PokemonName::SILVALLYFAIRY
-                    | crate::pokemon::PokemonName::SILVALLYFIGHTING
-                    | crate::pokemon::PokemonName::SILVALLYFIRE
-                    | crate::pokemon::PokemonName::SILVALLYFLYING
-                    | crate::pokemon::PokemonName::SILVALLYGHOST
-                    | crate::pokemon::PokemonName::SILVALLYGRASS
-                    | crate::pokemon::PokemonName::SILVALLYGROUND
-                    | crate::pokemon::PokemonName::SILVALLYICE
-                    | crate::pokemon::PokemonName::SILVALLYPOISON
-                    | crate::pokemon::PokemonName::SILVALLYPSYCHIC
-                    | crate::pokemon::PokemonName::SILVALLYROCK
-                    | crate::pokemon::PokemonName::SILVALLYSTEEL
-                    | crate::pokemon::PokemonName::SILVALLYWATER
-            );
+            let user_locked = set_type_blocked(state, side, idx);
             if user_locked {
                 move_failed = true;
             } else {
@@ -9139,6 +9104,19 @@ fn execute_move_body(
             let p = state.side(side).team_member(idx);
             let already = p.types == (t, PokemonType::TYPELESS) && state.side(side).active()[slot].added_type == PokemonType::TYPELESS;
             if already || matches!(p.ability, Abilities::MULTITYPE | Abilities::RKSSYSTEM) {
+                move_failed = true;
+            } else {
+                move_set_type(state, side, slot, idx, (t, PokemonType::TYPELESS));
+            }
+        }
+        // Conversion `onHit` (PS data/moves.ts conversion): the user becomes the
+        // dex type of its first move slot; fails when it already has that type
+        // or `setType` refuses.
+        if choice.move_id == Choices::CONVERSION && ti == 0 && !move_failed {
+            let p = state.side(side).team_member(idx);
+            let t = MOVES.get(&p.moves.m0.id).map(|c| c.move_type).unwrap_or(PokemonType::NORMAL);
+            let has = p.types.0 == t || p.types.1 == t || state.side(side).active()[slot].added_type == t;
+            if has || set_type_blocked(state, side, idx) {
                 move_failed = true;
             } else {
                 move_set_type(state, side, slot, idx, (t, PokemonType::TYPELESS));
@@ -9993,6 +9971,38 @@ fn execute_move_body(
                 } else {
                     move_set_type(state, target_side, target_slot, tidx, (new_type, PokemonType::TYPELESS));
                 }
+            }
+        }
+        // Conversion 2 `onHit` (PS data/moves.ts conversion2): the user becomes a
+        // random type (`sample`) that resists or is immune to the type of the
+        // target's `lastMoveUsed`, among the types it does not have. Fails
+        // without a last move, a candidate, or when `setType` refuses.
+        if choice.move_id == Choices::CONVERSION2 && ti == 0 && !move_failed {
+            let attack_type = state.side(target_side).active()[target_slot].last_move_used_type;
+            match attack_type {
+                Some(attack_type) if state.side(target_side).active()[target_slot].pokemon_index.is_some() => {
+                    let user_types = state.side(side).team_member(idx).types;
+                    let added = state.side(side).active()[slot].added_type;
+                    let cands: Vec<PokemonType> = CONVERSION_TYPES
+                        .iter()
+                        .copied()
+                        .filter(|t| *t != user_types.0 && *t != user_types.1 && *t != added)
+                        .filter(|t| crate::engine::damage_calc::type_matchup(&attack_type, t) < 1.0)
+                        .collect();
+                    if cands.is_empty() {
+                        move_failed = true;
+                    } else {
+                        // PS runs `onHit` inside `hitStepMoveHitLoop`, so the
+                        // harness tags this `sample` "multihit" (fuzz_purpose.js).
+                        let t = cands[rng.label("multihit").random(cands.len() as u32) as usize];
+                        if set_type_blocked(state, side, idx) {
+                            move_failed = true;
+                        } else {
+                            move_set_type(state, side, slot, idx, (t, PokemonType::TYPELESS));
+                        }
+                    }
+                }
+                _ => move_failed = true,
             }
         }
         // Topsy-Turvy `onHit`: inverts every stat stage; fails when all are 0.
@@ -15163,6 +15173,73 @@ fn set_species_types(state: &mut DoublesState, side: Side, slot: usize, idx: Pok
     a.type_change = None;
     a.added_type = PokemonType::TYPELESS;
     a.added_grass = false;
+}
+
+/// PS `dex.types.names()` order (alphabetical; Stellar resists nothing, so it
+/// is left out), as Conversion 2 walks it.
+const CONVERSION_TYPES: [PokemonType; 18] = [
+    PokemonType::BUG,
+    PokemonType::DARK,
+    PokemonType::DRAGON,
+    PokemonType::ELECTRIC,
+    PokemonType::FAIRY,
+    PokemonType::FIGHTING,
+    PokemonType::FIRE,
+    PokemonType::FLYING,
+    PokemonType::GHOST,
+    PokemonType::GRASS,
+    PokemonType::GROUND,
+    PokemonType::ICE,
+    PokemonType::NORMAL,
+    PokemonType::POISON,
+    PokemonType::PSYCHIC,
+    PokemonType::ROCK,
+    PokemonType::STEEL,
+    PokemonType::WATER,
+];
+
+/// PS sim/pokemon.ts `setType` refuses Arceus / Silvally (`species.num`
+/// 493 / 773). TODO(PS parity): Tera.
+fn set_type_blocked(state: &DoublesState, side: Side, idx: PokemonIndex) -> bool {
+    matches!(
+        state.side(side).team_member(idx).id,
+        crate::pokemon::PokemonName::ARCEUS
+        | crate::pokemon::PokemonName::ARCEUSBUG
+        | crate::pokemon::PokemonName::ARCEUSDARK
+        | crate::pokemon::PokemonName::ARCEUSDRAGON
+        | crate::pokemon::PokemonName::ARCEUSELECTRIC
+        | crate::pokemon::PokemonName::ARCEUSFAIRY
+        | crate::pokemon::PokemonName::ARCEUSFIGHTING
+        | crate::pokemon::PokemonName::ARCEUSFIRE
+        | crate::pokemon::PokemonName::ARCEUSFLYING
+        | crate::pokemon::PokemonName::ARCEUSGHOST
+        | crate::pokemon::PokemonName::ARCEUSGRASS
+        | crate::pokemon::PokemonName::ARCEUSGROUND
+        | crate::pokemon::PokemonName::ARCEUSICE
+        | crate::pokemon::PokemonName::ARCEUSPOISON
+        | crate::pokemon::PokemonName::ARCEUSPSYCHIC
+        | crate::pokemon::PokemonName::ARCEUSROCK
+        | crate::pokemon::PokemonName::ARCEUSSTEEL
+        | crate::pokemon::PokemonName::ARCEUSWATER
+        | crate::pokemon::PokemonName::SILVALLY
+        | crate::pokemon::PokemonName::SILVALLYBUG
+        | crate::pokemon::PokemonName::SILVALLYDARK
+        | crate::pokemon::PokemonName::SILVALLYDRAGON
+        | crate::pokemon::PokemonName::SILVALLYELECTRIC
+        | crate::pokemon::PokemonName::SILVALLYFAIRY
+        | crate::pokemon::PokemonName::SILVALLYFIGHTING
+        | crate::pokemon::PokemonName::SILVALLYFIRE
+        | crate::pokemon::PokemonName::SILVALLYFLYING
+        | crate::pokemon::PokemonName::SILVALLYGHOST
+        | crate::pokemon::PokemonName::SILVALLYGRASS
+        | crate::pokemon::PokemonName::SILVALLYGROUND
+        | crate::pokemon::PokemonName::SILVALLYICE
+        | crate::pokemon::PokemonName::SILVALLYPOISON
+        | crate::pokemon::PokemonName::SILVALLYPSYCHIC
+        | crate::pokemon::PokemonName::SILVALLYROCK
+        | crate::pokemon::PokemonName::SILVALLYSTEEL
+        | crate::pokemon::PokemonName::SILVALLYWATER
+    )
 }
 
 /// PS `pokemon.setType(types)` from a move (Soak, Magic Powder, Burn Up):

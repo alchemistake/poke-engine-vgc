@@ -277,6 +277,9 @@ pub struct DamageCtx {
     /// Defensive stat stage.
     pub defense_boost: i8,
     pub weather: Weather,
+    /// Hydro Steam with the attacker's `effectiveWeather()` 'sunnyday': x1.5
+    /// instead of sun's Water drop (PS data/conditions.ts sunnyday).
+    pub hydro_steam_sun: bool,
     /// Defender side has Reflect active (halves physical damage).
     pub reflect: bool,
     /// Defender side has Light Screen active (halves special damage).
@@ -504,6 +507,9 @@ pub fn calculate_damage_with(
         base = modify(base, 0.25, 1.0);
     }
     // weather modifier (after spread, before crit)
+    if ctx.hydro_steam_sun {
+        base = modify(base, 1.5, 1.0);
+    } else {
     match ctx.weather {
         Weather::RAIN | Weather::HEAVYRAIN => {
             if choice.move_type == PokemonType::WATER {
@@ -520,6 +526,7 @@ pub fn calculate_damage_with(
             }
         }
         _ => {}
+    }
     }
     if crit {
         base = trunc(base as f64 * CRIT_MULTIPLIER);

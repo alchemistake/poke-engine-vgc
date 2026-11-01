@@ -98,6 +98,9 @@ pub struct ActiveSlot {
     /// Used a move with the `recharge` flag (Hyper Beam, Solar Beam, ...);
     /// must recharge this turn.
     pub recharging: bool,
+    /// Turn ends `recharging` has lived through (PS `mustrecharge` duration 2:
+    /// it ends at the second residual even if the turn was never spent).
+    pub recharge_age: u8,
     /// Two-turn move charging (Dig, Meteor Beam, ...): the move id being
     /// charged and how many charge turns remain before it fires. Mirrors
     /// pokemon-showdown's `twoturnmove` / per-move volatile pair.
@@ -258,6 +261,8 @@ pub struct ActiveSlot {
     /// `powershift` volatile: Attack and Defense swapped (PS data/moves.ts
     /// powershift.condition; no `onRestart`, so a second use fails).
     pub power_shift: bool,
+    /// Autotomize lowered `weighthg`; `clearVolatile` -> `setSpecies` restores it.
+    pub autotomized: bool,
     /// Commander's `commanding` volatile (Tatsugiri inside its Dondozo ally):
     /// skips its actions, moves miss it, cannot be dragged out.
     /// PS data/conditions.ts commanding.
@@ -476,6 +481,7 @@ impl ActiveSlot {
             reviving: false,
             flinched: false,
             recharging: false,
+            recharge_age: 0,
             charging: None,
             charge_target_loc: 0,
             salt_cure: false,
@@ -539,6 +545,7 @@ impl ActiveSlot {
             nightmare: false,
             tar_shot: false,
             power_shift: false,
+            autotomized: false,
             commanding: false,
             commanded: None,
             powder: false,

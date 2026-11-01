@@ -434,6 +434,10 @@ fn faint_pokemon(state: &mut DoublesState, side: Side, slot: usize) {
         }
     }    let s = state.side_mut(side);
     if let Some(idx) = s.active()[slot].pokemon_index {
+        // The forme reverts below must not touch the cached speed: PS keeps
+        // `pokemon.speed` until `faintMessages` (`resolve_faints` resets it),
+        // so the fainted pokemon still sorts at its old speed.
+        let kept_speed = s.speed_cache[idx as usize];
         s.clear_member_boosts(idx);
         // `clearVolatile` -> `setSpecies(baseSpecies)`: battle-only formes and
         // Transform end (Megas are permanent in champions).
@@ -488,6 +492,8 @@ fn faint_pokemon(state: &mut DoublesState, side: Side, slot: usize) {
         }
         darmanitan_zen_revert(s, idx);
         cramorant_revert(s, idx);
+        autotomize_revert(s, slot, idx);
+        s.speed_cache[idx as usize] = kept_speed;
         // The status stays until PS `checkFainted` (end of turn, only for a
         // side that can still switch) sets it to 'fnt'; see `check_fainted`.
         // PS keeps the fainted pokemon in the slot until its replacement
@@ -3865,7 +3871,16 @@ fn pressure_extra_count(state: &DoublesState, action: &Action) -> i8 {
             | Choices::TERABLAST
             | Choices::SNATCH
     );
-    let no_target = matches!(state.tl.pressure_target.get(), Some(None));
+    // `getMoveTargets` default branch: a fainted target (a fainted ally is not
+    // retargeted) returns no targets and no `pressureTargets`.
+    let no_target = match state.tl.pressure_target.get() {
+        Some(None) => true,
+        Some(Some((ts, tsl))) => {
+            !crate::engine::mechanics::is_future_move(action.choice.move_id)
+                && !state.side(ts).slot_pokemon(tsl).is_some_and(|p| p.hp > 0)
+        }
+        None => false,
+    };
     let single_ty = matches!(ty, Tgt::Normal | Tgt::Any | Tgt::AdjacentFoe | Tgt::RandomNormal | Tgt::Scripted);
     let all_foes = (must_pressure && !(single_ty && no_target))
         || matches!(ty, Tgt::AllAdjacentFoes | Tgt::AllAdjacent)
@@ -4953,9 +4968,10 @@ fn execute_move_body(
                                     }
                                 }
                             }
-                            // `spreadDamage` -> `runEvent('Damage')`: Focus Band /
-                            // Focus Sash `onDamage` on the move's damage.
-                            let dmg = focus_item_on_move_damage(state, rng, ts, tsl, dmg);
+                            // `spreadDamage` -> `runEvent('Damage')`: Endure, Sturdy,
+                            // Focus Band / Focus Sash `onDamage` on the move's damage.
+                            let dmg = move_damage_event(state, rng, ts, tsl, dmg);
+                            let hit_pi = state.side(ts).active()[tsl].pokemon_index;
                             // A KO queues the user's `onSourceAfterFaint` (Beast Boost, Moxie).
                             if apply_damage(state, ts, tsl, dmg) && (ts, tsl) != (side, slot) {
                                 let ab = state.side(side).team_member(idx).ability;
@@ -4964,6 +4980,17 @@ fn execute_move_body(
                             // The release is a contact hit (`moveHit` ->
                             // DamagingHit): Rough Skin, Iron Barbs, ...
                             contact_abilities(state, rng, side, slot, idx, ts, tsl, &action.choice);
+                            // The target's other `onDamagingHit` abilities (Weak
+                            // Armor, Stamina, Sand Spit, Cotton Down, ...), as on
+                            // the delayed Future Sight hit.
+                            damaging_hit_self_abilities(state, rng, ts, tsl, &action.choice);
+                            if let Some(h) = hit_pi {
+                                let ability = state.side(ts).team_member(h).ability;
+                                field_setting_damaging_hit(state, rng, ability, held_item(state, ts, h));
+                                if ability == Abilities::COTTONDOWN {
+                                    cotton_down(state, rng, ts, tsl);
+                                }
+                            }
                         }
                     }
                     // `tryMoveHit` then `removeVolatile('bide')`, before `MoveAborted`.
@@ -6034,6 +6061,14 @@ fn execute_move_body(
         return;
     }
 
+    // Teleport `onTry`: `!!this.canSwitch(source.side)`, so it fails (`-fail`)
+    // with no healthy pokemon on the bench. PS data/moves.ts teleport.
+    if choice.move_id == Choices::TELEPORT && state.side(side).find_replacement().is_none() {
+        state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
+        push_order(move_order);
+        return;
+    }
+
     // Aura Wheel `onTry`: only a Morpeko (either forme) can use it; anyone
     // else (a Copycat / Instruct copy) gets `-fail`. PS data/moves.ts aurawheel.
     if choice.move_id == Choices::AURAWHEEL
@@ -6589,11 +6624,7 @@ fn execute_move_body(
             }
             // Powder moves (PS `hitStepTryImmunity`, 'natural powder immunity'):
             // a Grass / Overcoat target is skipped before the accuracy roll.
-            if choice.flags.powder
-                && (ts, tsl) != (side, slot)
-                && (crate::engine::mechanics::powder_immune(&d)
-                    || state.side(ts).active()[tsl].added_type == PokemonType::GRASS)
-            {
+            if choice.flags.powder && (ts, tsl) != (side, slot) && powder_blocked(state, ts, tsl) {
                 continue;
             }
             let (id_view, id_added) = identified_view(state, ts, tsl, &choice.move_type, &d);
@@ -7242,15 +7273,7 @@ fn execute_move_body(
     // Grass types) and Overcoat `onTryHit`. No draw.
     // TODO(PS parity): Mold Breaker bypass of Overcoat.
     if choice.flags.powder && !is_self && !is_field && (target_side, target_slot) != (side, slot) {
-        let immune = state
-            .side(target_side)
-            .slot_pokemon(target_slot)
-            .map(|p| crate::engine::mechanics::powder_immune(p))
-            .unwrap_or(false)
-            // `hasType('Grass')` includes Forest's Curse's `addedType` (kept in
-            // the slot for a dual-typed target). PS sim/pokemon.ts hasType.
-            || state.side(target_side).active()[target_slot].added_type == PokemonType::GRASS;
-        if immune {
+        if powder_blocked(state, target_side, target_slot) {
             state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
             push_order(move_order);
             return;
@@ -8332,7 +8355,10 @@ fn execute_move_body(
                 // Fling pushes the flung item's `fling.status` / `volatileStatus`
                 // secondary (after King's Rock's own flinch). PS data/moves.ts fling.
                 let fling_sec = choice.move_id == Choices::FLING
-                    && matches!(state.side(side).active()[slot].fling_item, Items::POISONBARB | Items::LIGHTBALL | Items::KINGSROCK | Items::RAZORFANG);
+                    && {
+                        let it = state.side(side).active()[slot].fling_item;
+                        fling_status(it) != PokemonStatus::NONE || is_flinch_item(it)
+                    };
                 let rolls = fling_sec as usize + sf_kings_rock(state, side, idx, choice) as usize + if sheer { 0 } else { match choice.move_id {
                     Choices::TRIATTACK
                     | Choices::DIRECLAW
@@ -10880,6 +10906,17 @@ fn execute_move_body(
             a.power_trick = !a.power_trick;
             a.pt_swapped = !a.pt_swapped;
         }
+        // Autotomize `onHit`: `weighthg = max(1, weighthg - 1000)`.
+        // PS data/moves.ts autotomize.
+        // TODO(PS parity): `onTryHit` fails at +6 Speed (-6 with Contrary).
+        if choice.move_id == Choices::AUTOTOMIZE && ti == 0 && !move_failed {
+            let pm = state.side_mut(side).team_member_mut(idx);
+            let hg = (pm.weight_kg * 10.0).round() as i32;
+            if hg > 1 {
+                pm.weight_kg = (hg - 1000).max(1) as f32 / 10.0;
+                state.side_mut(side).active_slot_mut(slot).autotomized = true;
+            }
+        }
         // Power Shift: the same Attack / Defense swap, as its own volatile (a
         // second use fails: no `onRestart`). PS data/moves.ts powershift.
         if choice.move_id == Choices::POWERSHIFT && ti == 0 && !move_failed {
@@ -12642,6 +12679,19 @@ fn execute_move_body(
         }
     }
 
+    // PS `useMoveInner`: `selfdestruct: 'always'` faints the user before the
+    // hit (`battle.faint`: queued first), so the loop's `resolveFaints` below
+    // resolves the user before its victims (Soul-Heart sees them still left).
+    if choice.selfdestruct && state.side(side).slot_pokemon(slot).is_some_and(|p| p.hp > 0) {
+        let hp = state.side(side).slot_pokemon(slot).map(|p| p.hp).unwrap_or(0);
+        let before = state.faint_log.len();
+        apply_damage(state, side, slot, hp);
+        // PS queues the user's faint before its victims' (`faintQueue` order).
+        if state.faint_log.len() > before && before >= faint_mark {
+            let f = state.faint_log.pop().unwrap();
+            state.faint_log.insert(faint_mark, f);
+        }
+    }
     // PS `resolveFaints` right after the hit loop (before the recoil). A user
     // that KO'd itself in the hit (Memento) runs its ability `End` sort.
     if state.unresolved_faints.iter().any(|&(fs, fsl, _)| (fs, fsl) == (side, slot)) {
@@ -12714,15 +12764,7 @@ fn execute_move_body(
     // faint is resolved right after the hit loop, so the loop's closing
     // `eachEvent` no longer counts the user.
     if choice.selfdestruct {
-        let hp = state.side(side).slot_pokemon(slot).map(|p| p.hp).unwrap_or(0);
-        let before = state.faint_log.len();
-        apply_damage(state, side, slot, hp);
-        // PS queues the user's faint before its victims' (`faintQueue` order).
-        if state.faint_log.len() > before && before >= faint_mark {
-            let f = state.faint_log.pop().unwrap();
-            state.faint_log.insert(faint_mark, f);
-        }
-        // ...and resolved right after the loop, before its closing `eachEvent`.
+        // (Fainted before the loop's `resolveFaints`, above.)
         resolve_user_faint(state, rng, side, slot);
         // Healing Wish / Lunar Dance: the closing `eachEvent` (PS ~1062) runs after
         // the faint is resolved, so the fainted user no longer counts in the sort.
@@ -12958,6 +13000,7 @@ fn execute_move_body(
     // Recharge flag (Hyper Beam, Solar Beam): cannot act next turn.
     if choice.flags.recharge {
         state.side_mut(side).active_slot_mut(slot).recharging = true;
+        state.side_mut(side).active_slot_mut(slot).recharge_age = 0;
     }
 
     // Pivot moves (PS `selfSwitch`, battle-actions.ts `spreadMoveHit`): a
@@ -13820,6 +13863,17 @@ fn fractional_priority_roll(state: &mut DoublesState, rng: &mut Gen5Rng, a: &mut
 
 /// King's Rock / Razor Fang: `onModifyMove` adds a 10% flinch (and their Fling
 /// effect flinches).
+/// An item's `fling.status`: Fling pushes it as a secondary. PS data/items.ts.
+fn fling_status(item: Items) -> PokemonStatus {
+    match item {
+        Items::POISONBARB => PokemonStatus::POISON,
+        Items::LIGHTBALL => PokemonStatus::PARALYZE,
+        Items::FLAMEORB => PokemonStatus::BURN,
+        Items::TOXICORB => PokemonStatus::TOXIC,
+        _ => PokemonStatus::NONE,
+    }
+}
+
 fn is_flinch_item(item: Items) -> bool {
     matches!(item, Items::KINGSROCK | Items::RAZORFANG)
 }
@@ -14464,7 +14518,23 @@ fn identified_view<'a>(
     let negates = (a.foresight && matches!(*move_type, PokemonType::NORMAL | PokemonType::FIGHTING))
         || (a.miracle_eye && *move_type == PokemonType::PSYCHIC);
     if !negates {
-        return (std::borrow::Cow::Borrowed(p), a.added_type);
+        // Ring Target `onNegateImmunity: false` covers the added type too
+        // (Normal hits a Trick-or-Treat Ghost). The base types' immunities are
+        // dropped later (`smackdown_ground_view`). PS data/items.ts ringtarget.
+        let ring = p.item == Items::RINGTARGET && !ignoring_item(state, p);
+        let added = if ring
+            && a.added_type != PokemonType::TYPELESS
+            && crate::doubles::damage::ring_target_view(move_type, &crate::state::Pokemon {
+                types: (a.added_type, PokemonType::TYPELESS),
+                ..p.clone()
+            })
+            .is_some()
+        {
+            PokemonType::TYPELESS
+        } else {
+            a.added_type
+        };
+        return (std::borrow::Cow::Borrowed(p), added);
     }
     let added = match crate::doubles::damage::ring_target_view(move_type, &crate::state::Pokemon {
         types: (a.added_type, PokemonType::TYPELESS),
@@ -15744,6 +15814,9 @@ fn compute_hit_damage(
             } else {
                 umbrella_weather(state, defender_actual, effective_weather(state))
             },
+            hydro_steam_sun: choice.move_id == Choices::HYDROSTEAM
+                && (attacker.ability == Abilities::MEGASOL
+                    || umbrella_weather(state, attacker, effective_weather(state)) == Weather::SUN),
             // PS data/moves.ts reflect / lightscreen / auroraveil
             // `onAnyModifyDamage`: skipped when `move.infiltrates`
             // (data/abilities.ts infiltrator.onModifyMove).
@@ -16511,6 +16584,16 @@ fn side_condition_duration_mut(state: &mut DoublesState, side: Side, which: u8) 
 
 /// PS `pokemon.effectiveWeather()`: a Utility Umbrella holder sees no rain /
 /// sun (data/items.ts utilityumbrella).
+/// A powder move skips this target before the accuracy roll (no draw):
+/// Overcoat / Safety Goggles `onTryHit` and the Grass type's natural powder
+/// immunity (`hasType('Grass')` includes Forest's Curse's `addedType`).
+/// PS data/items.ts safetygoggles, sim/battle-actions.ts hitStepTryImmunity.
+fn powder_blocked(state: &DoublesState, ts: Side, tsl: usize) -> bool {
+    state.side(ts).slot_pokemon(tsl).is_some_and(|p| {
+        crate::engine::mechanics::powder_immune(p) || (p.item == Items::SAFETYGOGGLES && !ignoring_item(state, p))
+    }) || state.side(ts).active()[tsl].added_type == PokemonType::GRASS
+}
+
 fn umbrella_weather(state: &DoublesState, p: &crate::state::Pokemon, w: Weather) -> Weather {
     if p.item == Items::UTILITYUMBRELLA
         && !ignoring_item(state, p)
@@ -16788,14 +16871,8 @@ fn future_move_hit(
         Some(d) => damage.min(d.hp.max(0)),
         None => damage,
     };
-    // Endure / Sturdy `onDamage` apply to the delayed hit too (its effect is a
-    // `Move`): a KO leaves 1 HP. PS data/moves.ts endure, data/abilities.ts sturdy.
-    let damage = match state.side(ts).slot_pokemon(tslot) {
-        Some(d) if state.side(ts).active()[tslot].endure && damage >= d.hp && d.hp > 0 => d.hp - 1,
-        Some(d) if d.ability == Abilities::STURDY && d.hp == d.maxhp && damage >= d.hp && d.hp > 0 => d.hp - 1,
-        _ => damage,
-    };
-    let damage = focus_item_on_move_damage(state, rng, ts, tslot, damage);
+    // The delayed hit's effect is a `Move`: Endure / Sturdy / Focus items.
+    let damage = move_damage_event(state, rng, ts, tslot, damage);
     // Berserk `onAfterMoveSecondary` (after the hit's `eachEvent('Update')`):
     // the HP before the delayed hit. PS data/abilities.ts berserk,
     // sim/battle-actions.ts hitStepMoveHitLoop (afterMoveSecondaryEvent).
@@ -17159,6 +17236,17 @@ fn gulp_missile_catch(state: &mut DoublesState, side: Side, idx: PokemonIndex) {
 
 /// `clearVolatile` -> `setSpecies(baseSpecies)` (switch-out / faint): a
 /// Gulping / Gorging Cramorant goes back to Cramorant. PS sim/pokemon.ts.
+/// `clearVolatile` -> `setSpecies(baseSpecies)` resets `weighthg`: Autotomize's
+/// weight loss ends. PS sim/pokemon.ts setSpecies.
+fn autotomize_revert(s: &mut crate::doubles::state::DoublesSide, slot: usize, idx: PokemonIndex) {
+    if s.active()[slot].autotomized {
+        let key = format!("{:?}", s.team_member(idx).id).to_lowercase();
+        if let Some(w) = crate::doubles::species_weights::species_weight_kg(&key) {
+            s.team_member_mut(idx).weight_kg = w;
+        }
+    }
+}
+
 fn cramorant_revert(s: &mut crate::doubles::state::DoublesSide, idx: PokemonIndex) {
     use crate::pokemon::PokemonName as N;
     if matches!(s.team_member(idx).id, N::CRAMORANTGULPING | N::CRAMORANTGORGING) {
@@ -18930,6 +19018,19 @@ fn band_roll(state: &DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize, m
 /// Focus Sash / Focus Band `onDamage` (priority -40, after Endure / Sturdy) for
 /// a move's damage: a full-HP Sash holder survives a KO at 1 HP (the Sash is
 /// used); Focus Band rolls 1 in 10 on every hit and then saves it.
+/// `runEvent('Damage')` for a fixed move hit outside the hit loop (Bide's
+/// release, a Future Sight hit): Endure `onDamage` (priority -10) and Sturdy
+/// (-30) leave a KO at 1 HP, then the Focus items. PS data/moves.ts endure,
+/// data/abilities.ts sturdy.
+fn move_damage_event(state: &mut DoublesState, rng: &mut Gen5Rng, ts: Side, tslot: usize, damage: i16) -> i16 {
+    let damage = match state.side(ts).slot_pokemon(tslot) {
+        Some(d) if state.side(ts).active()[tslot].endure && damage >= d.hp && d.hp > 0 => d.hp - 1,
+        Some(d) if d.ability == Abilities::STURDY && d.hp == d.maxhp && damage >= d.hp && d.hp > 0 => d.hp - 1,
+        _ => damage,
+    };
+    focus_item_on_move_damage(state, rng, ts, tslot, damage)
+}
+
 fn focus_item_on_move_damage(state: &mut DoublesState, rng: &mut Gen5Rng, ts: Side, tslot: usize, damage: i16) -> i16 {
     let Some(idx) = state.side(ts).active()[tslot].pokemon_index else { return damage };
     let p = state.side(ts).team_member(idx);
@@ -19272,11 +19373,7 @@ fn after_hit_item_moves(
         // eaten by the target, else `fling.effect` / a status secondary).
         Choices::FLING => {
             let it = state.side(side).active()[slot].fling_item;
-            let status = match it {
-                Items::POISONBARB => PokemonStatus::POISON,
-                Items::LIGHTBALL => PokemonStatus::PARALYZE,
-                _ => PokemonStatus::NONE,
-            };
+            let status = fling_status(it);
             // A secondary without `chance` still draws its roll, KO'd target or not
             // (unless Shield Dust filtered it out).
             let tp = state.side(ts).team_member(tidx);
@@ -20450,11 +20547,6 @@ fn run_switch_in(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: 
     let _ = sorted_actives(state, rng, "speed tie (switch-in)");
     entry_hazards(state, rng, side, slot);
     refresh_mimicry_slot(state, side, slot);
-    for sd in [Side::One, Side::Two] {
-        for sl in 0..2 {
-            flush_opportunist(state, rng, sd, sl);
-        }
-    }
     // Pastel Veil `onAnySwitchIn`.
     pastel_veil_switch_in(state);
     apply_sticky_web(state, rng, side, slot);
@@ -20468,6 +20560,13 @@ fn run_switch_in(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: 
     }
     state.side_mut(side).slot_scratch_mut(slot).seed_terrain = None;
     terrain_seed(state, rng, side, slot);
+    // Opportunist / Mirror Herb `onAnySwitchIn` (priority -3): after the
+    // switch-in's ability and item Start (Download's boost is copied).
+    for sd in [Side::One, Side::Two] {
+        for sl in 0..2 {
+            flush_opportunist(state, rng, sd, sl);
+        }
+    }
     resolve_faints(state, rng, |_, _| true);
     // Forecast's own `onStart` (the forme change) is part of the `runSwitch`.
     update_forecast(state);
@@ -20776,6 +20875,7 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
         // Zen Mode `onEnd` (switch-out) / `clearVolatile`: a Zen forme reverts.
         darmanitan_zen_revert(s, old);
         cramorant_revert(s, old);
+        autotomize_revert(s, slot, old);
     }
     let pos = position.min(5);
     let idx = PokemonIndex::deserialize(&pos.to_string());
@@ -23897,6 +23997,15 @@ fn end_of_turn(
             a.beak_blast = false;
             a.shell_trap = 0;
             a.me_first_vol = false;
+            // `mustrecharge` duration 2: a recharge turn that never ran (Sky
+            // Drop held the user) still ends. PS data/conditions.ts mustrecharge.
+            if a.recharging {
+                if a.recharge_age >= 1 {
+                    a.recharging = false;
+                } else {
+                    a.recharge_age += 1;
+                }
+            }
             a.chilly_reception = false;
             a.snatch = false;
             a.stats_raised_this_turn = false;
@@ -24082,6 +24191,7 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
                     defense_base,
                     defense_boost,
                     weather: umbrella_weather(state, defender, effective_weather(state)),
+                    hydro_steam_sun: false,
                     reflect: false,
                     light_screen: false,
                     defender_mod: 4096,

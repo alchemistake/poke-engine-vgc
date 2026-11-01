@@ -1574,6 +1574,8 @@ pub fn start_fuzz_battle(state: &mut DoublesState, rng: &mut Gen5Rng) {
             flush_opportunist(state, rng, sd, sl);
         }
     }
+    // Pastel Veil `onAnySwitchIn`.
+    pastel_veil_switch_in(state);
     each_event_update(state, rng);
     // Forecast `onStart` / `onWeatherChange` (PS data/abilities.ts forecast):
     // a lead's Drizzle / Drought sets the weather, and a Castform lead follows it.
@@ -2524,6 +2526,8 @@ pub fn run_fuzz_turn(
                         flush_opportunist(state, rng, sd, sl);
                     }
                 }
+                // Pastel Veil `onAnySwitchIn`.
+                pastel_veil_switch_in(state);
                 for &(sd, sl) in &batch_in {
                     if !state.side(sd).slot_pokemon(sl).is_some_and(|p| p.hp > 0) {
                         continue;
@@ -15340,6 +15344,27 @@ fn ability_update_cures(state: &mut DoublesState, side: Side, slot: usize) {
     ability_status_cures(state, side, slot);
 }
 
+/// Pastel Veil `onStart` / `onAnySwitchIn`: every active holder cures its own
+/// and its ally's poison (`alliesAndSelf()`, `cureStatus()`). PS
+/// data/abilities.ts pastelveil.
+fn pastel_veil_switch_in(state: &mut DoublesState) {
+    for side in [Side::One, Side::Two] {
+        let holder = (0..2).any(|sl| state.side(side).slot_pokemon(sl).is_some_and(|p| p.hp > 0 && p.ability == Abilities::PASTELVEIL));
+        if !holder {
+            continue;
+        }
+        for sl in 0..2 {
+            let Some(idx) = state.side(side).active()[sl].pokemon_index else { continue };
+            let s = state.side_mut(side);
+            let p = s.team_member_mut(idx);
+            if p.hp > 0 && matches!(p.status, PokemonStatus::POISON | PokemonStatus::TOXIC) {
+                p.status = PokemonStatus::NONE;
+                s.toxic_stage[idx as usize] = 0;
+            }
+        }
+    }
+}
+
 /// The abilities' `onUpdate` cures, run by every `eachEvent('Update')`.
 fn ability_status_cures(state: &mut DoublesState, side: Side, slot: usize) {
     let Some(idx) = state.side(side).active()[slot].pokemon_index else { return };
@@ -15352,11 +15377,11 @@ fn ability_status_cures(state: &mut DoublesState, side: Side, slot: usize) {
     }
     // Status-immunity abilities `onUpdate` (data/abilities.ts limber,
     // insomnia, vitalspirit, immunity, magmaarmor, waterbubble,
-    // thermalexchange): `cureStatus()`.
+    // thermalexchange, pastelveil): `cureStatus()`.
     let cures = match ability {
         Abilities::LIMBER => status == PokemonStatus::PARALYZE,
         Abilities::INSOMNIA | Abilities::VITALSPIRIT => status == PokemonStatus::SLEEP,
-        Abilities::IMMUNITY => matches!(status, PokemonStatus::POISON | PokemonStatus::TOXIC),
+        Abilities::IMMUNITY | Abilities::PASTELVEIL => matches!(status, PokemonStatus::POISON | PokemonStatus::TOXIC),
         Abilities::MAGMAARMOR => status == PokemonStatus::FREEZE,
         Abilities::WATERBUBBLE | Abilities::THERMALEXCHANGE => status == PokemonStatus::BURN,
         _ => false,
@@ -17641,6 +17666,8 @@ fn run_switch_in(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: 
             flush_opportunist(state, rng, sd, sl);
         }
     }
+    // Pastel Veil `onAnySwitchIn`.
+    pastel_veil_switch_in(state);
     apply_sticky_web(state, rng, side, slot);
     if switched_in_alive(state, side, slot) && apply_on_switch_abilities(state, side, slot, rng) {
         let _ = sorted_actives_in_switch(state, rng);
@@ -17759,6 +17786,8 @@ fn switch_in(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: usiz
             flush_opportunist(state, rng, sd, sl);
         }
     }
+    // Pastel Veil `onAnySwitchIn`.
+    pastel_veil_switch_in(state);
 }
 
 /// Healing Wish / Lunar Dance `slotCondition` `onSwitchIn` -> `onSwap`: a hurt

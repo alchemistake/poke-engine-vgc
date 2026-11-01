@@ -1418,6 +1418,28 @@ fn unaware_zeroes_accuracy(
     })
 }
 
+/// Wonder Skin `onModifyAccuracy` (priority 10, before every chain piece): a
+/// status move with a numeric accuracy gets base accuracy 50 against the holder;
+/// the later chain modifiers and boosts apply to that 50. Breakable.
+/// PS data/abilities.ts wonderskin.
+fn wonder_skin_accuracy(
+    state: &DoublesState,
+    side: Side,
+    idx: PokemonIndex,
+    tside: Side,
+    tslot: usize,
+    choice: &Choice,
+    accuracy: f32,
+) -> f32 {
+    let attacker = state.side(side).team_member(idx);
+    let skin = choice.category == MoveCategory::Status
+        && state.side(tside).slot_pokemon(tslot).is_some_and(|t| {
+            t.ability == Abilities::WONDERSKIN
+                && !crate::engine::abilities::ignores_target_ability(attacker, choice, &t.ability)
+        });
+    if skin { 50.0 } else { accuracy }
+}
+
 fn accuracy_ability_mods(
     state: &DoublesState,
     side: Side,
@@ -6967,7 +6989,7 @@ fn execute_move_body(
                     eva_boost(st, ts, tsl)
                 };
                 let ab = if unaware_zeroes_accuracy(st, side, idx, ts, tsl, choice) { 0 } else { ab };
-                roll_accuracy_boosted(roll_accuracy_of(choice), ab, eb, accuracy_ability_mods(st, side, idx, ts, tsl, choice), rng)
+                roll_accuracy_boosted(wonder_skin_accuracy(st, side, idx, ts, tsl, choice, roll_accuracy_of(choice)), ab, eb, accuracy_ability_mods(st, side, idx, ts, tsl, choice), rng)
             });
             for &(ts, tsl) in ev_before.iter().filter(|t| !spread_list.contains(t)) {
                 miss_event(state, side, idx, ts, tsl, choice.move_id);
@@ -7019,7 +7041,8 @@ fn execute_move_body(
             eva_boost(state, target_side, target_slot)
         };
         let mods = accuracy_ability_mods(state, side, idx, target_side, target_slot, choice);
-        if !roll_accuracy_boosted(roll_accuracy_of(choice), ab, eb, mods, rng) {
+        let acc = wonder_skin_accuracy(state, side, idx, target_side, target_slot, choice, roll_accuracy_of(choice));
+        if !roll_accuracy_boosted(acc, ab, eb, mods, rng) {
             miss_event(state, side, idx, target_side, target_slot, choice.move_id);
             state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
             if matches!(choice.move_id, Choices::EXPLOSION | Choices::MISTYEXPLOSION | Choices::SELFDESTRUCT) {

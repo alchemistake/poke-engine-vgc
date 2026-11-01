@@ -107,14 +107,30 @@ pub fn mold_move() -> bool {
 /// checked (data/moves.ts smackdown, sim/pokemon.ts isGrounded). The chart's
 /// Ground -> Flying entry is then neutral (sim/dex.ts getEffectiveness), so
 /// that view drops the Flying typing and Levitate for this type check only.
-pub fn smackdown_ground_view<'a>(move_type: &PokemonType, defender: &'a Pokemon, smackdown: bool) -> Cow<'a, Pokemon> {
+pub fn smackdown_ground_view<'a>(
+    move_type: &PokemonType,
+    defender: &'a Pokemon,
+    smackdown: bool,
+    item_ignored: bool,
+) -> Cow<'a, Pokemon> {
     use crate::engine::abilities::Abilities;
+    use crate::engine::items::Items;
+    // An ignored Air Balloon (Klutz, Magic Room) does not lift its holder,
+    // nor does an ignored Iron Ball ground it.
+    let balloon = (defender.item == Items::AIRBALLOON && (item_ignored || smackdown))
+        || (defender.item == Items::IRONBALL && item_ignored);
     let airborne_typing = defender.types.0 == PokemonType::FLYING || defender.types.1 == PokemonType::FLYING;
     let levitates = matches!(defender.ability, Abilities::LEVITATE | Abilities::EELEVATE);
-    if !(smackdown && *move_type == PokemonType::GROUND && (airborne_typing || levitates)) {
+    if *move_type != PokemonType::GROUND || !(balloon || (smackdown && (airborne_typing || levitates))) {
         return Cow::Borrowed(defender);
     }
     let mut d = defender.clone();
+    if balloon {
+        d.item = Items::NONE;
+    }
+    if !smackdown {
+        return Cow::Owned(d);
+    }
     if d.types.0 == PokemonType::FLYING {
         d.types.0 = PokemonType::TYPELESS;
     }
@@ -199,6 +215,8 @@ pub fn type_mod(attacking_type: &PokemonType, defender: &Pokemon) -> Option<i32>
 pub struct DamageOutcome {
     pub damage: i16,
     pub crit: bool,
+    /// The defender ate its resist berry (`onSourceModifyDamage`).
+    pub berry: bool,
 }
 
 /// Context for a single damage calculation: effective (boosted) stats and the
@@ -264,6 +282,25 @@ pub struct DamageCtx {
     /// Effective base power after multiplier effects (Helping Hand);
     /// 0.0 = use `choice.base_power`.
     pub base_power_override: f32,
+    /// Attacker's Life Orb (`onModifyDamage` x5324/4096).
+    pub life_orb: bool,
+    /// Attacker's Expert Belt (`onModifyDamage` x4915/4096 when super effective).
+    pub expert_belt: bool,
+    /// Defender's resist berry type (Chilan: Normal at any effectiveness), and
+    /// whether Ripen doubles it. `None` when it cannot be eaten (Substitute).
+    pub resist_berry: Option<(PokemonType, bool)>,
+    /// Ripen `onSourceModifyDamage`: a resist berry eaten outside a hit
+    /// (`abilityState.berryWeaken`) halves the next damage.
+    pub ripen_weaken: bool,
+    /// The hit goes through Protect (PS `bypassProtect`): x0.25 after ModifyDamage.
+    pub bypass_protect: bool,
+    /// Parental Bond's second hit (x0.25 after the spread modifier).
+    pub parental_second: bool,
+    /// Metronome (item) `onModifyDamage` modifier (4096 = none).
+    pub metronome_mod: i64,
+    /// Iron Ball `onEffectiveness`: a Ground move at a Flying holder (not
+    /// already grounded) is neutral (every type returns 0).
+    pub iron_ball_neutral: bool,
 }
 
 /// Compute the damage a single-target (or one hit of a spread) move deals to
@@ -309,7 +346,7 @@ pub fn calculate_damage_with(
     on_event: &mut dyn FnMut(DamageEvent, &mut Gen5Rng) -> bool,
 ) -> Option<DamageOutcome> {
     if choice.category == MoveCategory::Status || choice.category == MoveCategory::Switch {
-        return Some(DamageOutcome { damage: 0, crit: false });
+        return Some(DamageOutcome { damage: 0, crit: false, berry: false });
     }
     let base_power = if ctx.base_power_override > 0.0 {
         ctx.base_power_override
@@ -317,7 +354,7 @@ pub fn calculate_damage_with(
         choice.base_power
     };
     if base_power == 0.0 {
-        return Some(DamageOutcome { damage: 0, crit: false });
+        return Some(DamageOutcome { damage: 0, crit: false, berry: false });
     }
 
     // Type immunity is checked in getDamage BEFORE any draws.
@@ -336,7 +373,7 @@ pub fn calculate_damage_with(
         let m = crate::engine::damage_calc::type_effectiveness_modifier(&PokemonType::FLYING, defender);
         tm += m.log2().round() as i32;
     }
-    if ctx.disguise {
+    if ctx.disguise || ctx.iron_ball_neutral {
         // disguise.onEffectiveness returns 0 (after the immunity check).
         tm = 0;
     }
@@ -378,9 +415,9 @@ pub fn calculate_damage_with(
     let mut attack = crate::engine::mechanics::boost_stat(atk_b, ctx.attack_base).max(1);
     // Hustle `onModifyAtk` (priority 5): `this.modify(atk, 1.5)` applied
     // directly to the stat, before the chained modifiers. PS data/abilities.ts.
+    // Body Press runs `ModifyAtk` too (PS getDamage resets `attackStat`).
     if attacker.ability == crate::engine::abilities::Abilities::HUSTLE
         && choice.category == crate::choices::MoveCategory::Physical
-        && choice.move_id != crate::choices::Choices::BODYPRESS
     {
         attack = ((attack as i64 * 6144 + 2047) / 4096) as i16;
     }
@@ -412,6 +449,8 @@ pub fn calculate_damage_with(
     base += 2;
     if spread {
         base = modify(base, 0.75, 1.0);
+    } else if ctx.parental_second {
+        base = modify(base, 0.25, 1.0);
     }
     // weather modifier (after spread, before crit)
     match ctx.weather {
@@ -505,8 +544,32 @@ pub fn calculate_damage_with(
     if ctx.friend_guard {
         chain_in(3072);
     }
+    // Held items (PS data/items.ts, subOrder 8: after the abilities).
+    if ctx.life_orb {
+        chain_in(5324);
+    }
+    if ctx.metronome_mod != 4096 {
+        chain_in(ctx.metronome_mod);
+    }
+    if ctx.expert_belt && tm > 0 {
+        chain_in(4915);
+    }
+    // Resist berries `onSourceModifyDamage`: eaten, x0.5 (x0.25 with Ripen).
+    let mut berry = false;
+    if let Some((t, ripen)) = ctx.resist_berry {
+        if choice.move_type == t && (t == PokemonType::NORMAL || tm > 0) {
+            berry = true;
+            chain_in(if ripen { 1024 } else { 2048 });
+        }
+    }
+    if ctx.ripen_weaken && !berry {
+        chain_in(2048);
+    }
     if chain != 4096 {
         base = (base * chain + 2047) / 4096;
+    }
+    if ctx.bypass_protect {
+        base = modify(base, 0.25, 1.0);
     }
     // Minimum 1 damage (gen 6+): after the final ModifyDamage modifiers
     // (Multiscale, screens), before the 16-bit truncation.
@@ -519,13 +582,14 @@ pub fn calculate_damage_with(
     let result = (base % 65536 + 65536) % 65536;
     if crate::doubles::debug::flags().dmg {
         eprintln!(
-            "DMGDBG {} (BP {} {}) vs {}: atk={} def={} base_final={} crit={} tm={:?} type={:?}",
-            attacker.id, base_power, choice.move_type, defender.id, attack, defense, result, crit, tm, defender.types
+            "DMGDBG {} (BP {} {}) vs {}: atk={} def={} base_final={} crit={} tm={:?} type={:?} bp={} ps={} lo={} sp={} scr={}",
+            attacker.id, base_power, choice.move_type, defender.id, attack, defense, result, crit, tm, defender.types, ctx.bypass_protect, ctx.parental_second, ctx.life_orb, spread, ctx.screen_handlers
         );
     }
     Some(DamageOutcome {
         damage: result as i16,
         crit,
+        berry,
     })
 }
 

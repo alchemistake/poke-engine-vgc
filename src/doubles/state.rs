@@ -41,6 +41,8 @@ pub struct ActiveSlot {
     pub last_used_move: LastUsedMove,
     pub damage_dealt: DamageDealt,
     pub force_switch: bool,
+    /// Switching out from Eject Button (PS `switchFlag === true`).
+    pub eject_switch: bool,
     pub force_trapped: bool,
     pub slow_uturn_move: bool,
     pub baton_passing: bool,
@@ -48,9 +50,41 @@ pub struct ActiveSlot {
     pub electrify: bool,
     /// Power Trick is active (Attack and Defense are swapped).
     pub power_trick: bool,
+    /// Attack and Defense are swapped now (Power Trick). A Mega Evolution
+    /// recomputes them unswapped while the volatile stays.
+    pub pt_swapped: bool,
     /// PS `move.hit` (1-based) of the current hit of a multi-hit move.
     pub hit_number: u8,
     pub shed_tailing: bool,
+    /// Unburden's volatile: the holder lost its item (Speed x2).
+    pub unburden: bool,
+    /// The `gem` volatile: a Normal Gem powers up this move (x1.3).
+    pub gem: bool,
+    /// The running move is Parental Bond's two-hit version.
+    pub parental_bond: bool,
+    /// Metronome (item) volatile: the last move and its consecutive uses.
+    pub metronome_last: Option<Choices>,
+    pub metronome_count: u8,
+    /// The Metronome item's `metronome` volatile is up (item `onStart`).
+    pub metronome_vol: bool,
+    /// Cud Chew `effectState`: the berry eaten and the residuals left until it
+    /// is eaten again.
+    pub cud_chew: Option<(Items, u8)>,
+    /// Ripen `abilityState.berryWeaken` (a `Cell`: the damage calc, which
+    /// holds the state shared, consumes it).
+    pub berry_weaken: std::cell::Cell<bool>,
+    /// PS `usedItemThisTurn` (Pickup).
+    pub used_item_this_turn: bool,
+    /// The terrain a terrain seed last checked (its `onStart` /
+    /// `onTerrainChange`); `None` until the holder's item starts.
+    pub seed_terrain: Option<crate::engine::state::Terrain>,
+    /// Choice item `choicelock` volatile: the locked move.
+    pub choice_lock: Option<Choices>,
+    /// PS `moveThisTurnResult = null` (a NOT_FAIL hit: Protect), this / last turn.
+    pub move_result_null: bool,
+    pub move_null_last_turn: bool,
+    /// The item this slot's Fling threw (its base power and effect).
+    pub fling_item: Items,
     /// Revival Blessing hit: the slot's switch answer revives a fainted
     /// party member instead of switching (PS `revivalblessing` slot condition).
     pub reviving: bool,
@@ -63,9 +97,9 @@ pub struct ActiveSlot {
     /// charged and how many charge turns remain before it fires. Mirrors
     /// pokemon-showdown's `twoturnmove` / per-move volatile pair.
     pub charging: Option<(crate::choices::Choices, u8)>,
-    /// Foe slot chosen on the charge turn; the locked follow-up turn keeps it
+    /// Signed PS target location chosen on the charge turn; the locked follow-up turn keeps it
     /// (PS `twoturnmove.onStart` stores `targetLoc` on the move volatile).
-    pub charge_target: usize,
+    pub charge_target_loc: i8,
     /// Salt Cure volatile: residual damage each turn (champions: 1/16 max
     /// HP, 1/8 for Water / Steel).
     pub salt_cure: bool,
@@ -169,13 +203,16 @@ pub struct ActiveSlot {
     pub vol_order: Vec<&'static str>,
     /// The volatile conditions (`events::vol_mask`) `vol_order` was last
     /// synced with (`sync_vol_order`); `u64::MAX` forces a sync.
-    pub vol_synced: u64,
+    pub vol_synced: u128,
     /// `flashfire` volatile: Fire moves x1.5 (ModifyAtk / ModifySpA).
     pub flash_fire: bool,
     /// `charge` volatile: the next Electric move has doubled power.
     pub charge: bool,
     /// `noretreat` volatile (No Retreat already used).
     pub no_retreat: bool,
+    /// The `trapped` volatile No Retreat's `onStart` added itself (none when the
+    /// user was already trapped: that link's `trapped` stays, and goes with it).
+    pub no_retreat_trap: bool,
     /// `focusenergy` volatile: +2 critical-hit stages.
     pub focus_energy: bool,
     /// `attract` volatile: the infatuating pokemon (side, team index).
@@ -315,18 +352,34 @@ impl ActiveSlot {
             last_used_move: LastUsedMove::None,
             damage_dealt: DamageDealt::default(),
             force_switch: false,
+            eject_switch: false,
             force_trapped: false,
             slow_uturn_move: false,
             baton_passing: false,
             electrify: false,
             power_trick: false,
+            pt_swapped: false,
             hit_number: 1,
             shed_tailing: false,
+            unburden: false,
+            gem: false,
+            parental_bond: false,
+            metronome_last: None,
+            metronome_count: 0,
+            metronome_vol: false,
+            cud_chew: None,
+            berry_weaken: std::cell::Cell::new(false),
+            used_item_this_turn: false,
+            seed_terrain: None,
+            choice_lock: None,
+            move_result_null: false,
+            move_null_last_turn: false,
+            fling_item: Items::NONE,
             reviving: false,
             flinched: false,
             recharging: false,
             charging: None,
-            charge_target: 0,
+            charge_target_loc: 0,
             salt_cure: false,
             stockpile: 0,
             confusion: 0,
@@ -371,6 +424,7 @@ impl ActiveSlot {
             flash_fire: false,
             charge: false,
             no_retreat: false,
+            no_retreat_trap: false,
             focus_energy: false,
             attract: None,
             leech_seed: None,
@@ -441,14 +495,28 @@ pub struct TeamBoosts {
     pub eva: i8,
 }
 
+/// What Transform overwrote (PS `transformInto`), and the species copied.
+#[derive(Debug, Clone)]
+pub struct TransformSave {
+    pub id: PokemonName,
+    pub moves: crate::state::PokemonMoves,
+    pub types: (crate::state::PokemonType, crate::state::PokemonType),
+    /// atk, def, spa, spd, spe.
+    pub stats: [i16; 5],
+    pub weight_kg: f32,
+    /// The species name the pokemon now shows (the target's).
+    pub as_species: &'static str,
+}
+
 /// A slot's cached event-handler effect bits and the inputs outside the
 /// slot they depend on (status, ability, Future Sight / Wish).
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct FxCache {
     pub status: crate::state::PokemonStatus,
     pub ability: crate::engine::abilities::Abilities,
+    pub item: crate::engine::items::Items,
     pub extra: u8,
-    pub fx: u128,
+    pub fx: crate::doubles::events::FxMask,
 }
 
 #[derive(Debug, Clone)]
@@ -457,7 +525,7 @@ pub struct DoublesSide {
     slots: [ActiveSlot; 2],
     /// Per slot: the volatile conditions (`events::vol_mask`) as of the last
     /// read; cleared by `active_mut` / `active_slot_mut`.
-    cond_cache: [std::cell::Cell<Option<u64>>; 2],
+    cond_cache: [std::cell::Cell<Option<u128>>; 2],
     /// Per slot: the event-handler effect bits of the occupant
     /// (`events::slot_fx`), valid while the key fields still match. Cleared
     /// with `cond_cache`.
@@ -502,6 +570,12 @@ pub struct DoublesSide {
     /// Supersweet Syrup already triggered (PS `syrupTriggered`, once per
     /// battle per pokemon).
     pub syrup_triggered: [bool; 6],
+    /// A Mega Evolution was used (PS: `canMegaEvo = false` for the whole side).
+    pub mega_used: bool,
+    /// PS `pokemon.lastItem` per team member (Recycle, Harvest).
+    pub last_item: [Items; 6],
+    /// PS `pokemon.ateBerry` per team member (Belch).
+    pub ate_berry: [bool; 6],
     /// Healing Wish / Lunar Dance slot conditions per active slot (PS
     /// `slotCondition: 'healingwish' | 'lunardance'`): they wait for the next
     /// pokemon switched into that slot.
@@ -520,6 +594,9 @@ pub struct DoublesSide {
     /// Original raw speed of a team member whose `storedStats.spe` was swapped
     /// (Speed Swap); restored by `setSpecies` on switch-in.
     pub saved_speed: [Option<i16>; 6],
+    /// A transformed team member's own species data, restored when it leaves
+    /// the field (PS `transformed`, `clearVolatile` -> `setSpecies(baseSpecies)`).
+    pub transform_save: [Option<Box<TransformSave>>; 6],
 }
 
 impl DoublesSide {
@@ -579,7 +656,7 @@ impl DoublesSide {
 
     /// `compute(slot)`, cached until the slot is next borrowed mutably.
     #[inline]
-    pub fn cached_conds(&self, slot: usize, compute: impl Fn(&ActiveSlot) -> u64) -> u64 {
+    pub fn cached_conds(&self, slot: usize, compute: impl Fn(&ActiveSlot) -> u128) -> u128 {
         if let Some(v) = self.cond_cache[slot].get() {
             debug_assert_eq!(v, compute(&self.slots[slot]), "stale cond_cache");
             return v;
@@ -667,6 +744,26 @@ impl DoublesSide {
 pub struct MoveScratch {
     /// PS `queue.willMove(target)` is false for every other active: Analytic.
     pub analytic_no_move: std::cell::Cell<bool>,
+    /// Slots (bit `side * 2 + slot`) with a move still queued this turn (`queue.willMove`).
+    pub will_move: std::cell::Cell<u8>,
+    /// Slots a Piercing Drill / Unseen Fist hit reached through Protect this move.
+    pub bypass_protect: std::cell::Cell<u8>,
+    /// Focus Band rolls a spread hit already drew (bit slot: rolled, bit slot + 4: saved).
+    pub band_pre: std::cell::Cell<u8>,
+    /// The residual action is running (PS `!queue.peek()`).
+    pub in_residual: std::cell::Cell<bool>,
+    /// The residual `fieldEvent` handler loop is running (draw labels).
+    pub in_field_event: std::cell::Cell<bool>,
+    /// The `selfdestruct: 'always'` user whose move is running (fainted for PS).
+    pub selfdestructing: std::cell::Cell<Option<(Side, crate::state::PokemonIndex)>>,
+    /// The running move's Pressure PP (side, slot, user, move slot, move), still
+    /// owed until `pressure_done`: PS takes it before the hit, so a Leppa Berry
+    /// eaten mid-move sees it.
+    pub pressure_owed: std::cell::Cell<Option<(crate::doubles::state::Side, usize, crate::state::PokemonIndex, crate::state::PokemonMoveIndex, crate::choices::Choices)>>,
+    pub pressure_done: std::cell::Cell<bool>,
+    /// Slots (bit `side * 2 + slot`) whose Berserk / Anger Shell has not yet
+    /// checked this move's damage (`checkedBerserk` false): no healing berry.
+    pub berserk_pending: std::cell::Cell<u8>,
     /// The target the running move resolved to (after any retarget / redirect),
     /// as PS `getMoveTargets` returns it: Pressure's `pressureTargets`. `None`
     /// until `execute_action_inner` resolves it for this action.
@@ -686,6 +783,9 @@ pub struct MoveScratch {
     /// computes its damage (set only then): the last target of the previous
     /// per-target loop, not the substitute holder. Unaware reads it.
     pub sub_active_target: std::cell::Cell<Option<(Side, usize)>>,
+    /// The target that ate its resist berry in the last damage calculation
+    /// (PS `onSourceModifyDamage` -> `eatItem`); consumed by the caller.
+    pub berry_eaten: std::cell::Cell<Option<(Side, usize)>>,
     /// The running move stopped in its BeforeMove handlers (PS runMove
     /// `!willTryMove`), so `runEvent('MoveAborted')` follows.
     pub before_move_aborted: std::cell::Cell<bool>,
@@ -707,7 +807,7 @@ pub struct DoublesState {
     pub tl: MoveScratch,
     /// Union of the four slots' event-handler effect bits (`events`), keyed
     /// by both sides' `ver` and the Future Sight / Wish bits.
-    pub(crate) fx_union: std::cell::Cell<Option<(u32, u32, u8, u128)>>,
+    pub(crate) fx_union: std::cell::Cell<Option<(u32, u32, u8, crate::doubles::events::FxMask)>>,
     /// `sorted_actives`' last untied order, keyed by both sides' `ver`.
     pub(crate) actives_order: std::cell::Cell<Option<((u32, u32), [(Side, u8); 4], u8)>>,
     /// PS `battle.lastMove`: the last move used by anyone (Copycat).
@@ -793,6 +893,8 @@ pub struct DoublesState {
     /// Wonder Room's `onModifyMove` has run since it started (PS fixes the
     /// handler's subOrder only once `state.target` is set).
     pub wonder_room_seen: bool,
+    /// Pokemon whose Fling `fling` volatile drops the item at the next Update.
+    pub fling_pending: Vec<(Side, PokemonIndex)>,
     /// Switch requests this turn made with no answer in the turn's choices:
     /// (side, slot, revive). A step-by-step controller (`run_fuzz_turn`) reads
     /// these to ask for the answer and re-run the turn.
@@ -956,6 +1058,9 @@ pub enum FuzzAction {
         target: i8,
         #[serde(default)]
         struggle: bool,
+        /// Mega Evolve before moving (PS `move N mega`).
+        #[serde(default)]
+        mega: bool,
     },
     /// Do nothing (empty active slot with no replacement available).
     Pass,
@@ -1100,7 +1205,28 @@ static NATURE_IDS: std::sync::LazyLock<FxMap<&'static str, PokemonNature>> =
 static ABILITY_IDS: std::sync::LazyLock<FxMap<&'static str, Abilities>> =
     std::sync::LazyLock::new(|| enum_ids(i16::MAX as usize, |i| Abilities::from(i as i16)));
 static ITEM_IDS: std::sync::LazyLock<FxMap<&'static str, Items>> =
-    std::sync::LazyLock::new(|| enum_ids(256, |i| Items::from(i as u8)));
+    std::sync::LazyLock::new(|| enum_ids(1024, |i| Items::from(i as u16)));
+
+/// Lowercase id of each enum value, indexed by discriminant ("" for NONE):
+/// the fuzz snapshot's species / item / ability ids, without allocating.
+fn enum_names<T: std::fmt::Debug>(n: usize, from: impl Fn(usize) -> T) -> Vec<&'static str> {
+    let mut v: Vec<&'static str> = Vec::new();
+    for i in 0..n {
+        let id = format!("{:?}", from(i)).to_lowercase();
+        if i > 0 && id == "none" {
+            break; // past the last variant: `from` falls back to NONE
+        }
+        v.push(if id == "none" { "" } else { Box::leak(id.into_boxed_str()) });
+    }
+    v
+}
+
+static SPECIES_NAMES: std::sync::LazyLock<Vec<&'static str>> =
+    std::sync::LazyLock::new(|| enum_names(i16::MAX as usize, |i| PokemonName::from(i as i16)));
+static ABILITY_NAMES: std::sync::LazyLock<Vec<&'static str>> =
+    std::sync::LazyLock::new(|| enum_names(i16::MAX as usize, |i| Abilities::from(i as i16)));
+static ITEM_NAMES: std::sync::LazyLock<Vec<&'static str>> =
+    std::sync::LazyLock::new(|| enum_names(1024, |i| Items::from(i as u16)));
 
 fn parse_nature(s: &str) -> PokemonNature {
     lookup_id(&NATURE_IDS, s).unwrap_or(PokemonNature::SERIOUS)
@@ -1365,11 +1491,15 @@ impl DoublesState {
             future_move: [None, None],
             sc_order: Vec::new(),
             syrup_triggered: [false; 6],
+            mega_used: false,
+            last_item: [Items::NONE; 6],
+            ate_berry: [false; 6],
             healing_wish_slot: [false; 2],
             moves_used: [[false; 4]; 6],
             damaged_by: std::array::from_fn(|_| Vec::new()),
             saved_stats: [None; 6],
             saved_speed: [None; 6],
+            transform_save: Default::default(),
         };
         let mut side_two = DoublesSide {
             team: std::array::from_fn(|_| Pokemon::default()),
@@ -1390,11 +1520,15 @@ impl DoublesState {
             future_move: [None, None],
             sc_order: Vec::new(),
             syrup_triggered: [false; 6],
+            mega_used: false,
+            last_item: [Items::NONE; 6],
+            ate_berry: [false; 6],
             healing_wish_slot: [false; 2],
             moves_used: [[false; 4]; 6],
             damaged_by: std::array::from_fn(|_| Vec::new()),
             saved_stats: [None; 6],
             saved_speed: [None; 6],
+            transform_save: Default::default(),
         };
         for (i, m) in teams.a.iter().enumerate().take(6) {
             side_one.team[i] = build_pokemon(m);
@@ -1423,6 +1557,7 @@ impl DoublesState {
             in_move: false,
             queue_cancel: Vec::new(),
             wonder_room_seen: false,
+            fling_pending: Vec::new(),
             side_one,
             side_two,
             weather: StateWeather {
@@ -1552,6 +1687,16 @@ pub struct FullSlot {
     /// Active slot index (0/1) if on field, else null.
     pub active_slot: Option<usize>,
     pub boosts: Boosts,
+    /// Current species / forme id (PS `species.id`, e.g. "absolmega").
+    pub forme: &'static str,
+    /// Held item id ("" = none).
+    pub item: &'static str,
+    /// Current ability id.
+    pub ability: &'static str,
+    /// PP left per move slot.
+    pub pp: Vec<i8>,
+    /// Volatile condition ids while active (sorted), e.g. ["confusion"].
+    pub volatiles: Vec<String>,
 }
 
 /// Side conditions as (id, duration) pairs, ids lowercase (e.g. "reflect").
@@ -1598,6 +1743,11 @@ pub struct FuzzTurnState {
     pub trick_room: bool,
     /// Active pseudo-weather ids (sorted), e.g. ["trickroom"], ["tailwind"].
     pub pseudo_weather: Vec<&'static str>,
+    /// Turns left (PS `duration`) of the weather, terrain and each
+    /// pseudo-weather in `pseudo_weather` order.
+    pub weather_turns: i8,
+    pub terrain_turns: i8,
+    pub pseudo_weather_turns: Vec<i8>,
     pub a_side_conditions: Vec<SideConditionEntry>,
     pub b_side_conditions: Vec<SideConditionEntry>,
     /// Execution order this turn, entries "SIDE<slot>:Species:movename".
@@ -1690,7 +1840,7 @@ pub fn side_condition_entries(sc: &SideConditions) -> Vec<SideConditionEntry> {
 
 /// Snapshot the full state of both sides for fuzz comparison.
 pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzTurnState {
-    let snap_side = |s: &DoublesSide| -> Vec<FullSlot> {
+    let snap_side = |s: &DoublesSide, sd: Side| -> Vec<FullSlot> {
         s.team
             .iter()
             .enumerate()
@@ -1717,13 +1867,57 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
                     }
                 };
                 FullSlot {
-                    species: s.species_names[i],
+                    species: s.transform_save[i].as_ref().map_or(s.species_names[i], |t| t.as_species),
+                    forme: SPECIES_NAMES[p.id as usize],
                     hp: p.hp,
                     maxhp: p.maxhp,
                     fainted: p.hp <= 0,
                     status: normalize_status(p.status),
                     active_slot,
                     boosts,
+                    item: ITEM_NAMES[p.item as usize],
+                    // Gastro Acid keeps the ability id (the engine stores NONE).
+                    ability: match active_slot {
+                        Some(sl) if s.active()[sl].gastro_acid && p.ability == Abilities::NONE => {
+                            ABILITY_NAMES[s.active()[sl].gastro_ability as usize]
+                        }
+                        _ => ABILITY_NAMES[p.ability as usize],
+                    },
+                    pp: [&p.moves.m0, &p.moves.m1, &p.moves.m2, &p.moves.m3]
+                        .iter()
+                        .filter(|m| m.id != Choices::NONE)
+                        .map(|m| m.pp)
+                        .collect(),
+                    volatiles: active_slot
+                        .map(|sl| {
+                            let a = &s.active()[sl];
+                            let mut v = crate::doubles::events::volatile_ids(a);
+                            // Volatiles kept outside `CONDS`.
+                            if a.unburden {
+                                v.push("unburden".to_string());
+                            }
+                            // `trapper`: the other end of a `trapped` link this pokemon made.
+                            let me = Some((sd, PokemonIndex::deserialize(&i.to_string())));
+                            if [&state.side_one, &state.side_two]
+                                .iter()
+                                .any(|o| o.active().iter().any(|x| x.trapped && x.trapper == me && x.pokemon_index.is_some()))
+                            {
+                                v.push("trapper".to_string());
+                            }
+                            // A fired two-turn move's `twoturnmove` lasts until the residual.
+                            if a.twoturn_fired && a.charging.is_none() && !v.iter().any(|x| x == "twoturnmove") {
+                                v.push("twoturnmove".to_string());
+                            }
+                            if a.gem {
+                                v.push("gem".to_string());
+                            }
+                            if a.metronome_vol {
+                                v.push("metronome".to_string());
+                            }
+                            v.sort();
+                            v
+                        })
+                        .unwrap_or_default(),
                 }
             })
             .collect()
@@ -1735,23 +1929,20 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
         v.sort_by(|a, b| a.id.cmp(&b.id));
         v
     };
-    let mut pseudo_weather: Vec<&'static str> = vec![];
-    if state.trick_room.active {
-        pseudo_weather.push("trickroom");
-    }
-    if state.wonder_room.active {
-        pseudo_weather.push("wonderroom");
-    }
-    if state.magic_room.active {
-        pseudo_weather.push("magicroom");
-    }
-    if state.gravity.active {
-        pseudo_weather.push("gravity");
-    }
-    if state.fairy_lock.active {
-        pseudo_weather.push("fairylock");
-    }
-    pseudo_weather.sort();
+    let mut pseudo: Vec<(&'static str, i8)> = [
+        ("trickroom", &state.trick_room),
+        ("wonderroom", &state.wonder_room),
+        ("magicroom", &state.magic_room),
+        ("gravity", &state.gravity),
+        ("fairylock", &state.fairy_lock),
+    ]
+    .iter()
+    .filter(|(_, f)| f.active)
+    .map(|(id, f)| (*id, f.turns_remaining))
+    .collect();
+    pseudo.sort();
+    let pseudo_weather: Vec<&'static str> = pseudo.iter().map(|(id, _)| *id).collect();
+    let pseudo_weather_turns: Vec<i8> = pseudo.iter().map(|(_, t)| *t).collect();
     // pokemon-showdown reports the weather CONDITION id (e.g. "raindance",
     // "sunnyday", "sandstorm"), not the engine's enum name.
     let weather_name = match state.weather.weather_type {
@@ -1767,8 +1958,8 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
     };
     FuzzTurnState {
         turn: state.turn,
-        a: snap_side(&state.side_one),
-        b: snap_side(&state.side_two),
+        a: snap_side(&state.side_one, Side::One),
+        b: snap_side(&state.side_two, Side::Two),
         weather: weather_name,
         terrain: match state.terrain.terrain_type {
             Terrain::NONE => "none",
@@ -1779,6 +1970,9 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
         },
         trick_room: state.trick_room.active,
         pseudo_weather,
+        weather_turns: if state.weather.weather_type == Weather::NONE { 0 } else { state.weather.turns_remaining },
+        terrain_turns: if state.terrain.terrain_type == Terrain::NONE { 0 } else { state.terrain.turns_remaining },
+        pseudo_weather_turns,
         a_side_conditions: sc_entries(&state.side_one.side_conditions, &state.side_one.sc_order),
         b_side_conditions: sc_entries(&state.side_two.side_conditions, &state.side_two.sc_order),
         move_order,

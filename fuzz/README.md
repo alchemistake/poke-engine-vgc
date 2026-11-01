@@ -35,25 +35,34 @@ Options:
    `tester seed + test index`) drives everything *outside* the battle. So test
    #k of `--seed S --count N` is exactly `--seed S+k-1 --count 1`:
    - the **battle seed** (4 × 16-bit words) — fed identically to both simulators,
-   - the two **random teams**: random species (from the format's own species
-     table via `Dex.forFormat(FORMAT)` — `data/mods/champions/formats-data.ts`;
-     CAP/fan-made, Past-gen, Illegal, Mythical and Restricted Legendary species
-     are excluded), 28 random stat points (0–20 per stat, champions
-     semantics), random nature, random ability *within the species' pool*,
-     4 random distinct moves *from the species' gen-9 learnset* (mod data),
-     random gender. No items (none are modeled in the doubles engine
-     yet).
+   - the two **random teams**, always legal for the format (pokemon-showdown
+     `TeamValidator`: Species Clause, Item Clause): random species (every
+     team-legal species and forme of the format's own species table,
+     `Dex.forFormat(FORMAT)`), 66 random stat points (0–32 per stat, champions
+     semantics), random nature, random ability *within the species' pool*, up
+     to 4 random distinct moves *from the species' move pool*
+     (`getMovePool`), random gender, and a random legal held item (1 in 20
+     holds none, never one item twice per team). **Mega formes** (-Mega,
+     -Mega-X/Y/Z) are picks of their own: the sheet has the base species
+     holding that Mega Stone; no other pick ever holds a Mega Stone.
    - team members are printed with both the raw `stat points: (…)` and the
      effective `stats (level 50, after stat points + nature): (hp: …, atk: …, …)`
      so the expected stat block is visible up front.
    - **team preview**: random 4 of 6, random order (first two are the leads).
    - **in-game actions**: each turn, each active picks a uniformly random
-     legal move and random target; switch requests pick a random legal
-     replacement; fainted slots without a replacement send `pass`.
+     legal move and random target (1 in 8 single-target moves aim at the
+     ally), Mega Evolves half of the time it is offered (one per side), and 1
+     in 12 actions is a voluntary switch instead; switch requests pick a
+     random legal replacement; fainted slots without a replacement send
+     `pass`.
+   - the controller seed mixes in `SEED_SPACE` (fuzz.js): a harness change
+     that makes different battles gets a new one, so seed N is never an old
+     harness's battle.
 2. The PS battle is driven turn by turn; after every turn a **full-state
-   snapshot** is taken (HP/maxHP, status, faints, active slot, stat boosts
-   for all battle-team Pokémon; side conditions; weather; terrain;
-   pseudo-weather; move execution order).
+   snapshot** is taken (forme, HP/maxHP, status, faints, active slot, stat
+   boosts, held item, current ability, PP per move slot for all battle-team
+   Pokémon; volatiles of active Pokémon; side conditions; weather, terrain
+   and pseudo-weather with their turns left; move execution order).
 3. **Stepwise comparison**: first the **initial state (turn 0)** — right after
    team preview, before any move — is compared (stat calc / max HP, species
    data, leads, starting conditions), so basic setup errors fail before
@@ -143,6 +152,20 @@ turn snapshot) with PS's: the offered moves, their PP, which are disabled
 (hidden Imprison ones included) and whether the pokemon is trapped.
 Mismatches are grouped by kind with examples. It does not change the fuzz
 score; the comparator ignores those snapshot fields.
+
+## Surface audit (`surface_audit.js`)
+
+```shell
+node fuzz/surface_audit.js [--json]
+```
+
+Static check, no battle run: every species, in-battle forme (Mega picks,
+battle-only formes), ability, move and held item the generator can produce,
+against what the engine knows from its source (`species_data`, the
+`Choices` / `Abilities` / `Items` enums, `ps_move_target`) and whether the
+doubles engine references it at all. Run it before a fuzz loop: each entry
+it lists fails battles for a known reason. Exit code 1 when anything is
+missing.
 
 ## Speed
 

@@ -31,6 +31,15 @@ const PS_DIR = path.resolve(__dirname, '..', '..', 'pokemon-showdown');
 const { genTeam, effectiveStats } = require('./teams.js');
 
 const FORMAT = 'gen9championsvgc2026regmc';
+// In-game choice mix: 1 in SWITCH_CHANCE actions is a voluntary switch (when
+// the pokemon is free to leave); 1 in ALLY_TARGET_CHANCE single-target moves
+// aims at the ally.
+const SWITCH_CHANCE = 12;
+// Mixed into every test's controller seed. Change it when the harness makes
+// different battles (team rules, choice mix), so old seeds are never re-run.
+// v2 (2026-11-01): items, Mega picks, 66 stat points, switches, ally targets.
+const SEED_SPACE = [0x6d2b, 0x79f1, 0x1c3e, 0x4a97];
+const ALLY_TARGET_CHANCE = 8;
 
 // pokemon-showdown, loaded on first use: a sweep whose PS battles are all
 // cached never loads it. MOD_DEX is the format's own dex (applies
@@ -139,6 +148,11 @@ function normalizePSState(snap) {
       fainted: p.fainted,
       activeSlot: p.activeSlot < 0 ? null : p.activeSlot,
       boosts: { ...p.boosts },
+      forme: squash(p.forme),
+      item: p.item,
+      ability: p.ability,
+      pp: p.pp,
+      volatiles: p.volatiles,
     })),
     sideConditions: side.sideConditions.map((c) => ({ id: c.id, duration: c.duration })),
   });
@@ -150,6 +164,9 @@ function normalizePSState(snap) {
     terrain: (TERRAIN_MAP[snap.terrain] || snap.terrain).toLowerCase(),
     trickRoom: snap.trickRoom,
     pseudoWeather: snap.pseudoWeather.map(squash).sort(),
+    weatherTurns: snap.weatherTurns,
+    terrainTurns: snap.terrainTurns,
+    pseudoWeatherTurns: snap.pseudoWeatherTurns,
     moveOrder: snap.moveOrder.map(squashOrderEntry),
     moveOrderRaw: snap.moveOrder,
   };
@@ -174,6 +191,11 @@ function normalizePETurn(turn) {
         acc: p.boosts.acc,
         eva: p.boosts.eva,
       },
+      forme: squash(p.forme),
+      item: p.item,
+      ability: p.ability,
+      pp: p.pp,
+      volatiles: p.volatiles,
     })),
     sideConditions: sc.map((c) => ({ id: c.id, duration: c.duration })),
   });
@@ -185,6 +207,9 @@ function normalizePETurn(turn) {
     terrain: (TERRAIN_MAP[turn.terrain] || turn.terrain).toLowerCase(),
     trickRoom: turn.trick_room,
     pseudoWeather: (turn.pseudo_weather || []).map(squash).sort(),
+    weatherTurns: turn.weather_turns,
+    terrainTurns: turn.terrain_turns,
+    pseudoWeatherTurns: turn.pseudo_weather_turns,
     moveOrder: (turn.move_order || []).map(squashOrderEntry),
     moveOrderRaw: turn.move_order || [],
   };
@@ -251,6 +276,11 @@ function makeSnapshot(battle, logIdx, orderA, orderB) {
         acc: p.boosts.accuracy || 0,
         eva: p.boosts.evasion || 0,
       },
+      forme: p.species.id,
+      item: p.item || '',
+      ability: p.ability || '',
+      pp: p.moveSlots.map((m) => m.pp),
+      volatiles: side.active.includes(p) && !p.fainted ? Object.keys(p.volatiles).sort() : [],
       })),
       sideConditions: Object.keys(side.sideConditions)
         .map((id) => ({ id, duration: side.sideConditions[id].duration }))
@@ -276,6 +306,10 @@ function makeSnapshot(battle, logIdx, orderA, orderB) {
     terrain: battle.field.terrain || 'none',
     trickRoom: !!battle.field.pseudoWeather.trickroom,
     pseudoWeather: Object.keys(battle.field.pseudoWeather),
+    weatherTurns: battle.field.weather ? battle.field.weatherState.duration || 0 : 0,
+    terrainTurns: battle.field.terrain ? battle.field.terrainState.duration || 0 : 0,
+    pseudoWeatherTurns: Object.keys(battle.field.pseudoWeather).sort()
+      .map((id) => battle.field.pseudoWeather[id].duration || 0),
     moveOrder,
   };
 }
@@ -475,15 +509,18 @@ function stepPSBattle(battleSeed, teamA, teamB, controller, onInit, onTurn) {
 
   PS_TRACE = TRACE_DRAWS ? tracePSDraws(battle) : null;
 
+  // `psPos`: the switch target's CURRENT index in PS's side.pokemon.
   const actsToStr = (acts) =>
     acts
       .filter((act) => act.kind !== 'pass')
       .map((act) =>
         act.kind === 'move'
-          ? `move ${(act.choiceIdx ?? act.slot) + 1}${act.hasTarget ? ` ${act.target}` : ''}`
-          : `switch ${act.position + 1}`
+          ? `move ${(act.choiceIdx ?? act.slot) + 1}${act.hasTarget ? ` ${act.target}` : ''}${act.mega ? ' mega' : ''}`
+          : `switch ${act.psPos + 1}`
       )
       .join(', ');
+  // Strip harness-only fields before a choice is recorded for the engine.
+  const forEngine = (acts) => acts.map(({ psPos, ...act }) => act);
 
   // A move whose target the player does not choose (self, spread, field).
   const NO_TARGET = 0;
@@ -494,10 +531,25 @@ function stepPSBattle(battleSeed, teamA, teamB, controller, onInit, onTurn) {
     const reqs = battle.getRequests('move');
     const req = reqs[sideIdx];
     if (!req || !req.active) throw new Error('no move request for side ' + sideIdx);
+    const order = sideIdx === 0 ? orderA : orderB;
+    const switchingIn = new Set(); // bench pokemon already picked by the other slot
+    let megaPicked = false; // one Mega Evolution per side
     return side.active.map((p, slot) => {
       // Fainted slot with no replacement: pass (no choice is sent for it).
       if (!p || p.fainted || p.hp <= 0) return { kind: 'pass' };
       const data = req.active[slot];
+      // Voluntary switch, now and then, when the pokemon is free to leave.
+      const bench = side.pokemon
+        .map((q, pos) => ({ q, pos }))
+        .filter((x) => !x.q.fainted && x.q.hp > 0 && !side.active.includes(x.q) && !switchingIn.has(x.q));
+      if (bench.length > 0 && !data.trapped && !data.maybeTrapped && controller.random(SWITCH_CHANCE) === 0) {
+        const pick = bench[controller.random(bench.length)];
+        switchingIn.add(pick.q);
+        return { kind: 'switch', position: order.get(pick.q), psPos: pick.pos };
+      }
+      // Mega Evolve with the move, half of the time it is offered.
+      const mega = !megaPicked && !!data.canMegaEvo && controller.random(2) === 0;
+      if (mega) megaPicked = true;
       // Valid target locations for each choosable target type. PS uses SIGNED
       // locations: positive = foe slot (1..2), negative = own slot (-(slot+1)).
       const ally = side.active[1 - slot];
@@ -506,7 +558,7 @@ function stepPSBattle(battleSeed, teamA, teamB, controller, onInit, onTurn) {
         switch (targetType) {
         case 'normal':
         case 'any':
-          return [1, 2]; // we only ever aim at the foe
+          return [1, 2]; // the foes; the ally now and then (see the pick below)
         case 'adjacentFoe':
           return [slot + 1]; // the foe directly across
         case 'adjacentAlly':
@@ -557,11 +609,17 @@ function stepPSBattle(battleSeed, teamA, teamB, controller, onInit, onTurn) {
           struggle: !!m && m.id === 'struggle',
           target,
           hasTarget: target !== NO_TARGET,
+          mega,
         };
       }
       const pick = valid[controller.random(valid.length)];
       const t = targetsFor(pick.m.target);
-      const target = t[controller.random(t.length)];
+      let target = t[controller.random(t.length)];
+      // A single-target move aimed at the ally (Beat Up, Pollen Puff, ...).
+      if ((pick.m.target === 'normal' || pick.m.target === 'any') && allyAlive &&
+          controller.random(ALLY_TARGET_CHANCE) === 0) {
+        target = -(2 - slot);
+      }
       return {
         kind: 'move',
         // `slot` is the pokemon's real move slot (what the engine uses);
@@ -571,6 +629,7 @@ function stepPSBattle(battleSeed, teamA, teamB, controller, onInit, onTurn) {
         choiceIdx: pick.i,
         target,
         hasTarget: target !== NO_TARGET,
+        mega,
       };
     });
   };
@@ -628,7 +687,7 @@ function stepPSBattle(battleSeed, teamA, teamB, controller, onInit, onTurn) {
         const side = si === 0 ? battle.p1 : battle.p2;
         for (let attempt = 0; ; attempt++) {
           const acts = moveActionsFor(si);
-          cur[key] = acts;
+          cur[key] = forEngine(acts);
           try {
             battle.choose(sid, actsToStr(acts));
             return;
@@ -929,6 +988,7 @@ function formatTeamLabeled(team, battleTeam) {
   team.forEach((m, i) => {
     lines.push(`  [${i}] ${m.species}:`);
     lines.push(`      ability: ${m.ability}`);
+    lines.push(`      item: ${m.item || '(none)'}`);
     lines.push(`      gender: ${m.gender}`);
     lines.push(`      nature: ${m.nature}`);
     lines.push(`      stat points: (hp: ${m.evs.hp}, atk: ${m.evs.atk}, def: ${m.evs.def}, spa: ${m.evs.spa}, spd: ${m.evs.spd}, spe: ${m.evs.spe})`);
@@ -983,7 +1043,7 @@ function formatChoicesLabeled(turns, ps, upTo) {
             else if (act.target === -(slot + 1)) targetLabel = 'self';
             else if (act.target < 0) targetLabel = `ally slot ${-(act.target)}`;
           }
-          lines.push(`    ${tag} slot ${slot}: move: ${mvName}  target: ${targetLabel}`);
+          lines.push(`    ${tag} slot ${slot}: move: ${mvName}  target: ${targetLabel}${act.mega ? '  + Mega Evolution' : ''}`);
         } else if (act.kind === 'switch') {
           lines.push(
             `    ${tag} slot ${slot}: switch: in position ${act.position + 1} (${
@@ -1119,7 +1179,7 @@ function compactReport(opts, testIdx, info) {
     if (!bt) return;
     out.push(`team ${tag}:`);
     bt.forEach((m, i) =>
-      out.push(`  [${i}] ${m.species} (${m.ability}): ${m.moves.map(prettyMove).join(', ')}`)
+      out.push(`  [${i}] ${m.species} @ ${m.item || '(no item)'} (${m.ability}): ${m.moves.map(prettyMove).join(', ')}`)
     );
   };
   teamLine('A', info.ps && info.ps.battleTeamA);
@@ -1295,17 +1355,16 @@ const FAST_CHUNK_CACHED = 128;
 // The controller PRNG, battle seed and teams of one test (all derived from
 // the test seed, so a test can be rebuilt identically).
 function makeTest(testSeed) {
-  // Controller seed words. The low 16 bits give the original seeds 0..65535
-  // (unchanged, so old scores and reports stay valid); the high bits
-  // (`hi`, 0 below 65536) are mixed into words 2 and 3, so every seed up to
-  // 2^32 - 1 is a distinct battle. Word 0 gives `lo`, word 3 then gives `hi`.
+  // Controller seed words: the low and high 16 bits of the test seed, mixed
+  // with SEED_SPACE, so every seed up to 2^32 - 1 is a distinct battle and
+  // no seed replays a battle of an older harness (new SEED_SPACE = new games).
   const lo = testSeed & 0xffff;
   const hi = Math.floor(testSeed / 65536) & 0xffff;
   const controller = new (ps().PRNG)([
-    lo,
-    (lo + 1) & 0xffff,
-    ((lo + 2) & 0xffff) ^ ((hi * 40503) & 0xffff),
-    ((lo + 3) & 0xffff) ^ hi,
+    lo ^ SEED_SPACE[0],
+    ((lo + 1) & 0xffff) ^ SEED_SPACE[1],
+    ((lo + 2) & 0xffff) ^ ((hi * 40503) & 0xffff) ^ SEED_SPACE[2],
+    ((lo + 3) & 0xffff) ^ hi ^ SEED_SPACE[3],
   ]);
   // 1. Battle seed (4 x 16-bit words), from the controller stream.
   const battleSeed = [0, 0, 0, 0].map(() => controller.random(65536));
@@ -1645,6 +1704,7 @@ function main() {
 if (require.main === module && !PARALLEL_PARENT) main();
 
 module.exports = {
+  main,
   ps,
   makeTest,
   stepPSBattle,

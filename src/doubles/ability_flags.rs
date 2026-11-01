@@ -131,6 +131,7 @@ pub fn ability_flags(a: Abilities) -> u16 {
         Abilities::WELLBAKEDBODY => BREAKABLE,
         Abilities::ZEROTOHERO => CANTSUPPRESS | FAILROLEPLAY | FAILSKILLSWAP | NOENTRAIN | NORECEIVER | NOTRACE | NOTRANSFORM,
         Abilities::EELEVATE => BREAKABLE,
+        Abilities::AURAGUARD => BREAKABLE,
         _ => 0,
     }
 }

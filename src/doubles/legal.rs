@@ -84,7 +84,10 @@ fn move_disabled(state: &DoublesState, side: Side, slot: usize, idx: PokemonInde
         || a.encore.is_some_and(|(e, _)| e != m.id)
         // PS data/items.ts choicescarf -> `choicelock` `onDisableMove`.
         || (p.item == Items::CHOICESCARF
-            && a.last_move.is_some_and(|l| l != m.id && l != Choices::STRUGGLE && p.moves.into_iter().any(|k| k.id == l)))
+            && a.choice_lock.is_some_and(|l| l != m.id && p.moves.into_iter().any(|k| k.id == l)))
+        // PS data/moves.ts belch / stuffcheeks `onDisableMove`.
+        || (m.id == Choices::BELCH && !state.side(side).ate_berry[idx as usize])
+        || (m.id == Choices::STUFFCHEEKS && !crate::doubles::item_data::is_berry(p.item))
         // PS data/moves.ts gigatonhammer / bloodmoon `onDisableMove`.
         || (matches!(m.id, Choices::GIGATONHAMMER | Choices::BLOODMOON) && a.last_move == Some(m.id))
 }
@@ -184,7 +187,7 @@ pub fn slot_options(state: &DoublesState, side: Side, slot: usize) -> Option<Slo
     // is trapped anyway (`getMoveRequestData`).
     let a = &s.active()[slot];
     let ghost = p.has_type(&PokemonType::GHOST) || a.added_type == PokemonType::GHOST;
-    let trap_sources = try_trap_calls(state, side, slot) + a.no_retreat as usize;
+    let trap_sources = try_trap_calls(state, side, slot) + a.no_retreat_trap as usize;
     let trapped = locked.is_some()
         || (!ghost && trap_sources > 0 && p.ability != crate::engine::abilities::Abilities::RUNAWAY);
     let switches = if trapped {

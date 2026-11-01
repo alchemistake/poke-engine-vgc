@@ -13,7 +13,7 @@
 // conditions in data/conditions.ts.
 const path = require('path');
 const { Dex } = require(path.resolve(__dirname, '../../pokemon-showdown/dist/sim'));
-const { buildSpeciesPool } = require('./teams.js');
+const { buildSpeciesPool, buildItemPool } = require('./teams.js');
 
 const d = Dex.forFormat('gen9championsvgc2026regmc');
 const pool = buildSpeciesPool(d);
@@ -35,6 +35,10 @@ const add = (id, kind, eff) => {
   effects.push([id, kind, eff]);
 };
 for (const id of [...abilities].sort()) add(id, 'Ability', d.abilities.get(id));
+// Held items: the pool's regular items and the Mega Stones its picks hold.
+const items = new Set(buildItemPool(d).map((n) => d.items.get(n).id));
+for (const { stone } of pool) if (stone) items.add(d.items.get(stone).id);
+for (const id of [...items].sort()) add(id, 'Item', d.items.get(id));
 for (const id of ['brn', 'par', 'slp', 'frz', 'psn', 'tox']) add(id, 'Status', d.conditions.get(id));
 for (const id of ['confusion', 'flinch', 'trapped', 'partiallytrapped', 'lockedmove', 'twoturnmove',
   'mustrecharge', 'futuremove', 'stall', 'choicelock', 'rolloutstorage']) {
@@ -56,7 +60,7 @@ for (const id of [...moves].sort()) {
   else add(id, 'Volatile', c); // volatileStatus or added by code (dig, roost, ...)
 }
 
-const SUB = { Status: 0, Volatile: 2, Slot: 3, Side: 4, Field: 5, Weather: 5, Ability: 7 };
+const SUB = { Status: 0, Volatile: 2, Slot: 3, Side: 4, Field: 5, Weather: 5, Ability: 7, Item: 8 };
 const SKIP_EVENTS = new Set(['Start', 'End', 'Restart', 'Residual', 'SideStart', 'SideEnd', 'SideRestart',
   'SideResidual', 'FieldStart', 'FieldEnd', 'FieldRestart', 'FieldResidual', 'Copy']);
 const table = new Map(); // callback -> rows
@@ -94,6 +98,7 @@ out.push('    Slot,');
 out.push('    Side,');
 out.push('    Field,');
 out.push('    Weather,');
+out.push('    Item,');
 out.push('}');
 out.push('');
 out.push('/// One PS event handler: the effect id and its `resolvePriority` sort keys');

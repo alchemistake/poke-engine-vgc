@@ -359,6 +359,7 @@ define_enum_with_from_str! {
         PIERCINGDRILL,
         EELEVATE,
         FIREMANE,
+        AURAGUARD,
     },
     default = NONE
 }

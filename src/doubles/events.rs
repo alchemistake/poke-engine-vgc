@@ -205,6 +205,12 @@ pub(crate) fn volatile_ids(a: &crate::doubles::state::ActiveSlot) -> Vec<String>
     if a.pursuit_vol {
         v.push("pursuit".to_string());
     }
+    if a.commanding {
+        v.push("commanding".to_string());
+    }
+    if a.commanded.is_some() {
+        v.push("commanded".to_string());
+    }
     // Tar Shot / Powder volatiles (handled outside `CONDS`).
     if a.tar_shot {
         v.push("tarshot".to_string());

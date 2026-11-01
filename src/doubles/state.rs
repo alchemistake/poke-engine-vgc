@@ -249,6 +249,13 @@ pub struct ActiveSlot {
     /// `tarshot` volatile: Fire moves get one more effectiveness step
     /// (`onEffectiveness`). PS data/moves.ts tarshot.condition.
     pub tar_shot: bool,
+    /// Commander's `commanding` volatile (Tatsugiri inside its Dondozo ally):
+    /// skips its actions, moves miss it, cannot be dragged out.
+    /// PS data/conditions.ts commanding.
+    pub commanding: bool,
+    /// Commander's `commanded` volatile (Dondozo): the Tatsugiri's team index.
+    /// PS data/conditions.ts commanded.
+    pub commanded: Option<PokemonIndex>,
     /// `powder` volatile (duration 1): the holder's Fire move fails and hurts
     /// it 1/4 max HP (`onTryMove`). PS data/moves.ts powder.condition.
     pub powder: bool,
@@ -520,6 +527,8 @@ impl ActiveSlot {
             cursed: false,
             nightmare: false,
             tar_shot: false,
+            commanding: false,
+            commanded: None,
             powder: false,
             bp_double: false,
             being_called_back: false,

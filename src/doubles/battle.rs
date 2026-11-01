@@ -2101,6 +2101,11 @@ pub fn run_fuzz_turn(
                 Some(sl) => action.slot = sl,
                 None => continue,
             }
+            // Commander: `queue.cancelAction(tatsugiri)` / commanding
+            // `onBeforeTurn`: a commanding Tatsugiri never acts.
+            if state.side(action.side).active()[action.slot].commanding {
+                continue;
+            }
             if rng.trace {
                 rng.context = format!(
                     "turn {}: {}{} {} {}",
@@ -12086,12 +12091,14 @@ fn execute_move_body(
 
         // PS `forceSwitch` step (after secondaries): Roar / Whirlwind /
         // Dragon Tail / Circle Throw flag the target to be dragged out.
-        // TODO(PS parity): Ingrain, Commander, Dynamax block it too.
+        // Commander's volatiles `onDragOut` block it too.
         if choice.force_switch && !move_failed {
             if let Some(d) = state.side(target_side).slot_pokemon(target_slot) {
                 // Ingrain `onDragOut`: blocks phazing.
                 let blocked = matches!(d.ability, Abilities::SUCTIONCUPS | Abilities::GUARDDOG)
-                    || state.side(target_side).active()[target_slot].ingrain;
+                    || state.side(target_side).active()[target_slot].ingrain
+                    || state.side(target_side).active()[target_slot].commanding
+                    || state.side(target_side).active()[target_slot].commanded.is_some();
                 let attacker_alive = state.side(side).slot_pokemon(slot).map(|p| p.hp > 0).unwrap_or(false);
                 if d.hp > 0 && attacker_alive && !blocked && !possible_switches(state, target_side).is_empty() {
                     state.side_mut(target_side).slot_scratch_mut(target_slot).drag_out = true;
@@ -12746,7 +12753,8 @@ fn execute_move_body(
                     use_item(state, rng, ts, tsl, ti, false);
                     let u = state.side(side).team_member(idx);
                     let blocked = matches!(u.ability, Abilities::SUCTIONCUPS | Abilities::GUARDDOG)
-                        || state.side(side).active()[slot].ingrain;
+                        || state.side(side).active()[slot].ingrain
+                        || state.side(side).active()[slot].commanded.is_some();
                     if !blocked {
                         state.side_mut(side).slot_scratch_mut(slot).drag_out = true;
                     }
@@ -12821,6 +12829,21 @@ fn execute_move_body(
         apply_boosts(state, rng, side, idx, &StatBoosts { attack: 3, ..Default::default() }, false);
     }
 
+    // Order Up `onAfterMoveSecondarySelf`: a commanded user gets +1 Atk
+    // (Curly), Def (Droopy) or Spe (Stretchy) from its Tatsugiri's forme.
+    // PS data/moves.ts orderup.
+    if choice.move_id == Choices::ORDERUP && hits_done > 0 {
+        if let Some(ti) = state.side(side).active()[slot].commanded {
+            use crate::pokemon::PokemonName as N;
+            let b = match state.side(side).team_member(ti).id {
+                N::TATSUGIRIDROOPY | N::TATSUGIRIDROOPYMEGA => StatBoosts { defense: 1, ..Default::default() },
+                N::TATSUGIRISTRETCHY | N::TATSUGIRISTRETCHYMEGA => StatBoosts { speed: 1, ..Default::default() },
+                _ => StatBoosts { attack: 1, ..Default::default() },
+            };
+            apply_boosts(state, rng, side, idx, &b, false);
+        }
+    }
+
     // Self-destruct moves faint the user after dealing damage.
     // Healing Wish / Lunar Dance: add the slot condition before the user
     // faints (PS data/moves.ts healingwish `slotCondition`).
@@ -12867,7 +12890,9 @@ fn execute_move_body(
         // Baton Pass `onHit`: `-fail` without a replacement.
         state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
     }
+    // A commanded Dondozo never switches out (PS `!source.volatiles['commanded']`).
     if (self_switch || baton || shed)
+        && state.side(side).active()[slot].commanded.is_none()
         && state.side(side).slot_pokemon(slot).map(|p| p.hp > 0).unwrap_or(false)
         && state.side(side).find_replacement().is_some()
     {
@@ -16363,6 +16388,11 @@ fn semi_invulnerable_blocks(
     tslot: usize,
 ) -> bool {
     let t = &state.side(ts).active()[tslot];
+    // A commanding Tatsugiri dodges every move but Helping Hand
+    // (PS sim/battle-actions.ts hitStepInvulnerabilityEvent).
+    if t.commanding {
+        return mv != Choices::HELPINGHAND;
+    }
     // Sky Drop (PS data/moves.ts skydrop.condition `onAnyInvulnerability`): the
     // user and the lifted target, except the user's hit on its target and the
     // anti-air moves.
@@ -16689,7 +16719,8 @@ fn future_move_hit(
                 use_item(state, rng, ts, tslot, didx, false);
                 let u = state.side(ss).team_member(si);
                 let blocked = matches!(u.ability, Abilities::SUCTIONCUPS | Abilities::GUARDDOG)
-                    || state.side(ss).active()[sslot].ingrain;
+                    || state.side(ss).active()[sslot].ingrain
+                    || state.side(ss).active()[sslot].commanded.is_some();
                 if !blocked {
                     state.side_mut(ss).slot_scratch_mut(sslot).drag_out = true;
                 }
@@ -21566,7 +21597,49 @@ fn end_nightmares(state: &mut DoublesState) {
     }
 }
 
+/// Commander `onUpdate` (PS data/abilities.ts commander): a Tatsugiri with
+/// Commander next to a Dondozo that is not commanded yet goes inside it
+/// (`commanding`), and the Dondozo gets `commanded` (+2 to every stat). The
+/// Tatsugiri comes out when its ally is gone.
+/// TODO(PS parity): Update handler order, `switchFlag` checks, Neutralizing Gas.
+fn commander_update(state: &mut DoublesState, rng: &mut Gen5Rng) {
+    use crate::pokemon::PokemonName as N;
+    for sd in [Side::One, Side::Two] {
+        for sl in 0..2 {
+            let Some(i) = state.side(sd).active()[sl].pokemon_index else { continue };
+            let p = state.side(sd).team_member(i);
+            if p.hp <= 0 || p.ability != Abilities::COMMANDER {
+                continue;
+            }
+            let tatsu = matches!(
+                p.id,
+                N::TATSUGIRI | N::TATSUGIRIDROOPY | N::TATSUGIRISTRETCHY | N::TATSUGIRICURLYMEGA
+                    | N::TATSUGIRIDROOPYMEGA | N::TATSUGIRISTRETCHYMEGA
+            );
+            let ally = state.side(sd).active()[1 - sl].pokemon_index.filter(|&a| state.side(sd).team_member(a).hp > 0);
+            let dondozo = ally.filter(|&a| state.side(sd).team_member(a).id == N::DONDOZO);
+            let commanding = state.side(sd).active()[sl].commanding;
+            match dondozo {
+                Some(a) if tatsu => {
+                    if !commanding && state.side(sd).active()[1 - sl].commanded.is_none() {
+                        state.side_mut(sd).active_slot_mut(sl).commanding = true;
+                        state.side_mut(sd).active_slot_mut(1 - sl).commanded = Some(i);
+                        let b = StatBoosts { attack: 2, defense: 2, special_attack: 2, special_defense: 2, speed: 2, ..Default::default() };
+                        apply_boosts_from(state, rng, sd, a, &b, false, false);
+                    }
+                }
+                _ => {
+                    if commanding {
+                        state.side_mut(sd).active_slot_mut(sl).commanding = false;
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn each_event_update(state: &mut DoublesState, rng: &mut Gen5Rng) {
+    commander_update(state, rng);
     release_sky_drops(state);
     end_nightmares(state);
     for sd in [Side::One, Side::Two] {

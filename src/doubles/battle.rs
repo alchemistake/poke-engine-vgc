@@ -18655,6 +18655,8 @@ enum ResidualKind {
     Pickup(Side, usize),
     /// White Herb `onResidual` (order 29).
     WhiteHerb(Side, usize),
+    /// Mirror Herb `onResidual` (order 29): use the herb once a foe's raise was copied.
+    MirrorHerb(Side, usize),
     /// Sticky Barb `onResidual` (order 28, subOrder 3): 1/8 max HP damage.
     StickyBarb(Side, usize),
     /// Berry / Gold Berry `onResidual` (order 10): below half HP, eat it
@@ -19103,6 +19105,7 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
                 Items::BERRY | Items::GOLDBERRY => push(10, speed, 8, ResidualKind::Gen2HealBerry(side, slot)),
                 Items::MICLEBERRY => push(NO_ORDER, speed, 8, ResidualKind::MicleEat(side, slot)),
                 Items::WHITEHERB => push(29, speed, 8, ResidualKind::WhiteHerb(side, slot)),
+                Items::MIRRORHERB => push(29, speed, 8, ResidualKind::MirrorHerb(side, slot)),
                 _ => {}
             }
             if p.ability == Abilities::PICKUP {
@@ -19887,7 +19890,7 @@ fn end_of_turn(
                     }
                 }
             }
-            ResidualKind::OpportunistFlush(side, slot) => flush_opportunist(state, rng, side, slot),
+            ResidualKind::OpportunistFlush(side, slot) => flush_opportunist_ability(state, rng, side, slot),
             ResidualKind::SideDuration(side, which) => {
                 let d = side_condition_duration_mut(state, side, which);
                 if *d > 0 {
@@ -20339,6 +20342,8 @@ fn end_of_turn(
             ResidualKind::WhiteHerb(side, slot) => {
                 white_herb(state, rng, side, slot);
             }
+            // Mirror Herb `onResidual` (order 29). PS data/items.ts mirrorherb.
+            ResidualKind::MirrorHerb(side, slot) => flush_mirror_herb(state, rng, side, slot),
             ResidualKind::MicleEat(side, slot) => {
                 let Some(idx) = state.side(side).active()[slot].pokemon_index else { continue };
                 let p = state.side(side).team_member(idx);

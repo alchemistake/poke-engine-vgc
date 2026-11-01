@@ -12852,11 +12852,13 @@ fn ps_grounded(state: &DoublesState, side: Side, slot: usize) -> bool {
 /// Grassy Glide `onModifyPriority`: +1 in Grassy Terrain for a grounded user
 /// (PS data/moves.ts grassyglide).
 /// Ability `onModifyPriority`. PS data/abilities.ts prankster (+1 on Status
-/// moves), galewings (+1 on Flying moves at full HP).
+/// moves), galewings (+1 on Flying moves at full HP), triage (+3 on `heal`-flag
+/// moves).
 fn ability_priority_boost(p: &crate::state::Pokemon, choice: &Choice) -> i8 {
     match p.ability {
         Abilities::PRANKSTER => (choice.category == MoveCategory::Status) as i8,
         Abilities::GALEWINGS => (choice.move_type == PokemonType::FLYING && p.hp == p.maxhp) as i8,
+        Abilities::TRIAGE => 3 * choice.flags.heal as i8,
         _ => 0,
     }
 }

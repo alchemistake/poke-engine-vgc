@@ -752,6 +752,12 @@ function stepPSBattle(battleSeed, teamA, teamB, controller, onInit, onTurn) {
       throw new Error('unexpected requestState: ' + battle.requestState);
     }
 
+    // A switch answered during the send-out (Eject Pack) leads to turn 1's
+    // request before any turn was played: no snapshot (the engine answers it
+    // from `pre_switches` at the start of turn 1).
+    if (!battle.ended && battle.requestState === 'move' && battle.turn !== snapshotTurn && turns.length === 0) {
+      snapshotTurn = battle.turn;
+    }
     // Turn boundary: a new 'move' request (turn advanced) or battle ended.
     if (battle.ended || (battle.requestState === 'move' && battle.turn !== snapshotTurn)) {
       snapshotTurn = battle.turn;

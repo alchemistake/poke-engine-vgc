@@ -2745,8 +2745,16 @@ pub fn run_battle_fuzz(
 ) -> FuzzBattleResult {
     let mut turn_states: Vec<crate::doubles::state::FuzzTurnState> = Vec::new();
     start_fuzz_battle(state, rng);
+    // Turn 0: the initial state right after the leads are sent out (stat
+    // calc, species data, leads). Compared before any turn is simulated.
+    if state.record {
+        let mut init = fuzz_snapshot(state, Vec::new());
+        init.turn = 0;
+        turn_states.push(init);
+    }
     // An Eject Pack used during the send-out switches its holder out before
-    // turn 1 (PS asks for the switch at once).
+    // turn 1 (PS asks for the switch at once),
+    // after the turn-0 snapshot (PS takes it before the answer).
     {
         for sw in pre_switches {
             let sd = if sw.side == "a" { Side::One } else { Side::Two };
@@ -2761,13 +2769,6 @@ pub fn run_battle_fuzz(
             modify_boost_ties(state, rng, sd, sw.slot);
             run_switch_in(state, rng, sd, sw.slot, pos);
         }
-    }
-    // Turn 0: the initial state right after the leads are sent out (stat
-    // calc, species data, leads). Compared before any turn is simulated.
-    if state.record {
-        let mut init = fuzz_snapshot(state, Vec::new());
-        init.turn = 0;
-        turn_states.push(init);
     }
 
     let limit = stop_after.unwrap_or(u32::MAX);

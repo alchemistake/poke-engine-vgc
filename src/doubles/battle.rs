@@ -1552,6 +1552,10 @@ pub fn start_fuzz_battle(state: &mut DoublesState, rng: &mut Gen5Rng) {
     // (`onStart` abilities such as Sand Stream / Snow Warning) run fastest
     // first, so the slower lead's weather is the one that stays.
     let lead_order = sorted_actives(state, rng, "speed tie (switch-in)");
+    // Tera Shift `onSwitchInPriority` 2 runs before every lead's Start.
+    for &(side, slot) in &lead_order {
+        tera_shift(state, side, slot);
+    }
     for (side, slot) in lead_order {
         if apply_on_switch_abilities(state, side, slot, rng) {
             // Terrain just set (e.g. Grassy Surge): `eachEvent("TerrainChange")`.
@@ -3682,6 +3686,7 @@ fn execute_action_body(
     }
     state.tl.will_move.set(will_move);
     state.tl.bypass_protect.set(0);
+    state.tl.tera_shell_resisted.set(0);
     state.tl.pressure_target.set(None);
     state.tl.pressure_extra.set(-1);
     state.tl.berserk_pending.set(0);
@@ -12878,6 +12883,60 @@ fn power_construct_check(state: &mut DoublesState, side: Side, slot: usize) {
     hp_event(state, side, idx, hp_before, "powerconstruct");
 }
 
+/// Tera Shift `onSwitchIn` (priority 2): a Terapagos becomes Terapagos-Terastal
+/// permanently. `formeChange(..., true)` recomputes the stats, `updateMaxHp`
+/// keeps the HP's distance from the (higher) max, and `setAbility` gives the
+/// forme's ability (Tera Shell) as the new base ability. Runs before the
+/// hazards (priority 0), so it is called from `entry_hazards` and the lead
+/// send-out. PS data/abilities.ts terashift, sim/pokemon.ts formeChange / updateMaxHp.
+fn tera_shift(state: &mut DoublesState, side: Side, slot: usize) {
+    use crate::pokemon::PokemonName as N;
+    let Some(idx) = state.side(side).active()[slot].pokemon_index else { return };
+    let p = state.side(side).team_member(idx);
+    if p.ability != Abilities::TERASHIFT || p.id != N::TERAPAGOS || p.hp <= 0 {
+        return;
+    }
+    let Some(data) = crate::doubles::species_types::species_data("terapagosterastal") else { return };
+    let (e, lvl, nat) = (p.evs, p.level as u8, p.nature.clone());
+    let evs = crate::doubles::state::Evs {
+        hp: e.0 as u16,
+        atk: e.1 as u16,
+        def: e.2 as u16,
+        spa: e.3 as u16,
+        spd: e.4 as u16,
+        spe: e.5 as u16,
+    };
+    let (maxhp, atk, def, spa, spd, spe) = crate::doubles::state::compute_stats(data.base_stats, &evs, lvl, nat);
+    let hp_before = p.hp;
+    restore_stored_stats(state.side_mut(side), idx);
+    // `setSpecies` recomputes the stats unswapped.
+    state.side_mut(side).slot_scratch_mut(slot).pt_swapped = false;
+    {
+        let pm = state.side_mut(side).team_member_mut(idx);
+        pm.id = N::TERAPAGOSTERASTAL;
+        pm.attack = atk;
+        pm.defense = def;
+        pm.special_attack = spa;
+        pm.special_defense = spd;
+        pm.speed = spe;
+        pm.hp = (maxhp - (pm.maxhp - pm.hp)).max(1);
+        pm.maxhp = maxhp;
+        if let Some(w) = crate::doubles::species_weights::species_weight_kg("terapagosterastal") {
+            pm.weight_kg = w;
+        }
+        pm.base_ability = Abilities::TERASHELL;
+    }
+    hp_event(state, side, idx, hp_before, "terashift");
+    let types = (PokemonType::from(data.types.0), PokemonType::from(data.types.1));
+    set_species_types(state, side, slot, idx, types);
+    state.side_mut(side).team_member_mut(idx).base_types = types;
+    state.side_mut(side).set_speed_cache(idx as usize, spe as _);
+    state.effect_order += 1;
+    let o = state.effect_order;
+    state.side_mut(side).ability_order[idx as usize] = o;
+    set_ability_raw(state, side, idx, Abilities::TERASHELL);
+}
+
 /// Faint with `formeRegression` (set by Power Construct): `baseSpecies` goes
 /// back to the set species, `clearVolatile` -> `setSpecies` recomputes the
 /// stats and `updateMaxHp` restores its max HP. PS sim/battle.ts faintMessages.
@@ -14458,6 +14517,7 @@ fn compute_hit_damage(
             } else {
                 0
             }),
+        tera_shell: tera_shell_mode(state, target_side, target_slot, defender, choice, att_slot.hit_number),
         disguise: disguise_active(state, target_side, target_slot)
             && state.side(target_side).active()[target_slot].substitute_health <= 0
             && (side, slot) != (target_side, target_slot),
@@ -14681,6 +14741,10 @@ fn compute_hit_damage(
             crit = outcome.crit;
             if outcome.berry {
                 state.tl.berry_eaten.set(Some((target_side, target_slot)));
+            }
+            if outcome.tera_shell {
+                let bit = 1 << (target_side as u8 * 2 + target_slot as u8);
+                state.tl.tera_shell_resisted.set(state.tl.tera_shell_resisted.get() | bit);
             }
             if ctx.ripen_weaken && outcome.damage > 0 {
                 state.side(target_side).active()[target_slot].berry_weaken.set(false);
@@ -15387,6 +15451,28 @@ fn disguise_active(state: &DoublesState, side: Side, slot: usize) -> bool {
     matches!(d.id, crate::pokemon::PokemonName::MIMIKYU | crate::pokemon::PokemonName::MIMIKYUTOTEM)
         && d.ability == Abilities::DISGUISE
         && state.side(side).transform_save[idx as usize].is_none()
+}
+
+/// Tera Shell (PS sim/pokemon.ts runEffectiveness; data/abilities.ts terashell):
+/// a Terapagos-Terastal with the (unsuppressed, not Mold-Broken) ability takes
+/// a damaging move (not Struggle) at full HP as not very effective, and every
+/// later hit of that move too (`abilityState.resisted`, cleared on hit 1).
+/// Returns the `DamageCtx::tera_shell` mode: 0 none, 1 at full HP (applies
+/// unless already resisted), 2 forced by an earlier hit.
+fn tera_shell_mode(state: &DoublesState, side: Side, slot: usize, defender: &crate::state::Pokemon, choice: &Choice, hit: u8) -> u8 {
+    if defender.id != crate::pokemon::PokemonName::TERAPAGOSTERASTAL || defender.ability != Abilities::TERASHELL {
+        return 0;
+    }
+    let bit = 1 << (side as u8 * 2 + slot as u8);
+    if hit <= 1 {
+        state.tl.tera_shell_resisted.set(state.tl.tera_shell_resisted.get() & !bit);
+    } else if state.tl.tera_shell_resisted.get() & bit != 0 {
+        return 2;
+    }
+    if choice.category == MoveCategory::Status || choice.move_id == Choices::STRUGGLE || defender.hp < defender.maxhp {
+        return 0;
+    }
+    1
 }
 
 /// Ice Face is up: Eiscue in Ice forme with the ability (not transformed).
@@ -18612,6 +18698,8 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
 /// hazards KO it. The caller decides when this runs: `switch_in` runs it right
 /// after the placement, the replacement batch runs it in speed-sort order.
 fn entry_hazards(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize) {
+    // Tera Shift `onSwitchInPriority` 2: before the slot condition and hazards.
+    tera_shift(state, side, slot);
     let Some(idx) = state.side(side).active()[slot].pokemon_index else {
         return;
     };
@@ -21672,9 +21760,10 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
                     parental_second: false,
                     metronome_mod: 4096,
                     iron_ball_neutral: false,
+                    tera_shell: 0,
                 };
                 let outcome: DamageOutcome = calculate_damage(attacker, defender, &action.choice, rng, false, &ctx)
-                    .unwrap_or(DamageOutcome { damage: 0, crit: false, berry: false });
+                    .unwrap_or(DamageOutcome { damage: 0, crit: false, berry: false, tera_shell: false });
                 dmg_draw = Some(rng.draw_count() as u32 - 1);
                 let defender_ability = defender.ability;
                 if apply_damage(state, target_side, target_slot, outcome.damage) {

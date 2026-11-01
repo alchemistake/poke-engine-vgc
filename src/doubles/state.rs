@@ -838,6 +838,9 @@ pub struct MoveScratch {
     pub will_move: std::cell::Cell<u8>,
     /// Slots a Piercing Drill / Unseen Fist hit reached through Protect this move.
     pub bypass_protect: std::cell::Cell<u8>,
+    /// Slots (bit `side * 2 + slot`) whose Tera Shell resisted this move's
+    /// first hit (PS `abilityState.resisted`): its later hits stay resisted.
+    pub tera_shell_resisted: std::cell::Cell<u8>,
     /// Focus Band rolls a spread hit already drew (bit slot: rolled, bit slot + 4: saved).
     pub band_pre: std::cell::Cell<u8>,
     /// The residual action is running (PS `!queue.peek()`).

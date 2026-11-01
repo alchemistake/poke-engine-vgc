@@ -7074,7 +7074,7 @@ fn build_moves() -> HashMap<Choices, Choice> {
                 },
             }),
             pp: 12,
-            charge_setup: ChargeSetup::Always { turns: 2 },
+            charge_setup: ChargeSetup::Always { turns: 1 },
             always_hit: true,
             ..Default::default()
         },

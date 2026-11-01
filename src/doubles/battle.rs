@@ -5380,9 +5380,12 @@ fn execute_move_body(
                 state.side_mut(side).active_slot_mut(slot).charging = None;
                 state.side_mut(side).slot_scratch_mut(slot).twoturn_fired = true;
             }
-            // `runEvent('TryMove')` (Metronome's volatile) runs before the
-            // `!targets.length` fail.
+            // `runEvent('TryMove')` (Metronome's volatile) and the move's own
+            // `onTryMove` (Echoed Voice) run before the `!targets.length` fail.
             metronome_try_move(state, side, slot, idx, choice.move_id);
+            if choice.move_id == Choices::ECHOEDVOICE {
+                echoed_voice_try_move(state);
+            }
             // PS useMoveInner `!targets.length`: `-fail` and `return false`, so
             // `moveThisTurnResult` is false (Stomping Tantrum's doubled BP reads it).
             state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
@@ -6033,11 +6036,7 @@ fn execute_move_body(
     // duration 2); `onFieldRestart` when its duration is not 2: duration 2 and
     // the multiplier up by one (max 5). PS data/moves.ts echoedvoice.
     if choice.move_id == Choices::ECHOEDVOICE {
-        state.echoed_voice = Some(match state.echoed_voice {
-            None => (1, 2),
-            Some((m, d)) if d != 2 => ((m + 1).min(5), 2),
-            Some(e) => e,
-        });
+        echoed_voice_try_move(state);
     }
     // Natural Gift `onPrepareHit`: fails with an ignored item or one with no
     // `naturalGift`; else the berry's power, and the berry is used up
@@ -7217,6 +7216,7 @@ fn execute_move_body(
                 && !matches!(choice.move_id, Choices::EXPLOSION | Choices::MISTYEXPLOSION | Choices::SELFDESTRUCT);
             let ignore_eva = ignores_evasion(evasion_ability(state, side, idx, choice.move_id), choice.move_id);
             let ev_before = if state.record_events { spread_list.clone() } else { Default::default() };
+            let before_len = spread_list.len();
             let st = &*state;
             spread_list.retain(|&(ts, tsl)| {
                 accuracy_event_ties(st, rng, side, slot, ts, tsl, choice.move_id);
@@ -7250,8 +7250,12 @@ fn execute_move_body(
                 let ab = if unaware_zeroes_accuracy(st, side, idx, ts, tsl, choice) { 0 } else { ab };
                 roll_accuracy_boosted(wonder_skin_accuracy(st, side, idx, ts, tsl, choice, roll_accuracy_of(choice)), ab, eb, accuracy_ability_mods(st, side, idx, ts, tsl, choice), rng)
             });
+            let missed = before_len - spread_list.len();
             for &(ts, tsl) in ev_before.iter().filter(|t| !spread_list.contains(t)) {
                 miss_event(state, side, idx, ts, tsl, choice.move_id);
+            }
+            for _ in 0..missed {
+                blunder_policy(state, rng, side, slot, idx, choice);
             }
         }
         smart_hits = smart_target && spread_list.len() == 2;
@@ -7303,6 +7307,7 @@ fn execute_move_body(
         let acc = wonder_skin_accuracy(state, side, idx, target_side, target_slot, choice, roll_accuracy_of(choice));
         if !roll_accuracy_boosted(acc, ab, eb, mods, rng) {
             miss_event(state, side, idx, target_side, target_slot, choice.move_id);
+            blunder_policy(state, rng, side, slot, idx, choice);
             state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
             if matches!(choice.move_id, Choices::EXPLOSION | Choices::MISTYEXPLOSION | Choices::SELFDESTRUCT) {
                 selfdestruct_user_faint(state, rng, side, slot);
@@ -14804,6 +14809,29 @@ fn eva_boost(state: &DoublesState, ts: Side, tsl: usize) -> i8 {
     }
 }
 
+/// Echoed Voice `onTryMove`: `addPseudoWeather('echoedvoice')` (multiplier 1,
+/// duration 2); `onFieldRestart` when its duration is not 2: duration 2 and
+/// the multiplier up by one (max 5). PS data/moves.ts echoedvoice.
+fn echoed_voice_try_move(state: &mut DoublesState) {
+    state.echoed_voice = Some(match state.echoed_voice {
+        None => (1, 2),
+        Some((m, d)) if d != 2 => ((m + 1).min(5), 2),
+        Some(e) => e,
+    });
+}
+
+/// Blunder Policy (PS sim/battle-actions.ts hitStepAccuracy): a missed accuracy
+/// roll (not an OHKO move) uses the item for +2 Spe.
+fn blunder_policy(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize, idx: PokemonIndex, choice: &Choice) {
+    let p = state.side(side).team_member(idx);
+    if choice.ohko || p.item != Items::BLUNDERPOLICY || ignoring_item(state, p) || p.hp <= 0 {
+        return;
+    }
+    use_item(state, rng, side, slot, idx, false);
+    let b = StatBoosts { speed: 2, ..Default::default() };
+    apply_boosts(state, rng, side, idx, &b, false);
+}
+
 /// A `miss` event: the user's move missed the pokemon in `ts` / `tsl`.
 fn miss_event(state: &mut DoublesState, side: Side, idx: PokemonIndex, ts: Side, tsl: usize, m: Choices) {
     emit(state, |st| {
@@ -16938,13 +16966,9 @@ fn skill_swap(
     ) else {
         return false;
     };
-    // PS skillSwap reads `getAbility()`: a Gastro Acid-suppressed ability
-    // is still swapped (and the volatile keeps the new one suppressed).
-    let src_ability = if state.side(src_side).active()[src_slot].gastro_acid {
-        held_ability(state, src_side, src_slot, si)
-    } else {
-        state.side(src_side).team_member(si).ability
-    };
+    // PS skillSwap reads `getAbility()`: a Gastro Acid- or Neutralizing
+    // Gas-suppressed ability is still swapped (and stays suppressed).
+    let src_ability = held_ability(state, src_side, src_slot, si);
     let tgt_ability = held_ability(state, tgt_side, tgt_slot, ti);
     // PS `fainted` is only set once faints resolve, so a holder KO'd by the
     // current hit still swaps.
@@ -16978,15 +17002,8 @@ fn skill_swap(
             state.side_mut(sd).active_slot_mut(sl).unburden = false;
         }
     }
-    state.side_mut(src_side).team_member_mut(si).ability = tgt_ability;
-    state.side_mut(tgt_side).team_member_mut(ti).ability = src_ability;
-    for (sd, sl, i) in [(src_side, src_slot, si), (tgt_side, tgt_slot, ti)] {
-        if state.side(sd).active()[sl].gastro_acid && state.side(sd).active()[sl].pokemon_index == Some(i) {
-            let new = state.side(sd).team_member(i).ability;
-            state.side_mut(sd).slot_scratch_mut(sl).gastro_ability = new;
-            state.side_mut(sd).team_member_mut(i).ability = Abilities::NONE;
-        }
-    }
+    set_ability_raw(state, src_side, si, tgt_ability);
+    set_ability_raw(state, tgt_side, ti, src_ability);
     reset_protean_effect(state, src_side, si);
     reset_protean_effect(state, tgt_side, ti);
     // The new abilities' Start events (Trace's draw included) run through

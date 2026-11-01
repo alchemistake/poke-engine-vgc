@@ -194,6 +194,11 @@ pub(crate) fn volatile_ids(a: &crate::doubles::state::ActiveSlot) -> Vec<String>
     if a.chilly_reception {
         v.push("chillyreception".to_string());
     }
+    // Snatch's single-turn volatile (duration 1; taken by `try_snatch`, not
+    // through `CONDS`). PS data/moves.ts snatch.condition.
+    if a.snatch {
+        v.push("snatch".to_string());
+    }
     v.sort();
     v
 }

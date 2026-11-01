@@ -3663,6 +3663,26 @@ fn execute_action_inner(
     will_act: bool,
     queue: &[Action],
 ) {
+    // A `selfdestruct: 'always'` user is fainted for PS while its move runs (the
+    // engine keeps its HP until the move ends).
+    let sd = if is_selfdestruct_always(action.choice.move_id) {
+        Some((action.side, action.pokemon_index))
+    } else {
+        None
+    };
+    let prev = state.tl.selfdestructing.replace(sd);
+    execute_move_body(state, rng, action, move_order, will_act, queue);
+    state.tl.selfdestructing.set(prev);
+}
+
+fn execute_move_body(
+    state: &mut DoublesState,
+    rng: &mut Gen5Rng,
+    action: &Action,
+    move_order: &mut Vec<OrderEntry>,
+    will_act: bool,
+    queue: &[Action],
+) {
     let side = action.side;
     let slot = action.slot;
     let idx = action.pokemon_index;
@@ -3807,7 +3827,11 @@ fn execute_action_inner(
     // `getMoveTargets`): the target becomes `getAtSlot(lastDamagedBy.slot)`,
     // which is also the Pressure target. PS data/moves.ts metalburst.
     let pressure_resolved = if matches!(action.choice.move_id, Choices::METALBURST | Choices::COMEUPPANCE) {
-        last_damaged_by(state, side, action.pokemon_index).map(|(s_, sl_, _, _, _)| (s_, sl_)).or(resolved)
+        // A fainted pokemon at that slot is retargeted (`getRandomTarget`).
+        last_damaged_by(state, side, action.pokemon_index)
+            .map(|(s_, sl_, _, _, _)| (s_, sl_))
+            .filter(|&(s_, sl_)| switched_in_alive(state, s_, sl_))
+            .or(resolved)
     } else {
         resolved
     };
@@ -4215,6 +4239,7 @@ fn execute_action_inner(
     {
         let p = state.side(side).team_member(idx);
         if p.item == Items::CHOICESCARF && !ignoring_item(state, p) && state.side(side).active()[slot].choice_lock.is_none() {
+            try_add_volatile_ties(state, rng, side, slot);
             state.side_mut(side).active_slot_mut(slot).choice_lock = Some(modified.move_id);
         }
     }
@@ -5094,7 +5119,9 @@ fn execute_action_inner(
         && switched_in_alive(state, target_side, target_slot)
         && switched_in_alive(state, target_side, 1 - target_slot)
         // `getSmartTargets`: the target's partner being the user turns it off.
-        && (target_side, 1 - target_slot) != (side, slot);
+        && (target_side, 1 - target_slot) != (side, slot)
+        // Follow Me / Rage Powder `onFoeRedirectTarget` clears `smartTarget`.
+        && !center_of_attention_redirects(state, side, slot, idx);
     let is_spread = (matches!(move_ty, Tgt::AllAdjacentFoes | Tgt::AllAdjacent) || smart_target) && !is_self && !is_field;
     let mut spread_list: Vec<(Side, usize)> = Vec::new();
     // PS `trySpreadMoveHit`: `spreadHit` is set from the original target list.
@@ -5146,15 +5173,6 @@ fn execute_action_inner(
                 continue;
             }
             let d = state.side(ts).slot_pokemon(tsl).unwrap().clone();
-            // PS sim/battle-actions.ts hitStepTryImmunity (gen >= 7): a Prankster-boosted
-            // Status move skips each Dark foe on its own (no draw); the other
-            // targets still get their accuracy roll.
-            if ts != side
-                && prankster_boosted(state, side, slot, choice)
-                && (d.types.0 == PokemonType::DARK || d.types.1 == PokemonType::DARK)
-            {
-                continue;
-            }
             // Psychic Terrain `onTryHit` per target: a priority move skips a
             // grounded foe (no accuracy roll). PS trySpreadMoveHit.
             if ts != side
@@ -5240,6 +5258,15 @@ fn execute_action_inner(
                     state.side_mut(ts).slot_scratch_mut(tsl).external_call = false;
                     state.side_mut(ts).slot_scratch_mut(tsl).bounced = false;
                 }
+                continue;
+            }
+            // PS sim/battle-actions.ts hitStepTryImmunity (gen >= 7): a Prankster-boosted
+            // Status move skips each Dark foe on its own (no draw), after the TryHit step (Magic Bounce); the other
+            // targets still get their accuracy roll.
+            if ts != side
+                && prankster_boosted(state, side, slot, choice)
+                && (d.types.0 == PokemonType::DARK || d.types.1 == PokemonType::DARK)
+            {
                 continue;
             }
             // Telepathy `onTryHit`: an ally's damaging move skips the holder.
@@ -5328,6 +5355,8 @@ fn execute_action_inner(
             // failure: `moveThisTurnResult = null`, so it is not a failed move.
             if not_fail_skips < n_cands {
                 state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
+            } else {
+                state.side_mut(side).slot_scratch_mut(slot).move_result_null = true;
             }
             push_order(move_order);
             return;
@@ -7901,6 +7930,7 @@ fn execute_action_inner(
                         // PS `addVolatile('trapped', source, move, 'trapper')`: the
                         // user holds the link (released when the user leaves).
                         try_add_volatile_ties(state, rng, ts, tslot);
+                        trapper_link_ties(state, rng, side, slot, idx);
                         let a = state.side_mut(ts).active_slot_mut(tslot);
                         a.trapped = true;
                         a.trapper = Some((side, idx));
@@ -8184,6 +8214,7 @@ fn execute_action_inner(
             if state.side(side).active()[slot].imprison {
                 move_failed = true;
             } else {
+                try_add_volatile_ties(state, rng, side, slot);
                 state.side_mut(side).active_slot_mut(slot).imprison = true;
             }
         }
@@ -9631,6 +9662,7 @@ fn execute_action_inner(
                 let src_active = state.side(side).active()[slot].pokemon_index == Some(idx);
                 if alive && src_active && !ghost && !state.side(target_side).active()[target_slot].trapped {
                     try_add_volatile_ties(state, rng, target_side, target_slot);
+                    trapper_link_ties(state, rng, side, slot, idx);
                     let a = state.side_mut(target_side).active_slot_mut(target_slot);
                     a.trapped = true;
                     a.trapper = Some((side, idx));
@@ -11182,6 +11214,20 @@ fn base_power_with_modifiers(
 /// callback; use `choice.base_power`). Reversal / Flail scale with the
 /// user's remaining HP; Hard Press / Crush Grip / Wring Out with the
 /// target's.
+/// A foe's Follow Me / Rage Powder takes this user's move (`onFoeRedirectTarget`
+/// answers: Rage Powder skips a powder-immune user).
+fn center_of_attention_redirects(state: &DoublesState, side: Side, slot: usize, idx: PokemonIndex) -> bool {
+    let foe = side.other();
+    (0..2).any(|sl| {
+        let a = &state.side(foe).active()[sl];
+        a.follow_me != 0
+            && state.side(foe).slot_pokemon(sl).is_some_and(|p| p.hp > 0)
+            && (a.follow_me == 1
+                || !(crate::engine::mechanics::powder_immune(state.side(side).team_member(idx))
+                    || state.side(side).active()[slot].added_type == PokemonType::GRASS))
+    })
+}
+
 /// PS `pokemon.isGrounded()` (sim/pokemon.ts), in its order: Gravity, Ingrain
 /// Smack Down and a held Iron Ball ground the holder first; then Flying / Levitate / Air Balloon
 /// (`Pokemon::is_grounded`) and Magnet Rise make it airborne. The one grounded
@@ -11542,6 +11588,17 @@ fn try_add_volatile_ties(state: &DoublesState, rng: &mut Gen5Rng, ts: Side, tslo
     // Rise / Dig / ... `onImmunity` handlers). PS sim/pokemon.ts addVolatile.
     crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::Immunity, (ts, tslot), None);
     crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::TryAddVolatile, (ts, tslot), None);
+}
+
+/// `addVolatile(..., linkedStatus 'trapper')`: the source gets its own `trapper`
+/// volatile unless it already holds one (another trapped pokemon).
+fn trapper_link_ties(state: &DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize, idx: PokemonIndex) {
+    let holds = [Side::One, Side::Two]
+        .iter()
+        .any(|&s| (0..2).any(|sl| state.side(s).active()[sl].trapped && state.side(s).active()[sl].trapper == Some((side, idx))));
+    if !holds && state.side(side).active()[slot].pokemon_index == Some(idx) {
+        try_add_volatile_ties(state, rng, side, slot);
+    }
 }
 
 fn try_confuse(state: &mut DoublesState, rng: &mut Gen5Rng, ts: Side, tslot: usize) {
@@ -13276,6 +13333,13 @@ fn cursed_body(
     if hit && !aroma_veil && !out_of_pp && att_alive {
         state.side_mut(side).active_slot_mut(slot).disabled = Some((last, 4));
     }
+    // An attacker Destiny Bond took down is still alive for PS until
+    // `faintMessages`: it gets the Disable, which its Mental Herb cures at once.
+    if let Some(ai) = att_idx.filter(|&ai| state.db_alive_pending.iter().any(|e| e.0 == side && e.1 == ai)) {
+        if hit && !aroma_veil && !out_of_pp && held_item(state, side, ai) == Items::MENTALHERB {
+            state.side_mut(side).team_member_mut(ai).item = Items::NONE;
+        }
+    }
 }
 
 /// The pokemon in a slot, or the one that fainted there in the current hit
@@ -13936,6 +14000,7 @@ fn apply_on_switch_abilities(
         if !blocked {
             if let Some(copied) = trace_copy(state, side, slot, rng) {
                 ability = copied;
+                refresh_mimicry_slot(state, side, slot);
             }
         }
     }
@@ -14937,7 +15002,11 @@ fn after_use_item(state: &mut DoublesState, side: Side, slot: usize, idx: Pokemo
     let al = 1 - slot;
     let Some(aidx) = state.side(side).active()[al].pokemon_index else { return };
     let a = state.side(side).team_member(aidx);
-    if a.hp <= 0 || a.ability != Abilities::SYMBIOSIS || !item_takeable(state, side, aidx, false, false, true) {
+    if a.hp <= 0
+        || state.tl.selfdestructing.get() == Some((side, aidx))
+        || a.ability != Abilities::SYMBIOSIS
+        || !item_takeable(state, side, aidx, false, false, true)
+    {
         return;
     }
     let it = a.item;
@@ -15236,6 +15305,9 @@ fn run_mega_evo(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: u
         }
     }
     set_species_types(state, side, slot, idx, (PokemonType::from(data.types.0), PokemonType::from(data.types.1)));
+    // A permanent forme change: the Mega is the new `baseSpecies` (Mimicry's
+    // no-terrain types).
+    state.side_mut(side).team_member_mut(idx).base_types = (PokemonType::from(data.types.0), PokemonType::from(data.types.1));
     // `setSpecies`: the cached speed is the raw stat.
     state.side_mut(side).set_speed_cache(idx as usize, spe as _);
     state.side_mut(side).mega_used = true;
@@ -16372,6 +16444,8 @@ fn each_event_update(state: &mut DoublesState, rng: &mut Gen5Rng) {
             };
             if holder_ok {
                 if trace_copy(state, s, sl, rng).is_some() {
+                    // A traced Mimicry's `onStart` takes the terrain's type.
+                    refresh_mimicry_slot(state, s, sl);
                     // PS `setAbility` runs the new ability's `Start` event (its
                     // weather / terrain / Cloud Nine `eachEvent` is a sort).
                     if apply_on_switch_abilities(state, s, sl, rng) {
@@ -17601,6 +17675,10 @@ fn end_of_turn(
                 } else {
                     a.uproar = a.uproar.saturating_sub(1);
                 }
+                // The fainted holder's volatile goes with it.
+                if pending {
+                    a.uproar = 0;
+                }
             }
             ResidualKind::Stall(side, slot) => {
                 let a = state.side_mut(side).active_slot_mut(slot);
@@ -17920,6 +17998,12 @@ fn end_of_turn(
         }
     }
     if !pending_switches.is_empty() {
+        // A terrain seed's `onStart` belongs to the `runSwitch` (after the
+        // abilities, `onSwitchInPriority` -1), not to this Update.
+        let terrain_now = state.terrain.terrain_type;
+        for &(sd, sl, _) in pending_switches {
+            state.side_mut(sd).slot_scratch_mut(sl).seed_terrain = Some(terrain_now);
+        }
         each_event_update(state, rng);
         let order = sorted_actives(state, rng, "speed tie (switch-in)");
         if batch_distinct {
@@ -17978,6 +18062,12 @@ fn end_of_turn(
             // Forecast `onWeatherChange` right after that sort (forme change resets
             // the cached speed before the next sort). PS data/abilities.ts forecast.
             update_forecast(state);
+        }
+    }
+    for &(sd, sl, _) in pending_switches {
+        if state.side(sd).active()[sl].pokemon_index.is_some() {
+            state.side_mut(sd).slot_scratch_mut(sl).seed_terrain = None;
+            terrain_seed(state, rng, sd, sl);
         }
     }
     if !pending_switches.is_empty() {

@@ -754,6 +754,8 @@ pub struct MoveScratch {
     pub in_residual: std::cell::Cell<bool>,
     /// The residual `fieldEvent` handler loop is running (draw labels).
     pub in_field_event: std::cell::Cell<bool>,
+    /// The `selfdestruct: 'always'` user whose move is running (fainted for PS).
+    pub selfdestructing: std::cell::Cell<Option<(Side, crate::state::PokemonIndex)>>,
     /// The running move's Pressure PP (side, slot, user, move slot, move), still
     /// owed until `pressure_done`: PS takes it before the hit, so a Leppa Berry
     /// eaten mid-move sees it.

@@ -191,6 +191,8 @@ pub struct ActiveSlot {
     pub grudge: bool,
     /// Micle Berry's `micleberry` volatile duration (next accuracy x1.2).
     pub micle: u8,
+    /// `embargo` volatile duration (5): the holder's item is ignored.
+    pub embargo: u8,
     /// Protosynthesis / Quark Drive volatile: (best stat 0..4 = Atk, Def, SpA,
     /// SpD, Spe; from Booster Energy).
     pub paradox: Option<(u8, bool)>,
@@ -451,6 +453,7 @@ impl ActiveSlot {
             magic_coat: false,
             grudge: false,
             micle: 0,
+            embargo: 0,
             paradox: None,
             paradox_quark: false,
             bide: None,
@@ -1884,6 +1887,9 @@ pub fn side_condition_entries_into(sc: &SideConditions, v: &mut arrayvec::ArrayV
     }
     if sc.lucky_chant != 0 {
         v.push(SideConditionEntry { id: "luckychant", duration: Some(sc.lucky_chant) });
+    }
+    if sc.mist != 0 {
+        v.push(SideConditionEntry { id: "mist", duration: Some(sc.mist) });
     }
     if sc.spikes != 0 {
         v.push(SideConditionEntry { id: "spikes", duration: None });

@@ -29,6 +29,12 @@ for (const sp of d.species.all()) {
 const pp = [];
 const failMimic = [];
 const mirror = [];
+// Metronome `onHit`: standard (or Unobtainable) moves with the `metronome` flag, by num.
+const metronome = d.moves.all()
+  .filter((m) => (!m.isNonstandard || m.isNonstandard === 'Unobtainable') && m.flags.metronome)
+  .sort((a, b) => a.num - b.num)
+  .map((m) => m.id.toUpperCase());
+for (const v of metronome) if (!variants.has(v)) throw new Error(`Choices has no ${v}`);
 for (const mv of d.moves.all()) {
   const v = mv.id.toUpperCase();
   if (!variants.has(v) || !mv.exists) continue;
@@ -67,6 +73,11 @@ const out = [
   ...nfe.map((v, k) => `        ${k ? '| ' : ''}PokemonName::${v}`),
   '    )',
   '}',
+  '',
+  '/// The moves Metronome can call, in PS order (`num`).',
+  'pub const METRONOME_MOVES: &[Choices] = &[',
+  ...metronome.map((v) => `    Choices::${v},`),
+  '];',
   '',
   '/// `move.flags.mirror` (Mirror Move can copy it).',
   'pub fn mirror(m: Choices) -> bool {',

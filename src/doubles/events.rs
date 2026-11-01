@@ -337,7 +337,7 @@ pub(crate) fn vol_mask(a: &crate::doubles::state::ActiveSlot) -> u128 {
         m |= 1 << 47;
     }
     // No Retreat `onStart` adds the `trapped` volatile (PS data/moves.ts noretreat).
-    if a.trapped || a.no_retreat {
+    if a.trapped || a.no_retreat_trap {
         m |= 1 << 48;
     }
     if a.encore.is_some() {

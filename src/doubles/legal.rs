@@ -187,7 +187,7 @@ pub fn slot_options(state: &DoublesState, side: Side, slot: usize) -> Option<Slo
     // is trapped anyway (`getMoveRequestData`).
     let a = &s.active()[slot];
     let ghost = p.has_type(&PokemonType::GHOST) || a.added_type == PokemonType::GHOST;
-    let trap_sources = try_trap_calls(state, side, slot) + a.no_retreat as usize;
+    let trap_sources = try_trap_calls(state, side, slot) + a.no_retreat_trap as usize;
     let trapped = locked.is_some()
         || (!ghost && trap_sources > 0 && p.ability != crate::engine::abilities::Abilities::RUNAWAY);
     let switches = if trapped {

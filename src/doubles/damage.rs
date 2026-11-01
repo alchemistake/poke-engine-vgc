@@ -415,9 +415,9 @@ pub fn calculate_damage_with(
     let mut attack = crate::engine::mechanics::boost_stat(atk_b, ctx.attack_base).max(1);
     // Hustle `onModifyAtk` (priority 5): `this.modify(atk, 1.5)` applied
     // directly to the stat, before the chained modifiers. PS data/abilities.ts.
+    // Body Press runs `ModifyAtk` too (PS getDamage resets `attackStat`).
     if attacker.ability == crate::engine::abilities::Abilities::HUSTLE
         && choice.category == crate::choices::MoveCategory::Physical
-        && choice.move_id != crate::choices::Choices::BODYPRESS
     {
         attack = ((attack as i64 * 6144 + 2047) / 4096) as i16;
     }

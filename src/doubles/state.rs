@@ -210,6 +210,9 @@ pub struct ActiveSlot {
     pub charge: bool,
     /// `noretreat` volatile (No Retreat already used).
     pub no_retreat: bool,
+    /// The `trapped` volatile No Retreat's `onStart` added itself (none when the
+    /// user was already trapped: that link's `trapped` stays, and goes with it).
+    pub no_retreat_trap: bool,
     /// `focusenergy` volatile: +2 critical-hit stages.
     pub focus_energy: bool,
     /// `attract` volatile: the infatuating pokemon (side, team index).
@@ -421,6 +424,7 @@ impl ActiveSlot {
             flash_fire: false,
             charge: false,
             no_retreat: false,
+            no_retreat_trap: false,
             focus_energy: false,
             attract: None,
             leech_seed: None,

@@ -4971,6 +4971,8 @@ fn execute_action_inner(
         }
         state.side_mut(side).slot_scratch_mut(slot).fling_item = it;
         state.fling_pending.push((side, idx));
+        // `source.addVolatile('fling')`.
+        try_add_volatile_ties(state, rng, side, slot);
     }
 
     // Payback `basePowerCallback`: doubled unless the target is newly switched
@@ -6688,6 +6690,10 @@ fn execute_action_inner(
                     }
                 }
             }
+            // `runEvent('Hit')`: Focus Punch `onHit` loses focus to any non-Status move.
+            if !move_failed && state.side(target_side).active()[target_slot].focus_punch {
+                state.side_mut(target_side).slot_scratch_mut(target_slot).lost_focus = true;
+            }
         }
         if is_attack && !is_self && !is_field && has_target && !pollen_ally {
             if pre_damage.get(ti).is_none() {
@@ -8060,9 +8066,12 @@ fn execute_action_inner(
             // (An already trapped user still ends up with No Retreat: its next
             // use fails `onTry`, as PS shows.)
             let ghost = state.side(side).slot_pokemon(slot).is_some_and(|p| p.has_type(&PokemonType::GHOST));
-            if !state.side(side).active()[slot].trapped && !ghost {
-                try_add_volatile_ties(state, rng, side, slot);
-                state.side_mut(side).active_slot_mut(slot).trapped = true;
+            if !state.side(side).active()[slot].trapped {
+                state.side_mut(side).active_slot_mut(slot).no_retreat_trap = true;
+                if !ghost {
+                    try_add_volatile_ties(state, rng, side, slot);
+                    state.side_mut(side).active_slot_mut(slot).trapped = true;
+                }
             }
             state.side_mut(side).active_slot_mut(slot).no_retreat = true;
         }
@@ -8323,8 +8332,11 @@ fn execute_action_inner(
                     // model of the `gastroacid` volatile). PS `setAbility` still
                     // sets the copy, but `singleEvent('Start')` is suppressed
                     // (`suppressingAbility`) and the suppression lasts until the
-                    // user switches out, so the copy is not applied here.
-                    if state.side(side).team_member(u).ability != Abilities::NONE {
+                    // user switches out, so the copy is not applied here (only
+                    // the suppressed ability is replaced).
+                    if state.side(side).team_member(u).ability == Abilities::NONE && state.side(side).active()[slot].gastro_acid {
+                        state.side_mut(side).active_mut()[slot].gastro_ability = ta;
+                    } else if state.side(side).team_member(u).ability != Abilities::NONE {
                         // `setAbility`: `singleEvent('End', oldAbility)` first; a Cloud
                         // Nine / Air Lock `onEnd` runs `eachEvent('WeatherChange')`.
                         // PS sim/pokemon.ts setAbility, data/abilities.ts cloudnine.
@@ -11171,7 +11183,7 @@ fn base_power_with_modifiers(
 /// user's remaining HP; Hard Press / Crush Grip / Wring Out with the
 /// target's.
 /// PS `pokemon.isGrounded()` (sim/pokemon.ts), in its order: Gravity, Ingrain
-/// and Smack Down ground the holder first; then Flying / Levitate / Air Balloon
+/// Smack Down and a held Iron Ball ground the holder first; then Flying / Levitate / Air Balloon
 /// (`Pokemon::is_grounded`) and Magnet Rise make it airborne. The one grounded
 /// check for doubles: pass `state.gravity.active`, never add it at the call site.
 fn slot_grounded(p: &crate::state::Pokemon, a: &ActiveSlot, gravity: bool, magic_room: bool) -> bool {
@@ -11188,6 +11200,7 @@ fn slot_grounded(p: &crate::state::Pokemon, a: &ActiveSlot, gravity: bool, magic
     gravity
         || a.ingrain
         || a.smackdown
+        || (p.item == Items::IRONBALL && !item_ignored)
         || (a.magnet_rise == 0
             && (base_grounded
                 || (balloon_ignored
@@ -11956,7 +11969,11 @@ fn compute_hit_damage(
     let attacker_ref = state.side(side).team_member(idx);
     let attacker_inactive;
     // `ignoringItem` likewise ignores its held item (Twisted Spoon, Life Orb, ...).
+    // One KO'd mid-move (Spiky Shield, Rocky Helmet) is still active until
+    // `faintMessages`: its ability and item still apply to the remaining hits.
+    let pending_faint = state.unresolved_faints.iter().any(|&(s_, sl_, i_)| s_ == side && sl_ == slot && i_ == idx);
     let attacker = if state.side(side).active()[slot].pokemon_index != Some(idx)
+        && !pending_faint
         && (attacker_ref.ability != Abilities::NONE || attacker_ref.item != Items::NONE)
     {
         let mut a = attacker_ref.clone();
@@ -13436,12 +13453,13 @@ fn skill_swap(
     reset_protean_effect(state, src_side, si);
     reset_protean_effect(state, tgt_side, ti);
     // The new abilities' Start events (Trace's draw included) run through
-    // `apply_on_switch_abilities`.
+    // `apply_on_switch_abilities`; Imposter is `onSwitchIn` only, so a swapped-in
+    // one does nothing (PS data/abilities.ts imposter).
     // TODO(PS parity): the TerrainChange speed sort after a swapped-in Surge.
     // A Start event that sets weather / terrain (Sand Stream, Cloud Nine, ...)
     // is followed by PS `eachEvent('WeatherChange')` / `TerrainChange`, a speed
     // sort of all actives (the same as the switch-in loop does).
-    if apply_on_switch_abilities(state, tgt_side, tgt_slot, rng) {
+    if !slot_has_ability(state, tgt_side, tgt_slot, Abilities::IMPOSTER) && apply_on_switch_abilities(state, tgt_side, tgt_slot, rng) {
         let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
         // Forecast `onWeatherChange` right after that sort (forme change resets
         // the cached speed before the next sort). PS data/abilities.ts forecast.
@@ -13450,7 +13468,7 @@ fn skill_swap(
     // Mimicry `onStart` -> `singleEvent('TerrainChange')` (PS data/abilities.ts
     // mimicry): a holder that just gained Mimicry takes the terrain's type.
     refresh_mimicry_slot(state, tgt_side, tgt_slot);
-    if apply_on_switch_abilities(state, src_side, src_slot, rng) {
+    if !slot_has_ability(state, src_side, src_slot, Abilities::IMPOSTER) && apply_on_switch_abilities(state, src_side, src_slot, rng) {
         let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
         // Forecast `onWeatherChange` right after that sort (forme change resets
         // the cached speed before the next sort). PS data/abilities.ts forecast.
@@ -13874,6 +13892,10 @@ fn refresh_mimicry_slot(state: &mut DoublesState, side: Side, slot: usize) {
         s.slot_scratch_mut(slot).type_change = Some(cur);
     }
     s.team_member_mut(idx).types = want;
+}
+
+fn slot_has_ability(state: &DoublesState, side: Side, slot: usize, ability: Abilities) -> bool {
+    state.side(side).slot_pokemon(slot).is_some_and(|p| p.ability == ability)
 }
 
 fn apply_on_switch_abilities(
@@ -15154,6 +15176,10 @@ fn run_switch_in(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: 
     if switched_in_alive(state, side, slot) && apply_on_switch_abilities(state, side, slot, rng) {
         let _ = sorted_actives_in_switch(state, rng);
         update_forecast(state);
+    }
+    // Metronome item `onStart` (after the ability's): `addVolatile('metronome')`.
+    if switched_in_alive(state, side, slot) && state.side(side).active()[slot].metronome_vol {
+        try_add_volatile_ties(state, rng, side, slot);
     }
     state.side_mut(side).slot_scratch_mut(slot).seed_terrain = None;
     terrain_seed(state, rng, side, slot);
@@ -16853,6 +16879,9 @@ fn end_of_turn(
     // `resolveFaints` ends the battle (PS sim/battle.ts fieldEvent).
     let mut perish_wipe = false;
     let mut prev_end = false;
+    // A holder Perish Song faints mid-residual loses its volatiles here at once,
+    // while PS keeps `uproar`'s duration until `faintMessages`.
+    let uproar_left = [Side::One, Side::Two].map(|sd| [0, 1].map(|sl| state.side(sd).active()[sl].uproar));
     state.tl.in_field_event.set(true);
     for h in handlers {
         if state.battle_is_over() != 0.0 && (!perish_wipe || !prev_end) {
@@ -17558,8 +17587,16 @@ fn end_of_turn(
             ResidualKind::Uproar(side, slot) => {
                 // PS data/moves.ts uproar.condition.onResidual: a Throat Chop volatile
                 // on the holder ends Uproar (`removeVolatile`, no countdown).
+                let pending = state.unresolved_faints.iter().any(|&(s_, sl_, _)| s_ == side && sl_ == slot);
                 let a = state.side_mut(side).active_slot_mut(slot);
-                if a.throat_chop > 0 {
+                if pending {
+                    a.uproar = uproar_left[side as usize][slot];
+                }
+                // The duration running out is an `end` call: no `resolveFaints`.
+                if a.uproar == 1 {
+                    a.uproar = 0;
+                    prev_end = true;
+                } else if a.throat_chop > 0 {
                     a.uproar = 0;
                 } else {
                     a.uproar = a.uproar.saturating_sub(1);

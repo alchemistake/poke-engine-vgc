@@ -477,6 +477,7 @@ fn faint_pokemon(state: &mut DoublesState, side: Side, slot: usize) {
         if s.active()[slot].added_grass && !untransformed {
             s.team_member_mut(idx).types.1 = PokemonType::TYPELESS;
         }
+        darmanitan_zen_revert(s, idx);
         // The status stays until PS `checkFainted` (end of turn, only for a
         // side that can still switch) sets it to 'fnt'; see `check_fainted`.
         // PS keeps the fainted pokemon in the slot until its replacement
@@ -12834,6 +12835,82 @@ fn minior_core_revert(s: &mut crate::doubles::state::DoublesSide, idx: PokemonIn
     s.set_speed_cache(idx as usize, spe as _);
 }
 
+/// Darmanitan's Zen / non-Zen forme change (PS sim/pokemon.ts formeChange ->
+/// setSpecies): stats rebuilt from the forme's base stats (same base HP),
+/// types reset, the cached speed becomes the raw stat.
+fn darmanitan_set_forme(s: &mut crate::doubles::state::DoublesSide, idx: PokemonIndex, zen: bool) {
+    use crate::pokemon::PokemonName as N;
+    let galar = matches!(s.team_member(idx).id, N::DARMANITANGALAR | N::DARMANITANGALARZEN);
+    let (key, id) = match (galar, zen) {
+        (false, false) => ("darmanitan", N::DARMANITAN),
+        (false, true) => ("darmanitanzen", N::DARMANITANZEN),
+        (true, false) => ("darmanitangalar", N::DARMANITANGALAR),
+        (true, true) => ("darmanitangalarzen", N::DARMANITANGALARZEN),
+    };
+    let Some(data) = crate::doubles::species_types::species_data(key) else { return };
+    let p = s.team_member(idx);
+    let (e, lvl, nat) = (p.evs, p.level as u8, p.nature.clone());
+    let evs = crate::doubles::state::Evs {
+        hp: e.0 as u16,
+        atk: e.1 as u16,
+        def: e.2 as u16,
+        spa: e.3 as u16,
+        spd: e.4 as u16,
+        spe: e.5 as u16,
+    };
+    let (_, atk, def, spa, spd, spe) = crate::doubles::state::compute_stats(data.base_stats, &evs, lvl, nat);
+    restore_stored_stats(s, idx);
+    let pm = s.team_member_mut(idx);
+    pm.id = id;
+    pm.attack = atk;
+    pm.defense = def;
+    pm.special_attack = spa;
+    pm.special_defense = spd;
+    pm.speed = spe;
+    pm.types = (PokemonType::from(data.types.0), PokemonType::from(data.types.1));
+    s.set_speed_cache(idx as usize, spe as _);
+}
+
+/// Zen Mode `onEnd` (switch-out with HP) and `clearVolatile` ->
+/// `setSpecies(baseSpecies)` (faint): a Zen forme goes back to its
+/// `battleOnly` forme. PS data/abilities.ts zenmode, sim/pokemon.ts clearVolatile.
+fn darmanitan_zen_revert(s: &mut crate::doubles::state::DoublesSide, idx: PokemonIndex) {
+    use crate::pokemon::PokemonName as N;
+    if matches!(s.team_member(idx).id, N::DARMANITANZEN | N::DARMANITANGALARZEN) {
+        darmanitan_set_forme(s, idx, false);
+    }
+}
+
+/// Zen Mode `onResidual` (order 29): a Darmanitan (not transformed) at or below
+/// half HP gets the `zenmode` volatile, whose `onStart` changes it to its Zen
+/// forme; above half HP a Zen forme loses the volatile and its `onEnd` changes
+/// it back. PS data/abilities.ts zenmode.
+fn zen_mode_check(state: &mut DoublesState, side: Side, slot: usize) {
+    use crate::pokemon::PokemonName as N;
+    let Some(idx) = state.side(side).active()[slot].pokemon_index else { return };
+    let p = state.side(side).team_member(idx);
+    if p.ability != Abilities::ZENMODE
+        || p.hp <= 0
+        || !matches!(p.id, N::DARMANITAN | N::DARMANITANZEN | N::DARMANITANGALAR | N::DARMANITANGALARZEN)
+        || state.side(side).transform_save[idx as usize].is_some()
+    {
+        return;
+    }
+    let is_zen = matches!(p.id, N::DARMANITANZEN | N::DARMANITANGALARZEN);
+    let low = p.hp as i32 * 2 <= p.maxhp as i32;
+    if low && !is_zen {
+        state.side_mut(side).active_slot_mut(slot).zen_mode = true;
+        darmanitan_set_forme(state.side_mut(side), idx, true);
+    } else if !low && is_zen {
+        state.side_mut(side).active_slot_mut(slot).zen_mode = false;
+        darmanitan_set_forme(state.side_mut(side), idx, false);
+    } else {
+        return;
+    }
+    let types = state.side(side).team_member(idx).types;
+    set_species_types(state, side, slot, idx, types);
+}
+
 /// A foe's Follow Me / Rage Powder takes this user's move (`onFoeRedirectTarget`
 /// answers: Rage Powder skips a powder-immune user).
 fn center_of_attention_redirects(state: &DoublesState, side: Side, slot: usize, idx: PokemonIndex) -> bool {
@@ -18031,6 +18108,8 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
         if s.team_member(old).id == crate::pokemon::PokemonName::CASTFORM {
             s.team_member_mut(old).types = (PokemonType::NORMAL, PokemonType::TYPELESS);
         }
+        // Zen Mode `onEnd` (switch-out) / `clearVolatile`: a Zen forme reverts.
+        darmanitan_zen_revert(s, old);
     }
     let pos = position.min(5);
     let idx = PokemonIndex::deserialize(&pos.to_string());
@@ -18407,6 +18486,8 @@ enum ResidualKind {
     PowerConstruct(Side, usize),
     /// Schooling `onResidual` (order 29).
     Schooling(Side, usize),
+    /// Zen Mode `onResidual` (order 29).
+    ZenMode(Side, usize),
     /// Bad Dreams `onResidual` (order 28, sub 2): 1/8 to each sleeping foe.
     BadDreams(Side, usize),
     /// Ghost `curse` damage (order 12).
@@ -18633,7 +18714,7 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
                 if p.ability == Abilities::HARVEST {
                     push(28, speed, 2, ResidualKind::FaintedMarker);
                 }
-                if p.ability == Abilities::HUNGERSWITCH {
+                if matches!(p.ability, Abilities::HUNGERSWITCH | Abilities::ZENMODE) {
                     push(29, speed, 7, ResidualKind::FaintedMarker);
                 }
                 if p.ability == Abilities::SPEEDBOOST {
@@ -18869,6 +18950,9 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             }
             if p.ability == Abilities::SCHOOLING {
                 push(29, speed, 7, ResidualKind::Schooling(side, slot));
+            }
+            if p.ability == Abilities::ZENMODE {
+                push(29, speed, 7, ResidualKind::ZenMode(side, slot));
             }
             if p.ability == Abilities::BADDREAMS {
                 push(28, speed, 2, ResidualKind::BadDreams(side, slot));
@@ -19856,6 +19940,9 @@ fn end_of_turn(
             }
             ResidualKind::Schooling(side, slot) => {
                 schooling_check(state, side, slot);
+            }
+            ResidualKind::ZenMode(side, slot) => {
+                zen_mode_check(state, side, slot);
             }
             ResidualKind::BadDreams(side, slot) => {
                 if !state.side(side).slot_pokemon(slot).is_some_and(|p| p.hp > 0) {

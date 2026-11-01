@@ -131,6 +131,9 @@ pub struct ActiveSlot {
     /// Chilly Reception volatile (`chillyreception`, duration 1, set by its
     /// priority charge): only takes part in the residual sort.
     pub chilly_reception: bool,
+    /// Zen Mode's `zenmode` volatile (no handlers of its own): up while the
+    /// Darmanitan is in its Zen forme from its ability.
+    pub zen_mode: bool,
     pub stockpile_def: i8,
     pub stockpile_spd: i8,
     /// Used Protect this turn; incoming attacks fail until end of turn.
@@ -437,6 +440,7 @@ impl ActiveSlot {
             gastro_acid: false,
             gastro_ability: crate::engine::abilities::Abilities::NONE,
             chilly_reception: false,
+            zen_mode: false,
             lost_focus: false,
             stockpile_def: 0,
             stockpile_spd: 0,
@@ -2288,6 +2292,9 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
                             // A fired two-turn move's `twoturnmove` lasts until the residual.
                             if a.twoturn_fired && a.charging.is_none() && !v.iter().any(|x| x == "twoturnmove") {
                                 v.push("twoturnmove".to_string());
+                            }
+                            if a.zen_mode {
+                                v.push("zenmode".to_string());
                             }
                             if a.gem {
                                 v.push("gem".to_string());

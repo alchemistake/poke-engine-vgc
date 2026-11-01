@@ -13261,6 +13261,10 @@ fn schooling_check(state: &mut DoublesState, side: Side, slot: usize) {
     pm.special_attack = spa;
     pm.special_defense = spd;
     pm.speed = spe;
+    // `setSpecies` also takes the new forme's weight (Heat Crash, Low Kick).
+    if let Some(w) = crate::doubles::species_weights::species_weight_kg(key) {
+        pm.weight_kg = w;
+    }
     state.side_mut(side).set_speed_cache(idx as usize, spe as _);
 }
 
@@ -13308,6 +13312,10 @@ fn shields_down_check(state: &mut DoublesState, side: Side, slot: usize) {
     pm.special_attack = spa;
     pm.special_defense = spd;
     pm.speed = spe;
+    // `setSpecies` also takes the new forme's weight (Heat Crash, Low Kick).
+    if let Some(w) = crate::doubles::species_weights::species_weight_kg(&key) {
+        pm.weight_kg = w;
+    }
     pm.types = (PokemonType::from(data.types.0), PokemonType::from(data.types.1));
     state.side_mut(side).set_speed_cache(idx as usize, spe as _);
 }
@@ -13478,6 +13486,10 @@ fn wishiwashi_solo_revert(s: &mut crate::doubles::state::DoublesSide, idx: Pokem
     pm.special_attack = spa;
     pm.special_defense = spd;
     pm.speed = spe;
+    // `setSpecies` also takes the new forme's weight (Heat Crash, Low Kick).
+    if let Some(w) = crate::doubles::species_weights::species_weight_kg("wishiwashi") {
+        pm.weight_kg = w;
+    }
     s.set_speed_cache(idx as usize, spe as _);
 }
 
@@ -13515,6 +13527,10 @@ fn minior_core_revert(s: &mut crate::doubles::state::DoublesSide, idx: PokemonIn
     pm.special_attack = spa;
     pm.special_defense = spd;
     pm.speed = spe;
+    // `setSpecies` also takes the new forme's weight (Heat Crash, Low Kick).
+    if let Some(w) = crate::doubles::species_weights::species_weight_kg(&set_species) {
+        pm.weight_kg = w;
+    }
     s.set_speed_cache(idx as usize, spe as _);
 }
 
@@ -18919,6 +18935,15 @@ fn terrain_turns(item: Items) -> i8 {
 fn apply_side_condition(state: &mut DoublesState, side: Side, c: PokemonSideCondition, source_item: Items) -> bool {
     ev_sync(state);
     let ok = apply_side_condition_raw(state, side, c, source_item);
+    // Wind Power `onSideConditionStart`: a starting Tailwind gives each active
+    // holder on that side the `charge` volatile. PS data/abilities.ts windpower.
+    if ok && c == PokemonSideCondition::Tailwind {
+        for sl in 0..2 {
+            if state.side(side).slot_pokemon(sl).is_some_and(|p| p.hp > 0 && p.ability == Abilities::WINDPOWER) {
+                state.side_mut(side).active_slot_mut(sl).charge = true;
+            }
+        }
+    }
     if ok && state.record_events {
         let e = (|st: &DoublesState| {
             let sc = &st.side(side).side_conditions;

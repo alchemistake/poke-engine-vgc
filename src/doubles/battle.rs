@@ -5848,8 +5848,9 @@ fn execute_move_body(
         }
     }
 
-    // Quick Guard `onTry`: `!!this.queue.willAct()` (PS data/moves.ts quickguard).
-    if matches!(choice.move_id, Choices::QUICKGUARD | Choices::WIDEGUARD) && !will_act {
+    // Quick Guard `onTry`: `!!this.queue.willAct()` (PS data/moves.ts quickguard;
+    // also wideguard, craftyshield).
+    if matches!(choice.move_id, Choices::QUICKGUARD | Choices::WIDEGUARD | Choices::CRAFTYSHIELD) && !will_act {
         state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
         push_order(move_order);
         return;
@@ -6170,6 +6171,11 @@ fn execute_move_body(
                 not_fail_skips += 1;
                 continue;
             }
+            // Crafty Shield `onTryHit` (priority 3): Status moves, NOT_FAIL.
+            if crafty_shield_blocks(state, choice, move_ty, ts) {
+                not_fail_skips += 1;
+                continue;
+            }
             let d = state.side(ts).slot_pokemon(tsl).unwrap().clone();
             // Psychic Terrain `onTryHit` per target: a priority move skips a
             // grounded foe (no accuracy roll). PS trySpreadMoveHit.
@@ -6287,7 +6293,8 @@ fn execute_move_body(
             if (ts, tsl) != (side, slot)
                 && (telepathy_blocks(state, side, slot, idx, ts, tsl, choice)
                     || wonder_guard_blocks(state, side, slot, idx, choice, ts, tsl)
-                    || try_absorb(state, rng, ts, tsl, choice.move_type))
+                    || try_absorb(state, rng, ts, tsl, choice.move_type)
+                    || wind_rider_absorb(state, rng, side, idx, choice, ts, tsl))
             {
                 if d.ability == Abilities::FLASHFIRE && choice.move_type == PokemonType::FIRE {
                     flash_fire_used = true;
@@ -6504,6 +6511,14 @@ fn execute_move_body(
         return;
     }
 
+    // Crafty Shield `onTryHit` (priority 3): a Status move aimed at the side
+    // is blocked; returns NOT_FAIL (`moveThisTurnResult` null).
+    if !is_self && !is_field && crafty_shield_blocks(state, choice, move_target(choice.move_id), target_side) {
+        state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = None;
+        push_order(move_order);
+        return;
+    }
+
     // Protect: incoming non-priority moves fail before the accuracy roll.
     // (Charge turns happen before this check: Protect does not block a
     // charging Dig, only its hitting turn.)
@@ -6658,6 +6673,7 @@ fn execute_move_body(
         if telepathy_blocks(state, side, slot, idx, target_side, target_slot, choice)
             || wonder_guard_blocks(state, side, slot, idx, choice, target_side, target_slot)
             || try_absorb(state, rng, target_side, target_slot, choice.move_type)
+            || wind_rider_absorb(state, rng, side, idx, choice, target_side, target_slot)
         {
             state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
             push_order(move_order);
@@ -15548,6 +15564,42 @@ fn contact_abilities(
     }
 }
 
+/// Wind Rider `onTryHit` (breakable): a wind move from another pokemon raises
+/// the holder's Attack by 1 instead and fails (returns null; `-immune` when the
+/// boost fails). No draws. PS data/abilities.ts windrider.
+// TODO(PS parity): Wind Rider `onStart` / `onSideConditionStart` (Tailwind).
+fn wind_rider_absorb(
+    state: &mut DoublesState,
+    rng: &mut Gen5Rng,
+    side: Side,
+    idx: PokemonIndex,
+    choice: &Choice,
+    ts: Side,
+    tsl: usize,
+) -> bool {
+    if !choice.flags.wind {
+        return false;
+    }
+    let Some(d) = state.side(ts).slot_pokemon(tsl) else { return false };
+    if d.hp <= 0
+        || d.ability != Abilities::WINDRIDER
+        || crate::engine::abilities::ignores_target_ability(state.side(side).team_member(idx), choice, &d.ability)
+    {
+        return false;
+    }
+    let Some(tidx) = state.side(ts).active()[tsl].pokemon_index else { return false };
+    apply_boosts(state, rng, ts, tidx, &StatBoosts { attack: 1, ..Default::default() }, false);
+    true
+}
+
+/// Crafty Shield side condition `onTryHit`: blocks Status moves whose PS
+/// `move.target` is not `self` / `all`. PS data/moves.ts craftyshield.
+fn crafty_shield_blocks(state: &DoublesState, choice: &Choice, move_ty: Tgt, ts: Side) -> bool {
+    state.side(ts).side_conditions.crafty_shield > 0
+        && choice.category == MoveCategory::Status
+        && !matches!(move_ty, Tgt::SelfTarget | Tgt::All)
+}
+
 /// Telepathy `onTryHit` (breakable): an ally's damaging move does not hit it.
 fn telepathy_blocks(state: &DoublesState, side: Side, slot: usize, idx: PokemonIndex, ts: Side, tsl: usize, choice: &Choice) -> bool {
     ts == side
@@ -15626,7 +15678,8 @@ fn side_condition_duration_mut(state: &mut DoublesState, side: Side, which: u8) 
         4 => &mut sc.lucky_chant,
         5 => &mut sc.aurora_veil,
         6 => &mut sc.quick_guard,
-        _ => &mut sc.wide_guard,
+        7 => &mut sc.wide_guard,
+        _ => &mut sc.crafty_shield,
     }
 }
 
@@ -19173,6 +19226,7 @@ fn apply_side_condition_raw(state: &mut DoublesState, side: Side, c: PokemonSide
         PokemonSideCondition::StickyWeb if sc.sticky_web == 0 => sc.sticky_web = 1,
         PokemonSideCondition::QuickGuard if sc.quick_guard == 0 => sc.quick_guard = 1,
         PokemonSideCondition::WideGuard if sc.wide_guard == 0 => sc.wide_guard = 1,
+        PokemonSideCondition::CraftyShield if sc.crafty_shield == 0 => sc.crafty_shield = 1,
         PokemonSideCondition::Reflect
         | PokemonSideCondition::LightScreen
         | PokemonSideCondition::AuroraVeil
@@ -19185,6 +19239,7 @@ fn apply_side_condition_raw(state: &mut DoublesState, side: Side, c: PokemonSide
         | PokemonSideCondition::Stealthrock
         | PokemonSideCondition::QuickGuard
         | PokemonSideCondition::WideGuard
+        | PokemonSideCondition::CraftyShield
         | PokemonSideCondition::StickyWeb => return false,
         _ => {}
     }
@@ -20012,7 +20067,7 @@ enum ResidualKind {
     /// Opportunist `onResidual` (order 29): flush the copied boosts.
     OpportunistFlush(Side, usize),
     /// A side condition with a duration (reflect, light screen, safeguard, mist,
-    /// lucky chant, aurora veil, quick guard, wide guard). PS `fieldEvent`
+    /// lucky chant, aurora veil, quick guard, wide guard, crafty shield). PS `fieldEvent`
     /// drops the duration when this handler is reached, so a battle that ends
     /// earlier in the residual leaves the later ones undropped. The payload is
     /// the `side_condition_duration_mut` index.
@@ -20244,6 +20299,9 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
         }
         if state.side(side).side_conditions.wide_guard > 0 {
             push(NO_ORDER, 0, 4, ResidualKind::SideDuration(side, 7));
+        }
+        if state.side(side).side_conditions.crafty_shield > 0 {
+            push(NO_ORDER, 0, 4, ResidualKind::SideDuration(side, 8));
         }
         for slot in 0..2 {
             let s = state.side(side);

@@ -1625,6 +1625,7 @@ fn build_moves() -> HashMap<Choices, Choice> {
                 move_type: PokemonType::ICE,
                 flags: Flags {
                     protect: true,
+                    wind: true,
                     ..Default::default()
                 },
                 secondaries: Some(vec![Secondary {

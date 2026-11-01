@@ -6269,6 +6269,9 @@ fn execute_move_body(
         // Spit Up's `basePowerCallback` is 100 per Stockpile layer (onTry needs one),
         // so it is an attack with power for the immunity step (PS hitStepTryImmunity).
         || (choice.move_id == Choices::SPITUP && state.side(side).active()[slot].stockpile > 0)
+        // Natural Gift past `onPrepareHit` has the berry's power (its type from
+        // `onModifyType`), so the immunity step applies. PS data/moves.ts naturalgift.
+        || choice.move_id == Choices::NATURALGIFT
         // `damageCallback` moves (Endeavor, ...) are attacks: type immunity applies.
         || (!is_self
             && !is_field

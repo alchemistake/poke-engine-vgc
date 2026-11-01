@@ -658,8 +658,13 @@ fn ally_faint_copy(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, fain
         if holder.hp <= 0 || !matches!(holder.ability, Abilities::RECEIVER | Abilities::POWEROFALCHEMY) {
             continue;
         }
-        // `setAbility` returns null on an Ability Shield holder.
-        if crate::engine::mechanics::cant_suppress(ability) || ability_shielded(state, side, hidx) {
+        // A holder under Neutralizing Gas skips its `onAllyFaint` (runEvent's
+        // `ignoringAbility` check, after the handler sort). `setAbility`
+        // returns null on an Ability Shield holder.
+        if neutralizing_gas_suppresses(state, side, slot)
+            || crate::engine::mechanics::cant_suppress(ability)
+            || ability_shielded(state, side, hidx)
+        {
             continue;
         }
         state.side_mut(side).team_member_mut(hidx).ability = ability;
@@ -5909,7 +5914,10 @@ fn execute_move_body(
         let p = state.side(side).team_member(idx);
         let it = p.item;
         if it == Items::NONE
+            // `ignoringItem(true)`: Klutz blocks Fling even for the
+            // `ignoreKlutz` power items.
             || ignoring_item(state, p)
+            || p.ability == Abilities::KLUTZ
             || crate::doubles::megas::is_mega_stone(it)
             // The item's own `onTakeItem` (`singleEvent('TakeItem')`): plates,
             // memories, masks, ... refuse on their species.
@@ -9343,8 +9351,7 @@ fn execute_move_body(
 
         // Psych Up (`onHit`): copy the target's stat stages onto the user.
         // PS data/moves.ts psychup.onHit: the crit-stage volatiles are removed
-        // from the user, then copied from the target (Focus Energy here).
-        // TODO(PS parity): Laser Focus is not copied yet.
+        // from the user, then copied from the target.
         if choice.move_id == Choices::PSYCHUP {
             if let Some(tidx) = state.side(target_side).active()[target_slot].pokemon_index {
                 let copied = state.side(target_side).team_boosts[tidx as usize].clone();
@@ -9356,6 +9363,9 @@ fn execute_move_body(
             // `hasDragonType`.
             let target_dc = state.side(target_side).active()[target_slot].dragon_cheer;
             state.side_mut(side).active_slot_mut(slot).dragon_cheer = target_dc;
+            // Laser Focus: a fresh `addVolatile` (duration 2).
+            let target_lf = state.side(target_side).active()[target_slot].laser_focus > 0;
+            state.side_mut(side).active_slot_mut(slot).laser_focus = if target_lf { 2 } else { 0 };
         }
 
         // Uproar self volatile (`addVolatile('uproar')`, duration 3).
@@ -11677,8 +11687,12 @@ fn execute_move_body(
             if !recoil8 {
                 contact_abilities(state, rng, side, slot, idx, target_side, target_slot, choice);
             }
-            cursed_body(state, rng, side, slot, target_side, target_slot, choice);
-            perish_body(state, rng, side, slot, idx, target_side, target_slot, choice);
+            // Cursed Body / Perish Body are skipped under Neutralizing Gas
+            // (runEvent's `ignoringAbility` check). PS sim/battle.ts runEvent.
+            if !neutralizing_gas_suppresses(state, target_side, target_slot) {
+                cursed_body(state, rng, side, slot, target_side, target_slot, choice);
+                perish_body(state, rng, side, slot, idx, target_side, target_slot, choice);
+            }
             // Weak Armor, Steam Engine, ... (shared with the singles engine).
             damaging_hit_self_abilities(state, rng, target_side, target_slot, choice);
             if let Some(h) = hit_target_pi {
@@ -17487,6 +17501,46 @@ fn apply_on_switch_abilities(
         }
         return false;
     }
+    // Costar `onStart`: copy the ally's stat stages, then remove the user's
+    // crit volatiles and re-add each one the ally holds (fresh `addVolatile`:
+    // Laser Focus gets duration 2; Dragon Cheer keeps the ally's
+    // `hasDragonType`). PS data/abilities.ts costar.
+    if ability == Abilities::COSTAR {
+        let ally_slot = 1 - slot;
+        if !state.side(side).slot_pokemon(ally_slot).is_some_and(|p| p.hp > 0) {
+            return false;
+        }
+        let (Some(aidx), Some(idx)) =
+            (state.side(side).active()[ally_slot].pokemon_index, state.side(side).active()[slot].pokemon_index)
+        else {
+            return false;
+        };
+        let copied = state.side(side).team_boosts[aidx as usize].clone();
+        state.side_mut(side).team_boosts[idx as usize] = copied;
+        let (a_dc, a_fe, a_lf) = {
+            let a = &state.side(side).active()[ally_slot];
+            (a.dragon_cheer, a.focus_energy, a.laser_focus > 0)
+        };
+        {
+            let me = state.side_mut(side).active_slot_mut(slot);
+            me.dragon_cheer = None;
+            me.focus_energy = false;
+            me.laser_focus = 0;
+        }
+        if a_dc.is_some() {
+            try_add_volatile_ties(state, rng, side, slot);
+            state.side_mut(side).active_slot_mut(slot).dragon_cheer = a_dc;
+        }
+        if a_fe {
+            try_add_volatile_ties(state, rng, side, slot);
+            state.side_mut(side).active_slot_mut(slot).focus_energy = true;
+        }
+        if a_lf {
+            try_add_volatile_ties(state, rng, side, slot);
+            state.side_mut(side).active_slot_mut(slot).laser_focus = 2;
+        }
+        return false;
+    }
     // Screen Cleaner `onStart` (data/abilities.ts screencleaner): removes
     // Reflect, Light Screen and Aurora Veil from both sides. No draws.
     if ability == Abilities::SCREENCLEANER {
@@ -18855,7 +18909,23 @@ fn ability_shielded(state: &DoublesState, side: Side, idx: PokemonIndex) -> bool
 /// PS `pokemon.ignoringItem()`: Klutz, Embargo, Magic Room.
 /// TODO(PS parity): Embargo.
 fn ignoring_item(state: &DoublesState, p: &crate::state::Pokemon) -> bool {
-    p.ability == Abilities::KLUTZ || state.magic_room.active || embargoed(state, p)
+    (p.ability == Abilities::KLUTZ && !ignores_klutz(p.item)) || state.magic_room.active || embargoed(state, p)
+}
+
+/// Items with `ignoreKlutz: true` (Macho Brace and the power items): Klutz
+/// does not suppress them (Magic Room / Embargo still do). PS data/items.ts,
+/// sim/pokemon.ts ignoringItem.
+fn ignores_klutz(item: Items) -> bool {
+    matches!(
+        item,
+        Items::MACHOBRACE
+            | Items::POWERANKLET
+            | Items::POWERBAND
+            | Items::POWERBELT
+            | Items::POWERBRACER
+            | Items::POWERLENS
+            | Items::POWERWEIGHT
+    )
 }
 
 /// The `embargo` volatile is up on the active `p` (PS sim/pokemon.ts ignoringItem).
@@ -19342,11 +19412,13 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
             std::mem::swap(&mut pm.attack, &mut pm.defense);
         }
         // `SwitchOut` abilities (PS data/abilities.ts): Regenerator heals
-        // floor(baseMaxhp / 3); Natural Cure clears the status.
+        // floor(baseMaxhp / 3); Natural Cure clears the status. Neither runs
+        // under Neutralizing Gas (runEvent's `ignoringAbility` check).
         let hp0_ev = state.side(side).team_member(old).hp;
+        let ng = neutralizing_gas_suppresses(state, side, slot);
         {
             let p = state.side_mut(side).team_member_mut(old);
-            if p.hp > 0 {
+            if p.hp > 0 && !ng {
                 match p.ability {
                     Abilities::REGENERATOR => p.hp = (p.hp + p.maxhp / 3).min(p.maxhp),
                     Abilities::NATURALCURE if p.status != PokemonStatus::NONE => {

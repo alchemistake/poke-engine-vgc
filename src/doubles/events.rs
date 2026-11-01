@@ -205,6 +205,13 @@ pub(crate) fn volatile_ids(a: &crate::doubles::state::ActiveSlot) -> Vec<String>
     if a.pursuit_vol {
         v.push("pursuit".to_string());
     }
+    // Tar Shot / Powder volatiles (handled outside `CONDS`).
+    if a.tar_shot {
+        v.push("tarshot".to_string());
+    }
+    if a.powder {
+        v.push("powder".to_string());
+    }
     // Nightmare's volatile (only an `onResidual`, run from the residual list).
     if a.nightmare {
         v.push("nightmare".to_string());

@@ -246,6 +246,12 @@ pub struct ActiveSlot {
     /// `nightmare` volatile: a sleeping holder loses 1/4 max HP each residual
     /// (order 11); it ends when the holder's sleep ends.
     pub nightmare: bool,
+    /// `tarshot` volatile: Fire moves get one more effectiveness step
+    /// (`onEffectiveness`). PS data/moves.ts tarshot.condition.
+    pub tar_shot: bool,
+    /// `powder` volatile (duration 1): the holder's Fire move fails and hurts
+    /// it 1/4 max HP (`onTryMove`). PS data/moves.ts powder.condition.
+    pub powder: bool,
     /// Set by the executing move's base-power callback precondition (Payback).
     pub bp_double: bool,
     /// PS `beingCalledBack`: set by `switchIn` on the pokemon leaving the
@@ -513,6 +519,8 @@ impl ActiveSlot {
             illusion_target: None,
             cursed: false,
             nightmare: false,
+            tar_shot: false,
+            powder: false,
             bp_double: false,
             being_called_back: false,
             follow_me: 0,
@@ -995,6 +1003,9 @@ pub struct DoublesState {
     pub ev_drag: bool,
     /// Ion Deluge's one-turn `iondeluge` pseudo-weather: Normal moves are Electric.
     pub ion_deluge: bool,
+    /// PS `battle.lastSuccessfulMoveThisTurn`: the last move whose `useMove`
+    /// did something this turn (Fusion Flare / Fusion Bolt).
+    pub last_success_move: Option<Choices>,
     /// The field / status / item / ability values the events have reported
     /// so far (`ev_sync` emits the differences).
     pub ev_snap: Option<Box<EvSnap>>,
@@ -1811,6 +1822,7 @@ impl DoublesState {
             ev_move: None,
             ev_drag: false,
             ion_deluge: false,
+            last_success_move: None,
             ev_snap: None,
             faint_disabled: Vec::new(),
             db_alive_pending: Vec::new(),

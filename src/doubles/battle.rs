@@ -4165,6 +4165,12 @@ fn execute_action_body(
             }
         }
     }
+    // PS runMove: `lastSuccessfulMoveThisTurn = moveDidSomething ? move.id : null`.
+    {
+        let a = &state.side(action.side).active()[action.slot];
+        let did = move_order.len() > order_len && a.move_result_this_turn == Some(true) && !a.move_result_null;
+        state.last_success_move = if did { Some(action.choice.move_id) } else { None };
+    }
     // lockedmove `onAfterMove` (any move the holder used, including one that
     // missed or was blocked early): removed when duration is 1; `onEnd` then
     // confuses the user unless trueDuration > 1. PS data/conditions.ts.
@@ -5772,6 +5778,16 @@ fn execute_move_body(
         crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::TryMove, (side, slot), Some((target_side, target_slot)));
         metronome_try_move(state, side, slot, idx, choice.move_id);
     }
+    // powder.onTryMove: a Fire move fails, and the user takes
+    // `round(maxhp / 4)` (an indirect damage: Magic Guard blocks it).
+    if !try_move_fails && choice.move_type == PokemonType::FIRE && state.side(side).active()[slot].powder {
+        let maxhp = state.side(side).team_member(idx).maxhp as i32;
+        let dmg = ((maxhp as f64 / 4.0).round() as i32).max(1) as i16;
+        apply_indirect_damage(state, rng, side, slot, dmg);
+        state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
+        push_order(move_order);
+        return;
+    }
 
     // Stockpile family (PS `onTry` / `stockpile` condition). No PRNG draws.
     match choice.move_id {
@@ -5973,6 +5989,16 @@ fn execute_move_body(
         )
     {
         state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
+        push_order(move_order);
+        return;
+    }
+
+    // Dark Void `onTry`: only a Darkrai can use it (`-fail`, returns null).
+    // PS data/moves.ts darkvoid.
+    if choice.move_id == Choices::DARKVOID
+        && state.side(side).team_member(idx).id != crate::pokemon::PokemonName::DARKRAI
+    {
+        state.side_mut(side).slot_scratch_mut(slot).move_result_null = true;
         push_order(move_order);
         return;
     }
@@ -7726,6 +7752,30 @@ fn execute_move_body(
     let mut berserk_before: Vec<(Side, usize, i16)> = Vec::new();
     let mut ee_before: smallvec::SmallVec<[(Side, usize, i16); 4]> = smallvec::SmallVec::new();
 
+    // Spectral Thief (PS sim/battle-actions.ts hitStepStealBoosts): before the
+    // hits, the first target's positive stages move to the user (`boost`), and
+    // the target's are set to 0.
+    if choice.move_id == Choices::SPECTRALTHIEF {
+        {
+            let (ts, tsl) = (target_side, target_slot);
+            if let Some(tidx) = state.side(ts).active()[tsl].pokemon_index {
+                let tb = state.side(ts).team_boosts[tidx as usize].clone();
+                let pos = |v: i8| v.max(0);
+                let steal = StatBoosts {
+                    attack: pos(tb.atk), defense: pos(tb.def), special_attack: pos(tb.spa),
+                    special_defense: pos(tb.spd), speed: pos(tb.spe), accuracy: pos(tb.acc),
+                    evasion: pos(tb.eva), ..Default::default()
+                };
+                if [tb.atk, tb.def, tb.spa, tb.spd, tb.spe, tb.acc, tb.eva].iter().any(|&v| v > 0) {
+                    apply_boosts_from(state, rng, side, idx, &steal, false, false);
+                    let b = &mut state.side_mut(ts).team_boosts[tidx as usize];
+                    for v in [&mut b.atk, &mut b.def, &mut b.spa, &mut b.spd, &mut b.spe, &mut b.acc, &mut b.eva] {
+                        *v = (*v).min(0);
+                    }
+                }
+            }
+        }
+    }
     state.side_mut(side).slot_scratch_mut(slot).hit_number = 1;
     let faint_mark = state.faint_log.len();
     // The user's HP before its hits, for its own Emergency Exit (contact
@@ -9524,6 +9574,19 @@ fn execute_move_body(
                     }
                     state.side_mut(ts).active_slot_mut(tslot).laser_focus = 2;
                 }
+                // Tar Shot: `addVolatile('tarshot')` (no-op when present; the
+                // Speed drop already counts as success).
+                PokemonVolatileStatus::TARSHOT => {
+                    state.side_mut(ts).active_slot_mut(tslot).tar_shot = true;
+                }
+                // Powder: `addVolatile('powder')` fails while present.
+                PokemonVolatileStatus::POWDER => {
+                    if state.side(ts).active()[tslot].powder {
+                        move_failed = true;
+                    } else {
+                        state.side_mut(ts).active_slot_mut(tslot).powder = true;
+                    }
+                }
                 PokemonVolatileStatus::OCTOLOCK => {
                     // PS `addVolatile`: returns false while present (no
                     // `onRestart`), so the status move fails (no hit-loop
@@ -10944,6 +11007,26 @@ fn execute_move_body(
                 _ => move_failed = true,
             }
         }
+        // Purify `onHit`: cures the target's status (fails without one), then
+        // heals the user `ceil(maxhp / 2)`. PS data/moves.ts purify.
+        if choice.move_id == Choices::PURIFY && ti == 0 && !move_failed {
+            match state.side(target_side).active()[target_slot].pokemon_index {
+                Some(tidx) if state.side(target_side).team_member(tidx).status != PokemonStatus::NONE => {
+                    let pm = state.side_mut(target_side).team_member_mut(tidx);
+                    pm.status = PokemonStatus::NONE;
+                    pm.sleep_turns = 0;
+                    state.side_mut(target_side).toxic_stage[tidx as usize] = 0;
+                    let pm = state.side_mut(side).team_member_mut(idx);
+                    let hp0 = pm.hp;
+                    if pm.hp > 0 && state.side(side).active()[slot].heal_block == 0 {
+                        let pm = state.side_mut(side).team_member_mut(idx);
+                        pm.hp = (pm.hp + (pm.maxhp + 1) / 2).min(pm.maxhp);
+                        hp_event(state, side, idx, hp0, "");
+                    }
+                }
+                _ => move_failed = true,
+            }
+        }
         // Ion Deluge `pseudoWeather` (fails while up); Plasma Fists `onAfterMove`
         // adds it too. PS data/moves.ts iondeluge, plasmafists.
         if choice.move_id == Choices::IONDELUGE && ti == 0 {
@@ -10957,6 +11040,23 @@ fn execute_move_body(
             state.ion_deluge = true;
         }
 
+        // Thousand Waves `onHit`: `target.addVolatile('trapped', source, move,
+        // 'trapper')` (Ghost types are immune; no-op while trapped).
+        // PS data/moves.ts thousandwaves.
+        if choice.move_id == Choices::THOUSANDWAVES && !move_failed {
+            let (ts, tslot) = (target_side, target_slot);
+            let a = &state.side(ts).active()[tslot];
+            let ghost = state.side(ts).slot_pokemon(tslot).is_some_and(|p| p.has_type(&PokemonType::GHOST))
+                || a.added_type == PokemonType::GHOST;
+            let alive = state.side(ts).slot_pokemon(tslot).is_some_and(|p| p.hp > 0);
+            if !a.trapped && !ghost && alive && state.side(side).team_member(idx).hp > 0 {
+                try_add_volatile_ties(state, rng, ts, tslot);
+                trapper_link_ties(state, rng, side, slot, idx);
+                let a = state.side_mut(ts).active_slot_mut(tslot);
+                a.trapped = true;
+                a.trapper = Some((side, idx));
+            }
+        }
         // Clear Smog `onHit`: `target.clearBoosts()` (PS data/moves.ts clearsmog).
         if choice.move_id == Choices::CLEARSMOG && ti == 0 && !move_failed {
             if let Some(tidx) = state.side(target_side).active()[target_slot].pokemon_index {
@@ -13394,6 +13494,24 @@ fn base_power_with_modifiers(
     {
         mods.push((0, 6144));
     }
+    // fusionbolt / fusionflare `onBasePower`: x2 right after the other one
+    // succeeded this turn (`lastSuccessfulMoveThisTurn`).
+    if (choice.move_id == Choices::FUSIONBOLT && state.last_success_move == Some(Choices::FUSIONFLARE))
+        || (choice.move_id == Choices::FUSIONFLARE && state.last_success_move == Some(Choices::FUSIONBOLT))
+    {
+        mods.push((0, 8192));
+    }
+    // psyblade.onBasePower: x1.5 in Electric Terrain (`field.isTerrain`).
+    if choice.move_id == Choices::PSYBLADE && terrain == crate::engine::state::Terrain::ELECTRICTERRAIN {
+        mods.push((0, 6144));
+    }
+    // collisioncourse / electrodrift `onBasePower`: x5461/4096 when the move is
+    // super effective (`target.runEffectiveness(move) > 0`).
+    if matches!(choice.move_id, Choices::COLLISIONCOURSE | Choices::ELECTRODRIFT)
+        && crate::engine::damage_calc::type_effectiveness_modifier(&choice.move_type, defender) > 1.0
+    {
+        mods.push((0, 5461));
+    }
     // brine.onBasePower: x2 against a target at or below half HP.
     if choice.move_id == Choices::BRINE && defender.hp as i32 * 2 <= defender.maxhp as i32 {
         mods.push((0, 8192));
@@ -15457,6 +15575,7 @@ fn compute_hit_damage(
             && !bypasses_substitute(choice)
             && attacker.ability != Abilities::INFILTRATOR;
         let ctx = DamageCtx {
+            tar_shot: state.side(target_side).active()[target_slot].tar_shot,
             iron_ball_neutral: choice.move_type == PokemonType::GROUND
                 && defender_actual.item == Items::IRONBALL
                 && !ignoring_item(state, defender_actual)
@@ -22020,6 +22139,13 @@ fn end_of_turn(
 ) {
     // Ion Deluge (duration 1) ends with the turn.
     state.ion_deluge = false;
+    state.last_success_move = None;
+    // Powder (duration 1) ends with the turn.
+    for sd in [Side::One, Side::Two] {
+        for sl in 0..2 {
+            state.side_mut(sd).active_slot_mut(sl).powder = false;
+        }
+    }
     // PS `runAction`: HP of every active before the action, for `EmergencyExit`.
     let hp_before: smallvec::SmallVec<[(Side, usize, i16); 4]> = [(Side::One, 0usize), (Side::One, 1), (Side::Two, 0), (Side::Two, 1)]
         .iter()
@@ -23665,6 +23791,7 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
                 };
                 let ctx = DamageCtx {
                     added_type: state.side(target_side).active()[target_slot].added_type,
+                    tar_shot: state.side(target_side).active()[target_slot].tar_shot,
                     attacker_added_type: state.side(action.side).active()[action.slot].added_type,
                     attack_base,
                     attack_boost,

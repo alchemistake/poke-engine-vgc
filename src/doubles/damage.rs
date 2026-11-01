@@ -261,6 +261,8 @@ pub struct DamageCtx {
     /// PS `addedType` of the defender (TYPELESS = none). Adds a third type to
     /// the type chart lookup in `calculate_damage`.
     pub added_type: PokemonType,
+    /// The defender has the `tarshot` volatile (Fire moves +1 step).
+    pub tar_shot: bool,
     /// PS `addedType` of the attacker (TYPELESS = none). `hasType` counts it,
     /// so a Forest's Curse / Trick-or-Treat holder gets STAB on that type.
     pub attacker_added_type: PokemonType,
@@ -412,6 +414,10 @@ pub fn calculate_damage_with(
     if choice.move_id == crate::choices::Choices::FLYINGPRESS {
         let m = crate::engine::damage_calc::type_effectiveness_modifier(&PokemonType::FLYING, defender);
         tm += m.log2().round() as i32;
+    }
+    // tarshot.onEffectiveness: `if (type !== 'Fire') return; return typeMod + 1`.
+    if ctx.tar_shot && choice.move_type == PokemonType::FIRE {
+        tm += 1;
     }
     if ctx.disguise || ctx.iron_ball_neutral {
         // disguise.onEffectiveness returns 0 (after the immunity check).

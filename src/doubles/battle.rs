@@ -5911,6 +5911,26 @@ fn execute_move_body(
             {
                 continue;
             }
+            // Synchronoise `onTryImmunity` (`hitStepTryImmunity`, after type
+            // immunity): `target.hasType(source.getTypes())`, so a target sharing
+            // no type with the user is skipped before the accuracy roll (no draw).
+            // `getTypes` includes Forest's Curse / Trick-or-Treat `addedType`, and
+            // is `['???']` for a typeless pokemon. PS data/moves.ts synchronoise.
+            if choice.move_id == Choices::SYNCHRONOISE {
+                let types_of = |s: Side, sl: usize, p: &crate::state::Pokemon| {
+                    let added = state.side(s).active()[sl].added_type;
+                    let ts: smallvec::SmallVec<[PokemonType; 3]> = [p.types.0, p.types.1, added]
+                        .iter().copied()
+                        .filter(|t| *t != PokemonType::TYPELESS)
+                        .collect();
+                    if ts.is_empty() { smallvec::smallvec![PokemonType::TYPELESS] } else { ts }
+                };
+                let user_types = types_of(side, slot, state.side(side).team_member(idx));
+                let target_types = types_of(ts, tsl, &d);
+                if !user_types.iter().any(|t| target_types.contains(t)) {
+                    continue;
+                }
+            }
             spread_list.push((ts, tsl));
         }
         if spread_list.is_empty() {

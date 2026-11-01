@@ -11767,6 +11767,25 @@ fn execute_move_body(
             }
         }
     }
+    // Throat Spray `onAfterMoveSecondarySelf`: a sound move that did not fail
+    // (useMoveInner returns before the event on a failed move) uses the item for
+    // +1 SpA, status moves included. PS data/items.ts throatspray, sim/pokemon.ts useItem.
+    let move_ok = if choice.category == MoveCategory::Status {
+        !move_failed && state.side(side).active()[slot].move_result_this_turn != Some(false)
+    } else {
+        any_hit_landed || real_hit || total_damage > 0
+    };
+    if choice.flags.sound
+        && move_ok
+        && !sheer
+        && state.side(side).active()[slot].pokemon_index == Some(idx)
+    {
+        let p = state.side(side).team_member(idx);
+        if p.hp > 0 && p.item == Items::THROATSPRAY && !ignoring_item(state, p) {
+            use_item(state, rng, side, slot, idx, false);
+            apply_boosts(state, rng, side, idx, &StatBoosts { special_attack: 1, ..Default::default() }, false);
+        }
+    }
     // useMoveInner: `runEvent('EmergencyExit', pokemon)` after the user's
     // `AfterMoveSecondarySelf` (Life Orb recoil), for a non-Status move at another.
     if choice.category != MoveCategory::Status

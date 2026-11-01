@@ -163,6 +163,9 @@ pub struct ActiveSlot {
     pub external_call: bool,
     /// The move being run was bounced (PS `move.hasBounced`): no second bounce.
     pub bounced: bool,
+    /// The move being run was taken by Snatch (PS `move.sourceEffect ===
+    /// 'snatch'`): no second Snatch.
+    pub snatched: bool,
     /// Beat Up: base power for the current hit / the remaining hits' base powers.
     pub bp_fixed: f32,
     pub beat_up_queue: Vec<f32>,
@@ -190,6 +193,9 @@ pub struct ActiveSlot {
     pub rage: bool,
     /// Magic Coat's single-turn volatile (reflects like Magic Bounce).
     pub magic_coat: bool,
+    /// Snatch's single-turn volatile: takes the next snatchable move used by
+    /// any pokemon (PS data/moves.ts snatch.condition).
+    pub snatch: bool,
     /// Grudge's volatile: fainting to a move zeroes that move's PP.
     pub grudge: bool,
     /// Micle Berry's `micleberry` volatile duration (next accuracy x1.2).
@@ -451,6 +457,7 @@ impl ActiveSlot {
             throat_chop: 0,
             external_call: false,
             bounced: false,
+            snatched: false,
             bp_fixed: 0.0,
             beat_up_queue: Vec::new(),
             fallen: 0,
@@ -463,6 +470,7 @@ impl ActiveSlot {
             sky_lifted_by: None,
             rage: false,
             magic_coat: false,
+            snatch: false,
             grudge: false,
             micle: 0,
             embargo: 0,

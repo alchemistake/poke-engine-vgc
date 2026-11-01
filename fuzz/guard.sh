@@ -24,7 +24,8 @@ fail() { echo "GUARD FAIL: $*"; FAIL=1; }
 ok() { echo "guard ok: $*"; }
 
 # 1. pokemon-showdown untouched.
-if [ -n "$(git -C "$PS_DIR" status --porcelain 2>/dev/null)" ]; then
+# The pre-commit hook exports GIT_DIR (a worktree's): clear it for the PS repo.
+if [ -n "$(env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE git -C "$PS_DIR" status --porcelain 2>/dev/null)" ]; then
   fail "pokemon-showdown has local changes. It is the spec: revert them (git -C ../pokemon-showdown checkout -- . ; git -C ../pokemon-showdown clean -fd)."
 else
   ok "pokemon-showdown unmodified"

@@ -10007,6 +10007,33 @@ fn execute_move_body(
             let loc = if target_side == side { -(target_slot as i8 + 1) } else { target_slot as i8 + 1 };
             run_copied_move(state, rng, action, m, &mut copy_order, will_act, queue, loc);
         }
+        // Assist `onHit` (PS data/moves.ts assist): `sample` one move slot of
+        // the user's teammates (`side.pokemon` order, fainted ones included)
+        // without `noassist`, then `useMove` it; fails with none.
+        if choice.move_id == Choices::ASSIST && ti == 0 && !move_failed {
+            const NOASSIST: &[&str] = &["assist", "banefulbunker", "beakblast", "belch", "bestow", "blazingtorque", "bounce", "burningbulwark", "celebrate", "chatter", "circlethrow", "combattorque", "copycat", "counter", "covet", "destinybond", "detect", "dig", "dive", "dragontail", "endure", "feint", "fly", "focuspunch", "followme", "helpinghand", "holdhands", "kingsshield", "magicaltorque", "matblock", "mefirst", "metronome", "mimic", "mirrorcoat", "mirrormove", "naturepower", "noxioustorque", "phantomforce", "protect", "ragepowder", "roar", "shadowforce", "shelltrap", "sketch", "skydrop", "sleeptalk", "snatch", "spikyshield", "spotlight", "struggle", "switcheroo", "terastarstorm", "thief", "transform", "trick", "whirlwind", "wickedtorque"];
+            let sd = state.side(side);
+            let mut cands: Vec<Choices> = Vec::new();
+            for &t in sd.ps_order.iter() {
+                let p = &sd.team[t];
+                if t == idx as usize || p.id == crate::pokemon::PokemonName::NONE {
+                    continue;
+                }
+                for m in [&p.moves.m0, &p.moves.m1, &p.moves.m2, &p.moves.m3] {
+                    if m.id != Choices::NONE && !NOASSIST.contains(&m.id.to_string().to_lowercase().as_str()) {
+                        cands.push(m.id);
+                    }
+                }
+            }
+            if cands.is_empty() {
+                move_failed = true;
+            } else {
+                // `onHit` runs in `hitStepMoveHitLoop`: the harness tags the
+                // `sample` "multihit" (fuzz_purpose.js).
+                let m = cands[rng.label("multihit").random(cands.len() as u32) as usize];
+                run_copied_move(state, rng, action, m, &mut copy_order, will_act, queue, 0);
+            }
+        }
         // Metronome `onHit`: `useMove` of a random callable move (`sample`).
         // PS data/moves.ts metronome.
         if choice.move_id == Choices::METRONOME && ti == 0 && !move_failed {

@@ -4726,6 +4726,17 @@ fn execute_move_body(
             PokemonType::ELECTRIC
         };
     }
+    // Ivy Cudgel `onModifyType` (PS data/moves.ts ivycudgel): Water / Fire / Rock
+    // for the Wellspring / Hearthflame / Cornerstone forms (and their Tera forms).
+    if modified.move_id == Choices::IVYCUDGEL {
+        use crate::pokemon::PokemonName as N;
+        match state.side(side).team_member(idx).id {
+            N::OGERPONWELLSPRING | N::OGERPONWELLSPRINGTERA => modified.move_type = PokemonType::WATER,
+            N::OGERPONHEARTHFLAME | N::OGERPONHEARTHFLAMETERA => modified.move_type = PokemonType::FIRE,
+            N::OGERPONCORNERSTONE | N::OGERPONCORNERSTONETERA => modified.move_type = PokemonType::ROCK,
+            _ => {}
+        }
+    }
     // Electrify `onModifyType` (priority -2): any move but Struggle becomes Electric.
     if state.side(side).active()[slot].electrify && modified.move_id != Choices::STRUGGLE {
         modified.move_type = PokemonType::ELECTRIC;

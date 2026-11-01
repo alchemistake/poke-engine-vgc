@@ -13038,7 +13038,8 @@ fn dynamic_base_power(
                 choice.base_power
             }
         }
-        Choices::AVALANCHE if avalanche_boosted => choice.base_power * 2.0,
+        // PS revenge.basePowerCallback: same `attackedBy` check as Avalanche.
+        Choices::AVALANCHE | Choices::REVENGE if avalanche_boosted => choice.base_power * 2.0,
         Choices::ELECTROBALL => m::electro_ball_power(att_spe, def_spe),
         Choices::GYROBALL => m::gyro_ball_power(att_spe, def_spe),
         Choices::GRASSKNOT | Choices::LOWKICK => m::grass_knot_power(defender.map(def_hg).unwrap_or(1)),
@@ -14270,9 +14271,9 @@ fn compute_hit_damage(
                         state.side(side).slot_pokemon(sl).map(|p| p.hp > 0 && p.ability == Abilities::STEELYSPIRIT).unwrap_or(false)
                     })
                     .count() as u8,
-                // PS avalanche.basePowerCallback: doubled when the target
-                // damaged the user this turn (`attackedBy` `thisTurn`).
-                choice.move_id == Choices::AVALANCHE
+                // PS avalanche / revenge `basePowerCallback`: doubled when the
+                // target damaged the user this turn (`attackedBy` `thisTurn`).
+                matches!(choice.move_id, Choices::AVALANCHE | Choices::REVENGE)
                     && state
                         .side(target_side)
                         .active()[target_slot]

@@ -478,6 +478,7 @@ fn faint_pokemon(state: &mut DoublesState, side: Side, slot: usize) {
             s.team_member_mut(idx).types.1 = PokemonType::TYPELESS;
         }
         darmanitan_zen_revert(s, idx);
+        cramorant_revert(s, idx);
         // The status stays until PS `checkFainted` (end of turn, only for a
         // side that can still switch) sets it to 'fnt'; see `check_fainted`.
         // PS keeps the fainted pokemon in the slot until its replacement
@@ -2731,6 +2732,15 @@ fn ps_get_target_queue_insert(state: &DoublesState, rng: &mut Gen5Rng, action: &
 /// `onModifyType` (singleEvent) and `ModifyType` handlers before `getMoveTargets`:
 /// Aura Wheel is Dark for Morpeko-Hangry and Electric otherwise (data/moves.ts
 /// aurawheel), and Electrify (priority -2) makes any move but Struggle Electric.
+/// Multi-Attack `onModifyType`: `runEvent('Memory', ..., 'Normal')` unless the
+/// user ignores its item. PS data/moves.ts multiattack.
+fn multi_attack_type(state: &DoublesState, user: &crate::state::Pokemon) -> Option<PokemonType> {
+    if ignoring_item(state, user) {
+        return None;
+    }
+    crate::doubles::item_data::memory_type(user.item)
+}
+
 fn redirect_move_type(state: &DoublesState, action: &Action) -> PokemonType {
     if action.choice.move_id == Choices::AURAWHEEL {
         return if state.side(action.side).team_member(action.pokemon_index).id == crate::pokemon::PokemonName::MORPEKOHANGRY {
@@ -2750,6 +2760,11 @@ fn redirect_move_type(state: &DoublesState, action: &Action) -> PokemonType {
         Choices::TERRAINPULSE => {
             let grounded = slot_grounded(user, &state.side(action.side).active()[action.slot], state.gravity.active, state.magic_room.active);
             if let Some(t) = crate::engine::mechanics::terrain_pulse_type(state.terrain.terrain_type, grounded) {
+                c.move_type = t;
+            }
+        }
+        Choices::MULTIATTACK => {
+            if let Some(t) = multi_attack_type(state, user) {
                 c.move_type = t;
             }
         }
@@ -4623,6 +4638,11 @@ fn execute_move_body(
                 modified.base_power *= 2.0;
             }
         }
+        Choices::MULTIATTACK => {
+            if let Some(t) = multi_attack_type(state, state.side(side).team_member(idx)) {
+                modified.move_type = t;
+            }
+        }
         Choices::WEATHERBALL => {
             // PS data/moves.ts weatherball `onModifyType` / `onModifyMove` read
             // `pokemon.effectiveWeather()`, which is empty while Cloud Nine /
@@ -5182,6 +5202,10 @@ fn execute_move_body(
                     if let Some((ts, tsl)) = resolved {
                         state.side_mut(ts).active_slot_mut(tsl).sky_lifted_by = Some((side, idx));
                     }
+                }
+                // Dive `onTryMove`: Gulp Missile catches prey before `-prepare`.
+                if choice.move_id == Choices::DIVE {
+                    gulp_missile_catch(state, side, idx);
                 }
                 // Start charging.
                 if let Some(b) = &charge_boost {
@@ -7236,6 +7260,9 @@ fn execute_move_body(
               // `activeTarget`; `getSpreadDamage` then sets it per target.
               // data/abilities.ts unaware.onAnyModifyBoost reads it.
               state.tl.sub_active_target.set(if has_sub { ps_active_target } else { None });
+              if choice.move_id == Choices::SURF {
+                  gulp_missile_catch(state, side, idx);
+              }
               try_gem(state, rng, side, slot, idx, choice, ts, tsl);
               out[i] = compute_hit_damage(state, rng, side, slot, idx, ts, tsl, choice, ate_boosted, sp);
               state.tl.sub_active_target.set(None);
@@ -7450,6 +7477,9 @@ fn execute_move_body(
         }
         if is_attack && !is_self && !is_field && has_target && !pollen_ally {
             if pre_damage.get(ti).is_none() {
+                if choice.move_id == Choices::SURF {
+                    gulp_missile_catch(state, side, idx);
+                }
                 try_gem(state, rng, side, slot, idx, choice, target_side, target_slot);
             }
             // Rollout / Ice Ball `basePowerCallback`: x2^contactHitCount once it has
@@ -11213,6 +11243,9 @@ fn execute_move_body(
             perish_body(state, rng, side, slot, idx, target_side, target_slot, choice);
             // Weak Armor, Steam Engine, ... (shared with the singles engine).
             damaging_hit_self_abilities(state, rng, target_side, target_slot, choice);
+            if let Some(h) = hit_target_pi {
+                gulp_missile_hit(state, rng, side, slot, idx, target_side, target_slot, h);
+            }
             // Sand Spit `onDamagingHit` (PS data/abilities.ts sandspit): the
             // holder sets sand even when this hit KO'd it (the hit's holder).
             if let Some(pi) = hit_target_pi {
@@ -15391,6 +15424,68 @@ fn ice_face_bust(state: &mut DoublesState, side: Side, slot: usize) {
     state.side_mut(side).set_speed_cache(idx as usize, spe as _);
 }
 
+/// Gulp Missile `onSourceTryPrimaryHit` (Surf) / Dive `onTryMove` (charge
+/// turn): an untransformed Cramorant with the ability catches prey, Gulping
+/// above half HP, Gorging at or below. Same stats and types, so only the id
+/// changes. PS data/abilities.ts gulpmissile, data/moves.ts dive.
+fn gulp_missile_catch(state: &mut DoublesState, side: Side, idx: PokemonIndex) {
+    use crate::pokemon::PokemonName as N;
+    let s = state.side(side);
+    let p = s.team_member(idx);
+    if p.id != N::CRAMORANT || p.ability != Abilities::GULPMISSILE || s.transform_save[idx as usize].is_some() {
+        return;
+    }
+    let forme = if p.hp <= p.maxhp / 2 { N::CRAMORANTGORGING } else { N::CRAMORANTGULPING };
+    state.side_mut(side).team_member_mut(idx).id = forme;
+}
+
+/// `clearVolatile` -> `setSpecies(baseSpecies)` (switch-out / faint): a
+/// Gulping / Gorging Cramorant goes back to Cramorant. PS sim/pokemon.ts.
+fn cramorant_revert(s: &mut crate::doubles::state::DoublesSide, idx: PokemonIndex) {
+    use crate::pokemon::PokemonName as N;
+    if matches!(s.team_member(idx).id, N::CRAMORANTGULPING | N::CRAMORANTGORGING) {
+        s.team_member_mut(idx).id = N::CRAMORANT;
+    }
+}
+
+/// Gulp Missile `onDamagingHit`: a Gulping / Gorging holder (not
+/// semi-invulnerable) spits its prey at a living, active attacker: 1/4 of the
+/// attacker's max HP, then -1 Def (Gulping) or paralysis (Gorging), and the
+/// holder goes back to Cramorant. PS data/abilities.ts gulpmissile.
+#[allow(clippy::too_many_arguments)]
+fn gulp_missile_hit(
+    state: &mut DoublesState,
+    rng: &mut Gen5Rng,
+    side: Side,
+    slot: usize,
+    idx: PokemonIndex,
+    ts: Side,
+    tslot: usize,
+    h: PokemonIndex,
+) {
+    use crate::pokemon::PokemonName as N;
+    let forme = state.side(ts).team_member(h).id;
+    if !matches!(forme, N::CRAMORANTGULPING | N::CRAMORANTGORGING) {
+        return;
+    }
+    if state.side(side).active()[slot].pokemon_index != Some(idx)
+        || state.side(side).team_member(idx).hp <= 0
+        || (state.side(ts).active()[tslot].pokemon_index == Some(h) && ally_semi_invulnerable(state, ts, tslot))
+    {
+        return;
+    }
+    let dmg = (state.side(side).team_member(idx).maxhp / 4).max(1);
+    apply_indirect_damage(state, rng, side, slot, dmg);
+    if forme == N::CRAMORANTGULPING {
+        let drop = StatBoosts { defense: -1, ..Default::default() };
+        let drop = mirror_armor_bounce(state, rng, ts, tslot, side, idx, &drop);
+        apply_boosts_from(state, rng, side, idx, &drop, ts != side, true);
+    } else {
+        try_set_status_from_ability(state, rng, side, slot, PokemonStatus::PARALYZE, ts, h);
+    }
+    state.side_mut(ts).team_member_mut(h).id = N::CRAMORANT;
+}
+
 fn disguise_bust(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize) {
     let Some(idx) = state.side(side).active()[slot].pokemon_index else { return };
     // `this.damage(baseMaxhp / 8)` runs the Damage event: Focus Band rolls
@@ -18425,6 +18520,7 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
         }
         // Zen Mode `onEnd` (switch-out) / `clearVolatile`: a Zen forme reverts.
         darmanitan_zen_revert(s, old);
+        cramorant_revert(s, old);
     }
     let pos = position.min(5);
     let idx = PokemonIndex::deserialize(&pos.to_string());

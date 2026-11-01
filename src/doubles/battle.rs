@@ -1452,7 +1452,7 @@ fn accuracy_ability_mods(
     {
         post = chain(post, 4915);
     }
-    // Held items (priority -2): Bright Powder on the target, Wide / Zoom Lens
+    // Held items (priority -2): Bright Powder / Lax Incense on the target, Wide / Zoom Lens
     // on the user (Zoom Lens: the target has no move left this turn).
     if !ignoring_item(state, attacker) {
         match attacker.item {
@@ -1464,7 +1464,7 @@ fn accuracy_ability_mods(
         }
     }
     if let Some(t) = state.side(tside).slot_pokemon(tslot) {
-        if t.item == Items::BRIGHTPOWDER && !ignoring_item(state, t) {
+        if matches!(t.item, Items::BRIGHTPOWDER | Items::LAXINCENSE) && !ignoring_item(state, t) {
             post = chain(post, 3686);
         }
     }

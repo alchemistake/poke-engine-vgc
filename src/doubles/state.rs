@@ -889,6 +889,9 @@ pub struct MoveScratch {
     /// The running move found no targets (PS useMoveInner `!targets.length`):
     /// it returns false without `MoveFail`, so no crash / Steel Beam fail damage.
     pub no_target_fail: std::cell::Cell<bool>,
+    /// The running move reached its accuracy step (PS `hitStepAccuracy`):
+    /// Micle Berry's `onSourceAccuracy` only ends there, not on an earlier fail.
+    pub acc_step: std::cell::Cell<bool>,
     /// PS `battle.activeTarget` while a spread move's Substitute `onTryPrimaryHit`
     /// computes its damage (set only then): the last target of the previous
     /// per-target loop, not the substitute holder. Unaware reads it.

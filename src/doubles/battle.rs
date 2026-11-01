@@ -12233,8 +12233,16 @@ fn has_secondaries(choice: &Choice) -> bool {
 /// state; 0.0 when the move has none (the caller then uses the other
 /// callbacks / the move's base power). The result is the base the
 /// `onBasePower` modifiers (Helping Hand, Technician, ...) act on.
-/// PS data/moves.ts beatup / spitup / storedpower / powertrip.
-fn slot_base_power_callback(state: &DoublesState, side: Side, slot: usize, att_slot: &ActiveSlot, choice: &Choice) -> f32 {
+/// PS data/moves.ts beatup / spitup / storedpower / powertrip / punishment.
+fn slot_base_power_callback(
+    state: &DoublesState,
+    side: Side,
+    slot: usize,
+    att_slot: &ActiveSlot,
+    choice: &Choice,
+    target_side: Side,
+    target_slot: usize,
+) -> f32 {
     match choice.move_id {
         // A Beat Up hit's power can linger in the slot after the move (a later
         // Future Sight from the same slot must not use it).
@@ -12248,6 +12256,13 @@ fn slot_base_power_callback(state: &DoublesState, side: Side, slot: usize, att_s
         Choices::STOREDPOWER | Choices::POWERTRIP => {
             let b = state.side(side).slot_boosts(slot).cloned().unwrap_or_default();
             crate::engine::mechanics::stored_power([b.atk, b.def, b.spa, b.spd, b.spe, b.acc, b.eva])
+        }
+        // Punishment `basePowerCallback`: 60 + 20 per positive stage of the
+        // target (`positiveBoosts`), capped at 200. PS data/moves.ts punishment.
+        Choices::PUNISHMENT => {
+            let b = state.side(target_side).slot_boosts(target_slot).cloned().unwrap_or_default();
+            let pos: i32 = [b.atk, b.def, b.spa, b.spd, b.spe, b.acc, b.eva].iter().map(|&v| (v as i32).max(0)).sum();
+            (60 + 20 * pos).min(200) as f32
         }
         _ => 0.0,
     }
@@ -14595,7 +14610,7 @@ fn compute_hit_damage(
                         && att_slot.move_result_last_turn == Some(false)),
                 // `basePowerCallback`s that read the user's slot (Beat Up, Spit Up,
                 // Stored Power): they run before the `onBasePower` modifiers.
-                slot_base_power_callback(state, side, slot, &att_slot, choice),
+                slot_base_power_callback(state, side, slot, &att_slot, choice, target_side, target_slot),
                 // PS `rivalry.onBasePower`: both genders must be set (`M` / `F`).
                 {
                     let gendered = |g: Option<&str>| matches!(g, Some("M") | Some("F"));

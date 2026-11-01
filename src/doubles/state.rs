@@ -243,6 +243,9 @@ pub struct ActiveSlot {
     pub cursed: bool,
     /// Set by the executing move's base-power callback precondition (Payback).
     pub bp_double: bool,
+    /// PS `beingCalledBack`: set by `switchIn` on the pokemon leaving the
+    /// field, while Pursuit (`onFoeBeforeSwitchOut`) hits it.
+    pub being_called_back: bool,
     /// `followme` (1) / `ragepowder` (2) volatile (duration 1): redirects foes' moves.
     pub follow_me: u8,
     /// Which protect-like move set `protected`: 0 Protect/Detect, 1 King's
@@ -499,6 +502,7 @@ impl ActiveSlot {
             illusion_target: None,
             cursed: false,
             bp_double: false,
+            being_called_back: false,
             follow_me: 0,
             protect_kind: 0,
             perish: 0,

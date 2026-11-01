@@ -11204,6 +11204,25 @@ fn execute_move_body(
                     let drop = mirror_armor_bounce(state, rng, target_side, target_slot, side, idx, &drop);
                     apply_boosts_from(state, rng, side, idx, &drop, target_side != side, true);
                 }
+                // Cotton Down `onDamagingHit`: every other non-fainted active
+                // (allies too, in `getAllActive` order) loses 1 Speed stage.
+                // PS data/abilities.ts cottondown.
+                if ability == Abilities::COTTONDOWN {
+                    let drop = StatBoosts { speed: -1, ..Default::default() };
+                    for s in [Side::One, Side::Two] {
+                        for sl in 0..2 {
+                            if (s, sl) == (target_side, target_slot) {
+                                continue;
+                            }
+                            let Some(p) = state.side(s).active()[sl].pokemon_index else { continue };
+                            if state.side(s).team_member(p).hp <= 0 {
+                                continue;
+                            }
+                            let d = mirror_armor_bounce(state, rng, target_side, target_slot, s, p, &drop);
+                            apply_boosts_from(state, rng, s, p, &d, s != target_side, true);
+                        }
+                    }
+                }
             }
             maybe_wandering_spirit(state, side, slot, target_side, target_slot, choice, rng);
             // PS `runEvent('DamagingHit')` runs the target's `onDamagingHit` handlers

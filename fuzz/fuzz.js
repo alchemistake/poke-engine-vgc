@@ -539,7 +539,9 @@ function stepPSBattle(battleSeed, teamA, teamB, controller, onInit, onTurn) {
     let megaPicked = false; // one Mega Evolution per side
     return side.active.map((p, slot) => {
       // Fainted slot with no replacement: pass (no choice is sent for it).
-      if (!p || p.fainted || p.hp <= 0) return { kind: 'pass' };
+      // A commanding Tatsugiri is skipped too (PS side.ts `getChoiceIndex`
+      // passes it).
+      if (!p || p.fainted || p.hp <= 0 || p.volatiles['commanding']) return { kind: 'pass' };
       const data = req.active[slot];
       // Voluntary switch, now and then, when the pokemon is free to leave.
       const bench = side.pokemon

@@ -198,6 +198,23 @@ pub fn type_mod_by(attacker: &Pokemon, attacking_type: &PokemonType, defender: &
 /// `type_mod_by` plus the target's `addedType` (Trick-or-Treat Ghost, Forest's
 /// Curse Grass). PS `runEffectiveness` / `runImmunity` multiply the added type's
 /// chart entry in as a second type (Normal vs Ghost-added: immune).
+/// The hit's `getMoveHitData(move).typeMod` for an item / ability that reads
+/// it after the hit (Enigma Berry, Weakness Policy): the chart with the added
+/// type, Freeze-Dry's and Flying Press's `onEffectiveness`, Tar Shot.
+pub fn hit_type_mod(attacker: &Pokemon, choice: &Choice, defender: &Pokemon, added_type: PokemonType, tar_shot: bool) -> Option<i32> {
+    let mut tm = type_mod_with_added(attacker, &choice.move_type, defender, added_type)?;
+    if choice.move_id == crate::choices::Choices::FREEZEDRY {
+        tm += 2 * [defender.types.0, defender.types.1].iter().filter(|t| **t == PokemonType::WATER).count() as i32;
+    }
+    if choice.move_id == crate::choices::Choices::FLYINGPRESS {
+        tm += crate::engine::damage_calc::type_effectiveness_modifier(&PokemonType::FLYING, defender).log2().round() as i32;
+    }
+    if tar_shot && choice.move_type == PokemonType::FIRE {
+        tm += 1;
+    }
+    Some(tm)
+}
+
 pub fn type_mod_with_added(
     attacker: &Pokemon,
     attacking_type: &PokemonType,
@@ -296,6 +313,9 @@ pub struct DamageCtx {
     pub disguise: bool,
     /// The defender ability's ModifyDef / ModifySpD modifier (4096 = none).
     pub defense_mod: i64,
+    /// Snow (Ice Def) / Sandstorm (Rock SpD): the weather's `this.modify(x, 1.5)`
+    /// returns a new stat, which the chained `defense_mod` then scales.
+    pub weather_def: bool,
     /// Extra critical-hit stages (Focus Energy +2).
     pub crit_bonus: i32,
     /// Number of screen side conditions (Reflect / Light Screen / Aurora
@@ -480,6 +500,9 @@ pub fn calculate_damage_with(
         attack = ((attack as i64 * ctx.attack_mod + 2047) / 4096) as i16;
     }
     let mut defense = crate::engine::mechanics::boost_stat(def_b, ctx.defense_base).max(1);
+    if ctx.weather_def {
+        defense = ((defense as i64 * 6144 + 2047) / 4096) as i16;
+    }
     if ctx.defense_mod != 4096 {
         defense = ((defense as i64 * ctx.defense_mod + 2047) / 4096) as i16;
     }

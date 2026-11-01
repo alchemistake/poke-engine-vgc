@@ -25,7 +25,7 @@ use crate::state::PokemonStatus;
 const NO_ORDER: i64 = 4294967296;
 
 /// PS volatile id per `ActiveSlot::protect_kind`.
-pub const PROTECT_IDS: [&str; 6] = ["protect", "kingsshield", "spikyshield", "banefulbunker", "silktrap", "burningbulwark"];
+pub const PROTECT_IDS: [&str; 7] = ["protect", "kingsshield", "spikyshield", "banefulbunker", "silktrap", "burningbulwark", "obstruct"];
 
 /// The volatile id a charging semi-invulnerable move adds (PS ids).
 pub fn semi_invulnerable_id(m: Choices) -> Option<&'static str> {
@@ -64,7 +64,7 @@ pub fn pokemon_effects(state: &DoublesState, side: Side, slot: usize) -> Vec<(St
 
 /// The volatile and slot conditions `visit_pokemon_effects` reports, in
 /// report order (`cond_mask`).
-const CONDS: [(&str, HandlerKind); 84] = [
+const CONDS: [(&str, HandlerKind); 85] = [
     ("confusion", HandlerKind::Volatile),
     ("flinch", HandlerKind::Volatile),
     ("mustrecharge", HandlerKind::Volatile),
@@ -147,6 +147,7 @@ const CONDS: [(&str, HandlerKind); 84] = [
     ("foresight", HandlerKind::Volatile),
     ("miracleeye", HandlerKind::Volatile),
     ("iceball", HandlerKind::Volatile),
+    ("obstruct", HandlerKind::Volatile),
     ("futuremove", HandlerKind::Slot),
     ("wish", HandlerKind::Slot),
 ];
@@ -329,22 +330,22 @@ pub(crate) fn vol_mask(a: &crate::doubles::state::ActiveSlot) -> u128 {
     if charging(a) == Some(Choices::SKYDROP) {
         m |= 1 << 10;
     }
-    if a.protected && (a.protect_kind as usize).min(5) == 0 {
+    if a.protected && a.protect_kind == 0 {
         m |= 1 << 11;
     }
-    if a.protected && (a.protect_kind as usize).min(5) == 1 {
+    if a.protected && a.protect_kind == 1 {
         m |= 1 << 12;
     }
-    if a.protected && (a.protect_kind as usize).min(5) == 2 {
+    if a.protected && a.protect_kind == 2 {
         m |= 1 << 13;
     }
-    if a.protected && (a.protect_kind as usize).min(5) == 3 {
+    if a.protected && a.protect_kind == 3 {
         m |= 1 << 14;
     }
-    if a.protected && (a.protect_kind as usize).min(5) == 4 {
+    if a.protected && a.protect_kind == 4 {
         m |= 1 << 15;
     }
-    if a.protected && (a.protect_kind as usize).min(5) == 5 {
+    if a.protected && a.protect_kind == 5 {
         m |= 1 << 16;
     }
     if a.endure {
@@ -488,6 +489,10 @@ pub(crate) fn vol_mask(a: &crate::doubles::state::ActiveSlot) -> u128 {
     }
     if a.power_trick {
         m |= 1 << 63;
+    }
+    // Obstruct (protect kind 6).
+    if a.protected && a.protect_kind == 6 {
+        m |= 1 << 82;
     }
     m
 }

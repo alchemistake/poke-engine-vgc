@@ -22427,6 +22427,9 @@ fn apply_champions_modifiers(moves: &mut HashMap<Choices, Choice>) {
     // champions scripts.ts calculatePP: `move.noPPBoosts ? move.pp : ...`
     // (Revival Blessing is the only noPPBoosts move in the pool).
     moves.get_mut(&Choices::REVIVALBLESSING).unwrap().pp = 1;
+    if let Some(m) = moves.get_mut(&Choices::SKETCH) {
+        m.pp = 1;
+    }
     moves.get_mut(&Choices::ANCHORSHOT).unwrap().base_power = 90.0;
     moves.get_mut(&Choices::APPLEACID).unwrap().base_power = 90.0;
     moves.get_mut(&Choices::ASTRALBARRAGE).unwrap().base_power = 110.0;

@@ -263,6 +263,10 @@ pub struct ActiveSlot {
     pub power_shift: bool,
     /// Autotomize lowered `weighthg`; `clearVolatile` -> `setSpecies` restores it.
     pub autotomized: bool,
+    /// Berserk / Anger Shell `checkedBerserk` is false: a non-multihit move hit
+    /// the holder and its `onAfterMoveSecondary` has not run, so its healing
+    /// berries (`onTryEatItem`) wait.
+    pub berserk_hold: bool,
     /// Commander's `commanding` volatile (Tatsugiri inside its Dondozo ally):
     /// skips its actions, moves miss it, cannot be dragged out.
     /// PS data/conditions.ts commanding.
@@ -546,6 +550,7 @@ impl ActiveSlot {
             tar_shot: false,
             power_shift: false,
             autotomized: false,
+            berserk_hold: false,
             commanding: false,
             commanded: None,
             powder: false,
@@ -965,6 +970,9 @@ pub struct MoveScratch {
     /// PS `battle.activeTarget` of the running move (its resolved target),
     /// read by Dancer after the move.
     pub dance_target: std::cell::Cell<Option<(Side, usize)>>,
+    /// PS `battle.activeMove` after `useMove`: the last move run in this action
+    /// (a Metronome-called Feather Dance), which Dancer copies.
+    pub dance_move: std::cell::Cell<Option<Choices>>,
 }
 
 #[derive(Debug, Clone)]
@@ -1055,6 +1063,9 @@ pub struct DoublesState {
     /// have HP for the rest of the hit (e.g. a lock volatile's `addVolatile`).
     /// The attacker's lock (`locked_move`) at its KO, for the same reason.
     pub db_alive_pending: Vec<(Side, PokemonIndex, Option<(u8, u8)>)>,
+    /// Grudge `onFaint` waits for `faintMessages`: (victim side, victim index,
+    /// attacker side, attacker index, attacker's last move).
+    pub grudge_pending: Vec<(Side, PokemonIndex, Side, PokemonIndex, Choices)>,
     /// Disguise holders whose hit was absorbed by a spread move. PS busts the
     /// forme in `onUpdate`, i.e. inside the next `eachEvent('Update')` after
     /// its speed sort (the sort still sees the stale speed).
@@ -1082,7 +1093,7 @@ pub struct DoublesState {
     pub queue_round: bool,
     /// After You `onHit`: the target's queued action moves to the front
     /// (`queue.prioritizeAction`), applied by the battle loop.
-    pub queue_prioritize: Option<(Side, usize)>,
+    pub queue_prioritize: Option<(Side, PokemonIndex)>,
     /// Quash `onHit`: the target's queued action is moved last (`order = 201`).
     pub queue_quash: Option<(Side, usize)>,
     /// Instruct `onHit`: the target's last move is queued again at the front of
@@ -1894,6 +1905,7 @@ impl DoublesState {
             ev_snap: None,
             faint_disabled: Vec::new(),
             db_alive_pending: Vec::new(),
+            grudge_pending: Vec::new(),
             pending_disguise: Vec::new(),
             faint_log: Vec::new(),
             db_faint_pos: None,

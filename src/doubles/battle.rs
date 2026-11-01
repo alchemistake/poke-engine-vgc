@@ -3726,6 +3726,8 @@ fn execute_action_body(
     if before_move_aborted {
         if let Some(sl) = (0..2).find(|&sl| state.side(action.side).active()[sl].pokemon_index == Some(action.pokemon_index)) {
             crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::MoveAborted, (action.side, sl), None);
+            // Bide `onMoveAborted`: removes the volatile. PS data/moves.ts bide.
+            state.side_mut(action.side).active_slot_mut(sl).bide = None;
         }
     }
     if mold_breaker {
@@ -4325,44 +4327,6 @@ fn execute_move_body(
         a.truant = true;
     }
 
-    // Bide `onBeforeMove` (its `beforeMoveCallback` then stops the move): on
-    // the last turn the stored damage x2 hits the last attacker (a random foe
-    // when it left; fails with none stored); before that, nothing happens.
-    // PS data/moves.ts bide.
-    if let Some((d, total, src)) = state.side(side).active()[slot].bide {
-        if d == 1 {
-            state.side_mut(side).active_slot_mut(slot).bide = None;
-            if total > 0 {
-                let tgt = src.and_then(|(ts, ti)| {
-                    (0..2).find(|&sl| state.side(ts).active()[sl].pokemon_index == Some(ti)).map(|sl| (ts, sl))
-                });
-                let tgt = tgt.or_else(|| {
-                    let foe = side.other();
-                    let foes: Vec<usize> = (0..2).filter(|&k| switched_in_alive(state, foe, k)).collect();
-                    if foes.is_empty() {
-                        None
-                    } else {
-                        Some((foe, foes[rng.label("retarget").random(foes.len() as u32) as usize]))
-                    }
-                });
-                if let Some((ts, tsl)) = tgt {
-                    let ghost = state.side(ts).slot_pokemon(tsl).is_some_and(|p| p.has_type(&PokemonType::GHOST));
-                    let protected = state.side(ts).active()[tsl].protected;
-                    if !ghost && !protected && switched_in_alive(state, ts, tsl) {
-                        let dmg = total.saturating_mul(2);
-                        let sub = state.side(ts).active()[tsl].substitute_health;
-                        if sub > 0 {
-                            state.side_mut(ts).active_slot_mut(tsl).substitute_health = sub - dmg.min(sub);
-                        } else {
-                            apply_damage(state, ts, tsl, dmg);
-                        }
-                    }
-                }
-            }
-        }
-        return;
-    }
-
     // Flinched by a previous move's secondary: cannot act. No draw.
     // PS data/abilities.ts steadfast `onFlinch`: +1 Speed to the holder.
     if state.side(side).active()[slot].flinched {
@@ -4468,6 +4432,49 @@ fn execute_move_body(
             .label("status before move")
             .random_chance(1, (1.0 / FULLY_PARALYZED_CHANCE).round() as u32)
     {
+        return;
+    }
+
+    // Bide `onBeforeMove` (no priority: after paralysis, so a `cant` before it
+    // ends the volatile through `onMoveAborted`): on the last turn the stored
+    // damage x2 hits the last attacker (a random foe when it left; fails with
+    // none stored) and BeforeMove fails; before that, BeforeMove passes and its
+    // `beforeMoveCallback` stops the move (no `MoveAborted`).
+    // PS data/moves.ts bide, sim/battle-actions.ts runMove.
+    if let Some((d, total, src)) = state.side(side).active()[slot].bide {
+        if d == 1 {
+            if total > 0 {
+                let tgt = src.and_then(|(ts, ti)| {
+                    (0..2).find(|&sl| state.side(ts).active()[sl].pokemon_index == Some(ti)).map(|sl| (ts, sl))
+                });
+                let tgt = tgt.or_else(|| {
+                    let foe = side.other();
+                    let foes: Vec<usize> = (0..2).filter(|&k| switched_in_alive(state, foe, k)).collect();
+                    if foes.is_empty() {
+                        None
+                    } else {
+                        Some((foe, foes[rng.label("retarget").random(foes.len() as u32) as usize]))
+                    }
+                });
+                if let Some((ts, tsl)) = tgt {
+                    let ghost = state.side(ts).slot_pokemon(tsl).is_some_and(|p| p.has_type(&PokemonType::GHOST));
+                    let protected = state.side(ts).active()[tsl].protected;
+                    if !ghost && !protected && switched_in_alive(state, ts, tsl) {
+                        let dmg = total.saturating_mul(2);
+                        let sub = state.side(ts).active()[tsl].substitute_health;
+                        if sub > 0 {
+                            state.side_mut(ts).active_slot_mut(tsl).substitute_health = sub - dmg.min(sub);
+                        } else {
+                            apply_damage(state, ts, tsl, dmg);
+                        }
+                    }
+                    // `tryMoveHit` then `removeVolatile('bide')`, before `MoveAborted`.
+                    state.side_mut(side).active_slot_mut(slot).bide = None;
+                }
+            }
+        } else {
+            state.tl.before_move_aborted.set(false);
+        }
         return;
     }
 

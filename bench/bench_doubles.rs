@@ -22,7 +22,7 @@ fn play(input: &BattleInput, record: bool) -> FuzzBattleResult {
     });
     state.send_out_leads(&leads.a, &leads.b);
     let mut rng = Gen5Rng::new(input.seed);
-    run_battle_fuzz(&mut state, &mut rng, input.choices.as_deref().unwrap(), None)
+    run_battle_fuzz(&mut state, &mut rng, input.choices.as_deref().unwrap(), &input.pre_switches, None)
 }
 
 fn main() {

@@ -1272,7 +1272,7 @@ fn plan_queue_change(
     // location (PS sim/battle-queue.ts resolveAction): one draw of its own,
     // then the move draws again. The fuzzer labels that second draw "queue
     // insert" because its stack runs under insertChoice.
-    if matches!(a.choice.move_id, Choices::FOCUSPUNCH | Choices::BEAKBLAST | Choices::CHILLYRECEPTION) {
+    if matches!(a.choice.move_id, Choices::FOCUSPUNCH | Choices::BEAKBLAST | Choices::CHILLYRECEPTION | Choices::SHELLTRAP) {
         let mut charge = a.clone();
         charge.target_loc = 0;
         let _ = ps_get_target_queue_insert(state, rng, &charge);
@@ -1641,6 +1641,8 @@ pub fn start_fuzz_battle(state: &mut DoublesState, rng: &mut Gen5Rng) {
     }
     // Pastel Veil `onAnySwitchIn`.
     pastel_veil_switch_in(state);
+    // Eject Pack `onAnySwitchIn` (priority -4): a lead's Intimidate drop.
+    eject_pack_fire(state, rng);
     each_event_update(state, rng);
     // Forecast `onStart` / `onWeatherChange` (PS data/abilities.ts forecast):
     // a lead's Drizzle / Drought sets the weather, and a Castform lead follows it.
@@ -1899,7 +1901,7 @@ pub fn run_fuzz_turn(
             // A recharging pokemon's action is `recharge`, not the chosen move.
             // Beak Blast's `priorityChargeMove` resolves the same way (PS
             // data/moves.ts beakblast.priorityChargeCallback), in its action's turn.
-            if matches!(a.choice.move_id, Choices::FOCUSPUNCH | Choices::BEAKBLAST) && !state.side(a.side).active()[a.slot].recharging {
+            if matches!(a.choice.move_id, Choices::FOCUSPUNCH | Choices::BEAKBLAST | Choices::SHELLTRAP) && !state.side(a.side).active()[a.slot].recharging {
                 let mut charge = a.clone();
                 charge.target_loc = 0;
                 let _ = ps_get_target(state, rng, &charge);
@@ -2031,7 +2033,7 @@ pub fn run_fuzz_turn(
         let chargers: Vec<(Side, usize, PokemonIndex, Choices)> = actions
             .iter()
             .filter(|a| {
-                matches!(a.choice.move_id, Choices::FOCUSPUNCH | Choices::BEAKBLAST | Choices::CHILLYRECEPTION)
+                matches!(a.choice.move_id, Choices::FOCUSPUNCH | Choices::BEAKBLAST | Choices::CHILLYRECEPTION | Choices::SHELLTRAP)
                     && !state.side(a.side).active()[a.slot].recharging
             })
             .map(|a| (a.side, a.slot, a.pokemon_index, a.choice.move_id))
@@ -2045,6 +2047,9 @@ pub fn run_fuzz_turn(
                 } else if charge_id == Choices::CHILLYRECEPTION {
                     // PS chillyreception.priorityChargeCallback: `addVolatile`.
                     a.chilly_reception = true;
+                } else if charge_id == Choices::SHELLTRAP {
+                    // PS shelltrap.priorityChargeCallback: `addVolatile('shelltrap')`.
+                    a.shell_trap = 1;
                 } else {
                     // PS beakblast.priorityChargeCallback: `addVolatile('beakblast')`.
                     a.beak_blast = true;
@@ -2145,7 +2150,7 @@ pub fn run_fuzz_turn(
                 if matches!(plan.action.choice.move_id, Choices::COUNTER | Choices::MIRRORCOAT) {
                     before_turn_move = Some((plan.action.side, plan.action.pokemon_index, plan.action.choice.move_id));
                 }
-                if matches!(plan.action.choice.move_id, Choices::FOCUSPUNCH | Choices::BEAKBLAST | Choices::CHILLYRECEPTION) {
+                if matches!(plan.action.choice.move_id, Choices::FOCUSPUNCH | Choices::BEAKBLAST | Choices::CHILLYRECEPTION | Choices::SHELLTRAP) {
                     priority_charge = Some((plan.action.side, plan.action.pokemon_index, plan.action.choice.move_id));
                 }
                 apply_queue_plan(&mut actions, i, plan);
@@ -2279,6 +2284,7 @@ pub fn run_fuzz_turn(
                                 a.lost_focus = false;
                             }
                             Choices::CHILLYRECEPTION => a.chilly_reception = true,
+                            Choices::SHELLTRAP => a.shell_trap = 1,
                             _ => a.beak_blast = true,
                         }
                         each_event_update(state, rng);
@@ -2734,10 +2740,28 @@ pub fn run_battle_fuzz(
     state: &mut DoublesState,
     rng: &mut Gen5Rng,
     choices: &[FuzzTurn],
+    pre_switches: &[crate::doubles::state::FuzzSwitch],
     stop_after: Option<u32>,
 ) -> FuzzBattleResult {
     let mut turn_states: Vec<crate::doubles::state::FuzzTurnState> = Vec::new();
     start_fuzz_battle(state, rng);
+    // An Eject Pack used during the send-out switches its holder out before
+    // turn 1 (PS asks for the switch at once).
+    {
+        for sw in pre_switches {
+            let sd = if sw.side == "a" { Side::One } else { Side::Two };
+            let (Some(pos), true) = (sw.position, sw.slot < 2) else { continue };
+            if !state.side(sd).active()[sw.slot].force_switch {
+                continue;
+            }
+            let a = state.side_mut(sd).slot_scratch_mut(sw.slot);
+            a.force_switch = false;
+            a.eject_switch = false;
+            update_speed(state, rng);
+            modify_boost_ties(state, rng, sd, sw.slot);
+            run_switch_in(state, rng, sd, sw.slot, pos);
+        }
+    }
     // Turn 0: the initial state right after the leads are sent out (stat
     // calc, species data, leads). Compared before any turn is simulated.
     if state.record {
@@ -5771,6 +5795,13 @@ fn execute_move_body(
         state.queue_round = true;
     }
 
+    // Shell Trap `onTryMove`: without `gotHit` the move fails (`cant`, null).
+    if choice.move_id == Choices::SHELLTRAP && state.side(side).active()[slot].shell_trap != 2 {
+        state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
+        push_order(move_order);
+        return;
+    }
+
     // PS `runEvent('TryMove', pokemon, target)` (useMoveInner): after the move's
     // own `onTryMove` singleEvent (Double Shock / Burn Up fail there, and the
     // runEvent is skipped), before every `onTry` / `onTryHit` below.
@@ -6141,7 +6172,8 @@ fn execute_move_body(
             // The item's own `onTakeItem` (`singleEvent('TakeItem')`): plates,
             // memories, masks, ... refuse on their species.
             || crate::doubles::item_data::take_lock_num(it).is_some_and(|n| crate::doubles::move_data::lock_num(p.id) == n)
-            || crate::doubles::item_data::fling_power(it) == 0
+            // Flower Sweet's `fling` is `{basePower: 0}`: flung, no damage.
+            || (crate::doubles::item_data::fling_power(it) == 0 && it != Items::FLOWERSWEET)
         {
             state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
             push_order(move_order);
@@ -12151,6 +12183,17 @@ fn execute_move_body(
             }
         }
 
+        // Shell Trap `condition.onHit`: a foe's physical move sets `gotHit` and
+        // the trapper's queued move runs next (`queue.prioritizeAction`).
+        if hit_damage.is_some()
+            && choice.category == MoveCategory::Physical
+            && hts != side
+            && state.side(hts).active()[htsl].shell_trap == 1
+        {
+            state.side_mut(hts).active_slot_mut(htsl).shell_trap = 2;
+            state.queue_prioritize = Some((hts, htsl));
+        }
+
         // Recorded for the DamagingHit pass below (PS `spreadMoveHit` runs the
         // secondaries of every target before DamagingHit for any of them).
         hit_damage_by[ti] = hit_damage;
@@ -12277,9 +12320,11 @@ fn execute_move_body(
         if ability == Abilities::SEEDSOWER {
             field_setting_damaging_hit(state, rng, Abilities::SEEDSOWER, held_item(state, target_side, h));
         }
+                // `checkMoveMakesContact`: Protective Pads stops it too.
                 if matches!(ability, Abilities::GOOEY | Abilities::TANGLINGHAIR)
                     && choice.flags.contact
                     && state.side(side).team_member(idx).ability != Abilities::LONGREACH
+                    && !attacker_has_pads(state, side, idx)
                 {
                     // Mirror Armor on the attacker bounces the drop back onto the
                     // holder (PS `this.boost` goes through TryBoost).
@@ -19071,6 +19116,7 @@ fn damaging_hit_items(
             if choice.flags.contact
                 && (side, slot) != (ts, tslot)
                 && state.side(side).team_member(idx).ability != Abilities::LONGREACH
+                && !attacker_has_pads(state, side, idx)
                 && state.side(side).team_member(idx).item == Items::NONE =>
         {
             state.side_mut(ts).team_member_mut(tidx).item = Items::NONE;
@@ -21356,6 +21402,9 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             }
             if a.beak_blast {
                 vols.push(("beakblast", NO_ORDER, 2, ResidualKind::Marker));
+            }
+            if a.shell_trap > 0 {
+                vols.push(("shelltrap", NO_ORDER, 2, ResidualKind::Marker));
             }
             // PS data/moves.ts snatch.condition: duration 1 (cleared at turn end).
             if a.snatch {
@@ -23748,6 +23797,7 @@ fn end_of_turn(
             a.focus_punch = false;
             a.lost_focus = false;
             a.beak_blast = false;
+            a.shell_trap = 0;
             a.chilly_reception = false;
             a.snatch = false;
             a.stats_raised_this_turn = false;

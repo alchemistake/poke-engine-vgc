@@ -893,5 +893,5 @@ fn run_doubles_fuzz_input(
     dstate.record_events = input.events;
     let mut rng = crate::doubles::rng::Gen5Rng::new(input.seed);
     rng.trace = trace;
-    crate::doubles::battle::run_battle_fuzz(&mut dstate, &mut rng, &choices, input.stop_after)
+    crate::doubles::battle::run_battle_fuzz(&mut dstate, &mut rng, &choices, &input.pre_switches, input.stop_after)
 }

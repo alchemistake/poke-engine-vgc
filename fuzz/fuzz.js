@@ -502,6 +502,9 @@ function stepPSBattle(battleSeed, teamA, teamB, controller, onInit, onTurn) {
   let logIdx = 0;
   let snapshotTurn = battle.turn;
   let cur = null;
+  // Switch answers PS requested before turn 1 (an Eject Pack set off by a
+  // lead's Intimidate): kept on `turns.preSwitches`, sent as `pre_switches`.
+  let preTurn = null;
   let leads = { a: [0, 1], b: [0, 1] };
 
   // Surface choice-rejection messages as exceptions.
@@ -710,6 +713,7 @@ function stepPSBattle(battleSeed, teamA, teamB, controller, onInit, onTurn) {
       ]) {
         // A side that only waits gets a request without `forceSwitch`.
         if (side.requestState !== 'switch' || !reqs[si] || !reqs[si].forceSwitch) continue;
+        const rec = cur || (preTurn = preTurn || { switches: (turns.preSwitches = []) });
         const toks = [];
         // Each flagged slot switches in a DISTINCT replacement while any are
         // left (a pokemon can only switch in once); the rest must pass.
@@ -726,17 +730,17 @@ function stepPSBattle(battleSeed, teamA, teamB, controller, onInit, onTurn) {
           if (p && side.slotConditions[p.position]['revivalblessing']) {
             const fainted = side.pokemon.map((q, pos) => ({ q, pos })).filter((x) => x.q.fainted);
             const pick = fainted[controller.random(fainted.length)];
-            cur.switches.push({ side: key, slot, kind: 'revive', revive: true, position: order.get(pick.q), pivot });
+            rec.switches.push({ side: key, slot, kind: 'revive', revive: true, position: order.get(pick.q), pivot });
             toks.push(`switch ${pick.pos + 1}`);
             return;
           }
           if (candidates.length > 0) {
             const pickIdx = controller.random(candidates.length);
             const pick = candidates.splice(pickIdx, 1)[0];
-            cur.switches.push({ side: key, slot, kind: 'switch', position: order.get(pick.q), pivot });
+            rec.switches.push({ side: key, slot, kind: 'switch', position: order.get(pick.q), pivot });
             toks.push(`switch ${pick.pos + 1}`);
           } else {
-            cur.switches.push({ side: key, slot, kind: 'pass', pivot });
+            rec.switches.push({ side: key, slot, kind: 'pass', pivot });
             toks.push('pass');
           }
         });
@@ -1268,6 +1272,7 @@ function engineInput(battleSeed, meta, turns, n) {
     },
     leads: meta.leads,
     choices: turns.slice(0, n),
+    pre_switches: turns.preSwitches || meta.preSwitches || [],
     stop_after: n,
   };
 }
@@ -1285,6 +1290,7 @@ function runEngineTurn(opts, dir, battleSeed, meta, turns, n) {
       },
       leads: meta.leads,
       choices: turns.slice(0, n),
+      pre_switches: turns.preSwitches || meta.preSwitches || [],
       stop_after: n,
     })
   );
@@ -1399,7 +1405,8 @@ function fastCheckBatch(opts, dir, seeds) {
             snaps.push(snap);
           });
         const { turns, leads, battleTeamA, battleTeamB, winner } = meta;
-        game = { battleSeed, meta: { turns, leads, battleTeamA, battleTeamB, winner }, initSnap, snaps };
+        // `turns.preSwitches` (an array property) does not survive JSON: keep it in meta.
+        game = { battleSeed, meta: { turns, preSwitches: turns.preSwitches, leads, battleTeamA, battleTeamB, winner }, initSnap, snaps };
       } catch (e) {
         firstBad = k; // later tests cannot be first (PS errors are not cached)
         break;

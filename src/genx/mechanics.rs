@@ -71,7 +71,9 @@ pub struct StatusContext {
 pub fn immune_to_status(target: &Pokemon, status: &PokemonStatus, ctx: &StatusContext) -> bool {
     // General status immunity
     match target.ability {
-        Abilities::SHIELDSDOWN => return target.hp > target.maxhp / 2,
+        // PS data/abilities.ts shieldsdown.onSetStatus: only Minior-Meteor is
+        // immune; the core form falls through to the other checks (Safeguard).
+        Abilities::SHIELDSDOWN if target.hp > target.maxhp / 2 => return true,
         Abilities::PURIFYINGSALT => return true,
         Abilities::COMATOSE => return true,
         // PS data/abilities.ts leafguard.onSetStatus: only blocks in sun, otherwise

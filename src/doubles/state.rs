@@ -122,6 +122,9 @@ pub struct ActiveSlot {
     /// Beak Blast volatile (`beakblast`, set by its priority charge, removed
     /// after its own move): a contact hit on this slot burns the attacker.
     pub beak_blast: bool,
+    /// Shell Trap's `shelltrap` volatile (duration 1): 1 set, 2 `gotHit` by a
+    /// foe's physical move. PS data/moves.ts shelltrap.condition.
+    pub shell_trap: u8,
     /// `gastroacid` volatile (Gastro Acid landed on this slot): a second
     /// Gastro Acid fails (PS addVolatile on an existing volatile). Cleared on
     /// switch-out.
@@ -478,6 +481,7 @@ impl ActiveSlot {
             drag_out: false,
             focus_punch: false,
             beak_blast: false,
+            shell_trap: 0,
             gastro_acid: false,
             gastro_ability: crate::engine::abilities::Abilities::NONE,
             chilly_reception: false,
@@ -1227,6 +1231,10 @@ pub struct BattleInput {
     /// mode: the driver re-runs the engine with one more turn each step).
     #[serde(default)]
     pub stop_after: Option<u32>,
+    /// Switches PS requested before turn 1 (an Eject Pack set off during the
+    /// leads' send-out), answered before the turn-0 snapshot.
+    #[serde(default)]
+    pub pre_switches: Vec<FuzzSwitch>,
     /// Record typed battle events into each turn's snapshot (`events`).
     #[serde(default)]
     pub events: bool,

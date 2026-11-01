@@ -10304,6 +10304,35 @@ fn execute_move_body(
                 None => move_failed = true,
             }
         }
+        // Bestow `onHit`: fails when the target holds an item; otherwise the
+        // user's `takeItem()` (Unburden's `onTakeItem` runs even when a Mega
+        // Stone then refuses), the item's `TakeItem` against the receiver and
+        // `setItem` move it over. PS data/moves.ts bestow.
+        if choice.move_id == Choices::BESTOW && ti == 0 && !move_failed {
+            match state.side(target_side).active()[target_slot].pokemon_index {
+                Some(tidx) if (target_side, tidx) != (side, idx) => {
+                    let mine = state.side(side).team_member(idx).item;
+                    if state.side(target_side).team_member(tidx).item != Items::NONE || mine == Items::NONE {
+                        move_failed = true;
+                    } else {
+                        item_lost(state, side, slot, idx);
+                        let receiver_locked = crate::doubles::item_data::take_lock_num(mine)
+                            .is_some_and(|n| crate::doubles::move_data::lock_num(state.side(target_side).team_member(tidx).id) == n);
+                        if !item_takeable(state, side, idx, false, false, true)
+                            || receiver_locked
+                            || state.side(target_side).team_member(tidx).hp <= 0
+                        {
+                            move_failed = true;
+                        } else {
+                            state.side_mut(side).team_member_mut(idx).item = Items::NONE;
+                            state.side_mut(target_side).team_member_mut(tidx).item = mine;
+                            item_gained(state, rng, target_side, target_slot, tidx);
+                        }
+                    }
+                }
+                _ => move_failed = true,
+            }
+        }
         // Gastro Acid: `volatileStatus: 'gastroacid'` suppresses the target's
         // ability until it switches out (modelled as No Ability, which the
         // switch-out reset undoes). Fails on unsuppressable abilities.
@@ -12145,7 +12174,8 @@ fn execute_move_body(
                 && state.side(side).team_member(idx).ability != Abilities::LONGREACH
                 && !state.side(ts).active()[tsl].force_switch
                 && !state.side(ts).active()[tsl].drag_out
-                && item_takeable(state, side, idx, true, false, false)
+                // The active move decides Mail's `onTakeItem` (Knock Off / Thief / Covet).
+                && item_takeable(state, side, idx, true, matches!(choice.move_id, Choices::KNOCKOFF | Choices::THIEF | Choices::COVET), false)
             {
                 let it = state.side(side).team_member(idx).item;
                 state.side_mut(side).team_member_mut(idx).item = Items::NONE;
@@ -12407,7 +12437,9 @@ fn execute_move_body(
         speed_sort_by(&mut order, rng, |a, b| b.0 - a.0);
         // The first hit target whose item can be taken loses it to the user.
         for &(_, ts, tpi) in &order {
-            if (ts, tpi) == (side, idx) || !item_takeable(state, ts, tpi, (ts, tpi) != (side, idx), false, false) {
+            // Knock Off / Thief / Covet as the active move let Mail go (its `onTakeItem`).
+            let mail_ok = matches!(choice.move_id, Choices::KNOCKOFF | Choices::THIEF | Choices::COVET) && (ts, tpi) != (side, idx);
+            if (ts, tpi) == (side, idx) || !item_takeable(state, ts, tpi, (ts, tpi) != (side, idx), mail_ok, false) {
                 continue;
             }
             // `source.setItem` fails on a fainted user (Steel Beam's recoil):
@@ -17922,6 +17954,12 @@ fn item_takeable(state: &DoublesState, hs: Side, hidx: PokemonIndex, by_other: b
     if crate::doubles::item_data::take_lock_num(h.item).is_some_and(|n| crate::doubles::move_data::lock_num(h.id) == n) {
         return false;
     }
+    // Mail `onTakeItem`: only Knock Off, Thief and Covet take it (`knock_off`
+    // covers all three; Sticky Hold's Knock Off clause only differs for a
+    // self-take, which those moves never are). PS data/items.ts mail.
+    if h.item == Items::MAIL && !knock_off {
+        return false;
+    }
     !(h.ability == Abilities::STICKYHOLD && h.hp > 0 && (by_other || knock_off) && !mold)
 }
 
@@ -18203,13 +18241,13 @@ fn after_hit_item_moves(
                 return;
             }
             if state.side(ts).team_member(tidx).item != Items::NONE
-                && !item_takeable(state, ts, tidx, (ts, tidx) != (side, idx), false, mold)
+                && !item_takeable(state, ts, tidx, (ts, tidx) != (side, idx), true, mold)
                 && !(state.side(ts).team_member(tidx).ability == Abilities::STICKYHOLD && !mold)
             {
                 // A Mega Stone refuses after Unburden's `onTakeItem`.
                 item_lost(state, ts, tslot, tidx);
             }
-            if item_takeable(state, ts, tidx, (ts, tidx) != (side, idx), false, mold) {
+            if item_takeable(state, ts, tidx, (ts, tidx) != (side, idx), true, mold) {
                 let it = state.side(ts).team_member(tidx).item;
                 state.side_mut(ts).team_member_mut(tidx).item = Items::NONE;
                 item_lost(state, ts, tslot, tidx);

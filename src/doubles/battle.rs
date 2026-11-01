@@ -547,7 +547,13 @@ fn resolve_faints(state: &mut DoublesState, rng: &mut Gen5Rng, pick: impl Fn(Sid
                 }
                 let h = state.side(sd).team_member(hi);
                 if h.hp > 0 && h.ability == Abilities::SOULHEART {
+                    // The faints still queued behind this one keep their side's
+                    // `pokemonLeft` (the boost's `foePokemonLeft` check).
+                    let mut view: Vec<(Side, usize, PokemonIndex)> = picked[k + 1..].to_vec();
+                    view.extend(keep.iter().copied());
+                    state.unresolved_faints = view;
                     apply_boosts(state, rng, sd, hi, &StatBoosts { special_attack: 1, ..Default::default() }, false);
+                    state.unresolved_faints = Vec::new();
                 }
             }
         }
@@ -4311,7 +4317,8 @@ fn move_fail_self_damage(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side
             }
         }
     }
-    if matches!(choice.move_id, Choices::STEELBEAM | Choices::MINDBLOWN | Choices::CHLOROBLAST) {
+    // Chloroblast has no `onMoveFail` (its recoil is only `recoilDamage`).
+    if matches!(choice.move_id, Choices::STEELBEAM | Choices::MINDBLOWN) {
         if let Some(p) = state.side(side).slot_pokemon(slot) {
             if p.hp > 0 && p.ability != Abilities::MAGICGUARD {
                 let dmg = ((p.maxhp as f32 / 2.0).round() as i16).max(1);
@@ -8897,7 +8904,7 @@ fn execute_move_body(
             }
         }
 
-        if let Some(h) = choice.heal.as_ref().filter(|_| !matches!(choice.move_id, Choices::LIFEDEW | Choices::STEELBEAM | Choices::JUNGLEHEALING | Choices::LUNARBLESSING)) {
+        if let Some(h) = choice.heal.as_ref().filter(|_| !matches!(choice.move_id, Choices::LIFEDEW | Choices::STEELBEAM | Choices::CHLOROBLAST | Choices::JUNGLEHEALING | Choices::LUNARBLESSING)) {
             // Milk Drink (champions `target: adjacentAllyOrSelf`): heals the
             // chosen target, the user or its ally. PS data/mods/champions/moves.ts.
             let (ts, tslot) = if choice.move_id == Choices::MILKDRINK {
@@ -16079,7 +16086,9 @@ fn contact_abilities(
         }
         Some(ContactAbility::EffectSpore) => {
             let attacker = state.side(side).team_member(idx);
-            if !(powder_immune(attacker) || state.side(side).active()[slot].added_type == PokemonType::GRASS) {
+            // `runStatusImmunity('powder')`: Safety Goggles `onImmunity` too.
+            let goggles = attacker.item == Items::SAFETYGOGGLES && !ignoring_item(state, attacker);
+            if !(powder_immune(attacker) || goggles || state.side(side).active()[slot].added_type == PokemonType::GRASS) {
                 let r = rng.label("ability").random(100);
                 let st = if r < 11 {
                     Some(PokemonStatus::SLEEP)
@@ -22112,8 +22121,11 @@ fn end_of_turn(
                     // TODO(PS parity): Cloud Nine / Air Lock (`effectiveWeather`).
                     if let Some(p) = state.side(side).slot_pokemon(slot) {
                         let w = state.weather.weather_type;
-                        let rain = matches!(w, Weather::RAIN | Weather::HEAVYRAIN);
-                        let sun = matches!(w, Weather::SUN | Weather::HARSHSUN);
+                        // Utility Umbrella: rain / sun `onWeather` (Dry Skin, Rain
+                        // Dish, Solar Power) do nothing for the holder.
+                        let umbrella = p.item == Items::UTILITYUMBRELLA && !ignoring_item(state, p);
+                        let rain = matches!(w, Weather::RAIN | Weather::HEAVYRAIN) && !umbrella;
+                        let sun = matches!(w, Weather::SUN | Weather::HARSHSUN) && !umbrella;
                         let snow = matches!(w, Weather::HAIL | Weather::SNOW);
                         let (hp, maxhp) = (p.hp, p.maxhp);
                         let ab = p.ability;

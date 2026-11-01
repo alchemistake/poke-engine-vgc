@@ -6029,7 +6029,12 @@ fn execute_move_body(
 
     // Quick Guard `onTry`: `!!this.queue.willAct()` (PS data/moves.ts quickguard;
     // also wideguard, craftyshield).
-    if matches!(choice.move_id, Choices::QUICKGUARD | Choices::WIDEGUARD | Choices::CRAFTYSHIELD) && !will_act {
+    // Mat Block `onTry` also fails after the user's first move action
+    // (`activeMoveActions > 1`). PS data/moves.ts matblock.
+    if (matches!(choice.move_id, Choices::QUICKGUARD | Choices::WIDEGUARD | Choices::CRAFTYSHIELD | Choices::MATBLOCK)
+        && !will_act)
+        || (choice.move_id == Choices::MATBLOCK && state.side(side).active()[slot].active_move_actions > 1)
+    {
         state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
         push_order(move_order);
         return;
@@ -6357,8 +6362,8 @@ fn execute_move_body(
                 not_fail_skips += 1;
                 continue;
             }
-            // Crafty Shield `onTryHit` (priority 3): Status moves, NOT_FAIL.
-            if crafty_shield_blocks(state, choice, move_ty, ts) {
+            // Crafty Shield / Mat Block `onTryHit` (priority 3): NOT_FAIL.
+            if crafty_shield_blocks(state, choice, move_ty, ts) || mat_block_blocks(state, side, idx, choice, move_ty, ts, tsl) {
                 not_fail_skips += 1;
                 continue;
             }
@@ -6699,7 +6704,11 @@ fn execute_move_body(
 
     // Crafty Shield `onTryHit` (priority 3): a Status move aimed at the side
     // is blocked; returns NOT_FAIL (`moveThisTurnResult` null).
-    if !is_self && !is_field && crafty_shield_blocks(state, choice, move_target(choice.move_id), target_side) {
+    if !is_self
+        && !is_field
+        && (crafty_shield_blocks(state, choice, move_target(choice.move_id), target_side)
+            || mat_block_blocks(state, side, idx, choice, move_target(choice.move_id), target_side, target_slot))
+    {
         state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = None;
         push_order(move_order);
         return;
@@ -8993,6 +9002,10 @@ fn execute_move_body(
                     };
                     let m = (factor * 4096.0).trunc() as i64;
                     ((pm.maxhp as i64 * m + 2047) / 4096) as i16
+                } else if choice.move_id == Choices::SHOREUP {
+                    // Shore Up `onHit`: `modify(maxhp, 0.667)` in a sandstorm, else 0.5.
+                    let m: i64 = if weather == Weather::SAND { 2732 } else { 2048 };
+                    ((pm.maxhp as i64 * m + 2047) / 4096) as i16
                 } else {
                     (pm.maxhp as f32 * h.amount).round() as i16
                 };
@@ -9013,7 +9026,7 @@ fn execute_move_body(
                         // Moonlight family `onHit` returns NOT_FAIL on a failed heal.
                         heal_fail_event = matches!(
                             choice.move_id,
-                            Choices::SYNTHESIS | Choices::MORNINGSUN | Choices::MOONLIGHT
+                            Choices::SYNTHESIS | Choices::MORNINGSUN | Choices::MOONLIGHT | Choices::SHOREUP
                         );
                         // PS sim/battle-actions.ts hitStepMoveHitLoop: NOT_FAIL leaves
                         // `moveThisTurnResult` null, not false (Stomping Tantrum / Temper Flare).
@@ -10438,7 +10451,9 @@ fn execute_move_body(
         // each living active ally of the user, the user included, with Plus or
         // Minus gets +1 Def and +1 SpD (`boost`, the user as the source). Fails
         // with no such ally or when no stat changes.
-        if choice.move_id == Choices::MAGNETICFLUX && ti == 0 && !move_failed {
+        // Gear Up (PS data/moves.ts gearup.onHitSide): the same, +1 Atk / +1 SpA.
+        if matches!(choice.move_id, Choices::MAGNETICFLUX | Choices::GEARUP) && ti == 0 && !move_failed {
+            let gear = choice.move_id == Choices::GEARUP;
             let mut did = false;
             for sl in 0..2 {
                 let Some(aidx) = state.side(side).active()[sl].pokemon_index else { continue };
@@ -10446,18 +10461,16 @@ fn execute_move_body(
                 if m.hp <= 0 || !matches!(m.ability, Abilities::PLUS | Abilities::MINUS) {
                     continue;
                 }
-                let before = (state.side(side).team_boosts[aidx as usize].def, state.side(side).team_boosts[aidx as usize].spd);
-                apply_boosts_from(
-                    state,
-                    rng,
-                    side,
-                    aidx,
-                    &StatBoosts { defense: 1, special_defense: 1, ..Default::default() },
-                    false,
-                    sl != slot,
-                );
                 let tb = &state.side(side).team_boosts[aidx as usize];
-                did |= (tb.def, tb.spd) != before;
+                let before = (tb.def, tb.spd, tb.atk, tb.spa);
+                let b = if gear {
+                    StatBoosts { attack: 1, special_attack: 1, ..Default::default() }
+                } else {
+                    StatBoosts { defense: 1, special_defense: 1, ..Default::default() }
+                };
+                apply_boosts_from(state, rng, side, aidx, &b, false, sl != slot);
+                let tb = &state.side(side).team_boosts[aidx as usize];
+                did |= (tb.def, tb.spd, tb.atk, tb.spa) != before;
             }
             if !did {
                 move_failed = true;
@@ -10797,6 +10810,19 @@ fn execute_move_body(
             let a = state.side_mut(side).active_slot_mut(slot);
             a.power_trick = !a.power_trick;
             a.pt_swapped = !a.pt_swapped;
+        }
+        // Power Shift: the same Attack / Defense swap, as its own volatile (a
+        // second use fails: no `onRestart`). PS data/moves.ts powershift.
+        if choice.move_id == Choices::POWERSHIFT && ti == 0 && !move_failed {
+            if state.side(side).active()[slot].power_shift {
+                move_failed = true;
+            } else {
+                let pm = state.side_mut(side).team_member_mut(idx);
+                std::mem::swap(&mut pm.attack, &mut pm.defense);
+                let a = state.side_mut(side).active_slot_mut(slot);
+                a.power_shift = true;
+                a.pt_swapped = !a.pt_swapped;
+            }
         }
         // Electrify: fails if the target already moved (`onTryHit`); lasts the turn.
         if choice.move_id == Choices::ELECTRIFY && ti == 0 && !move_failed {
@@ -11688,13 +11714,15 @@ fn execute_move_body(
                 crate::doubles::damage::set_gravity(true);
                 // `onFieldStart`: Fly / Bounce charges end (volatile removed,
                 // queued move cancelled). PS data/moves.ts gravity.condition.
-                // TODO(PS parity): Sky Drop, Telekinesis, `-activate` log.
+                // TODO(PS parity): `-activate` log.
                 for gs in [Side::One, Side::Two] {
                     for gsl in 0..2 {
                         let a = state.side_mut(gs).active_slot_mut(gsl);
-                        if matches!(a.charging, Some((Choices::FLY | Choices::BOUNCE, _))) {
+                        if matches!(a.charging, Some((Choices::FLY | Choices::BOUNCE | Choices::SKYDROP, _))) {
+                            // Sky Drop: the lifted target is released too.
                             a.charging = None;
                             state.queue_cancel.push((gs, gsl));
+                            release_sky_drops(state);
                         }
                         // `removeVolatile('magnetrise')` / `('telekinesis')`.
                         let a = state.side_mut(gs).active_slot_mut(gsl);
@@ -15631,7 +15659,13 @@ fn compute_hit_damage(
             defense_boost: def_boost_stat,
             // Mega Sol (`pokemon.effectiveWeather()` while the holder is the
             // active pokemon): sun for its moves, whatever the field weather.
-            weather: if attacker.ability == Abilities::MEGASOL { Weather::SUN } else { effective_weather(state) },
+            // A defender holding Utility Umbrella: `defender.effectiveWeather()`
+            // is none in rain / sun (rain's `onWeatherModifyDamage` checks it).
+            weather: if attacker.ability == Abilities::MEGASOL {
+                Weather::SUN
+            } else {
+                umbrella_weather(state, defender_actual, effective_weather(state))
+            },
             // PS data/moves.ts reflect / lightscreen / auroraveil
             // `onAnyModifyDamage`: skipped when `move.infiltrates`
             // (data/abilities.ts infiltrator.onModifyMove).
@@ -16292,6 +16326,16 @@ fn crafty_shield_blocks(state: &DoublesState, choice: &Choice, move_ty: Tgt, ts:
         && !matches!(move_ty, Tgt::SelfTarget | Tgt::All)
 }
 
+/// Mat Block side condition `onTryHit` (priority 3): blocks every move that
+/// Protect would (`checkMoveBypassesProtect`) unless it targets its user only.
+/// PS data/moves.ts matblock.
+fn mat_block_blocks(state: &DoublesState, side: Side, idx: PokemonIndex, choice: &Choice, move_ty: Tgt, ts: Side, tsl: usize) -> bool {
+    state.side(ts).side_conditions.mat_block > 0
+        && move_ty != Tgt::SelfTarget
+        && choice.flags.protect
+        && !protect_bypassed(state, side, idx, choice, ts, tsl)
+}
+
 /// Telepathy `onTryHit` (breakable): an ally's damaging move does not hit it.
 fn telepathy_blocks(state: &DoublesState, side: Side, slot: usize, idx: PokemonIndex, ts: Side, tsl: usize, choice: &Choice) -> bool {
     ts == side
@@ -16371,7 +16415,8 @@ fn side_condition_duration_mut(state: &mut DoublesState, side: Side, which: u8) 
         5 => &mut sc.aurora_veil,
         6 => &mut sc.quick_guard,
         7 => &mut sc.wide_guard,
-        _ => &mut sc.crafty_shield,
+        8 => &mut sc.crafty_shield,
+        _ => &mut sc.mat_block,
     }
 }
 
@@ -16379,6 +16424,19 @@ fn side_condition_duration_mut(state: &mut DoublesState, side: Side, which: u8) 
 /// misses (no draw) unless it is one of the moves that still hit that charge
 /// turn (`onInvulnerability` in data/moves.ts), or a No Guard side is involved.
 /// The charge must still be live (an aborted charge lost its `twoturnmove`).
+/// PS `pokemon.effectiveWeather()`: a Utility Umbrella holder sees no rain /
+/// sun (data/items.ts utilityumbrella).
+fn umbrella_weather(state: &DoublesState, p: &crate::state::Pokemon, w: Weather) -> Weather {
+    if p.item == Items::UTILITYUMBRELLA
+        && !ignoring_item(state, p)
+        && matches!(w, Weather::RAIN | Weather::SUN | Weather::HEAVYRAIN | Weather::HARSHSUN)
+    {
+        Weather::NONE
+    } else {
+        w
+    }
+}
+
 fn semi_invulnerable_blocks(
     state: &DoublesState,
     src_side: Side,
@@ -20068,6 +20126,7 @@ fn apply_side_condition_raw(state: &mut DoublesState, side: Side, c: PokemonSide
         PokemonSideCondition::QuickGuard if sc.quick_guard == 0 => sc.quick_guard = 1,
         PokemonSideCondition::WideGuard if sc.wide_guard == 0 => sc.wide_guard = 1,
         PokemonSideCondition::CraftyShield if sc.crafty_shield == 0 => sc.crafty_shield = 1,
+        PokemonSideCondition::MatBlock if sc.mat_block == 0 => sc.mat_block = 1,
         PokemonSideCondition::Reflect
         | PokemonSideCondition::LightScreen
         | PokemonSideCondition::AuroraVeil
@@ -21150,6 +21209,9 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
         }
         if state.side(side).side_conditions.crafty_shield > 0 {
             push(NO_ORDER, 0, 4, ResidualKind::SideDuration(side, 8));
+        }
+        if state.side(side).side_conditions.mat_block > 0 {
+            push(NO_ORDER, 0, 4, ResidualKind::SideDuration(side, 9));
         }
         for slot in 0..2 {
             let s = state.side(side);
@@ -23870,7 +23932,7 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
                     attack_boost,
                     defense_base,
                     defense_boost,
-                    weather: effective_weather(state),
+                    weather: umbrella_weather(state, defender, effective_weather(state)),
                     reflect: false,
                     light_screen: false,
                     defender_mod: 4096,

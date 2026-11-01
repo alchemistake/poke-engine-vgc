@@ -205,6 +205,9 @@ pub(crate) fn volatile_ids(a: &crate::doubles::state::ActiveSlot) -> Vec<String>
     if a.pursuit_vol {
         v.push("pursuit".to_string());
     }
+    if a.power_shift {
+        v.push("powershift".to_string());
+    }
     if a.commanding {
         v.push("commanding".to_string());
     }
@@ -1213,8 +1216,16 @@ impl Collector<'_> {
     }
 
     fn push_global(&mut self, entries: &[GlobalEntry], active: u32, callback: &str) {
+        self.push_global_untargeted(entries, active, 0, callback);
+    }
+
+    /// `push_global` where the `untargeted` entries sort as a plain Condition
+    /// (subOrder 2): PS resolvePriority only gives a pseudo-weather subOrder 5
+    /// once its state's `target` is the Field.
+    fn push_global_untargeted(&mut self, entries: &[GlobalEntry], active: u32, untargeted: u32, callback: &str) {
         for h in entries.iter().filter(|h| active & (1 << h.idx) != 0) {
-            self.hs.push(Key { order: h.order, priority: h.priority, speed: 0, sub_order: h.sub_order });
+            let sub_order = if untargeted & (1 << h.idx) != 0 { 2 } else { h.sub_order };
+            self.hs.push(Key { order: h.order, priority: h.priority, speed: 0, sub_order });
             if let Some(d) = &mut self.debug {
                 d.push(format!("{} {}", callback, h.id));
             }
@@ -1313,7 +1324,14 @@ pub fn run_event_ties_on_effect(
         }
     }
     if !ev.field.is_empty() {
-        c.push_global(&ev.field, field_mask(state), ev.poke_names[ON]);
+        // Pseudo-weathers (`FIELD_IDS[11..]`) get their state `target` when
+        // a handler of theirs runs here (PS runEvent `effectState.target`).
+        let fm = field_mask(state);
+        let pseudo = fm & !((1u32 << 11) - 1);
+        let targeted = state.pseudo_targeted.get() & fm;
+        c.push_global_untargeted(&ev.field, fm, pseudo & !targeted, ev.poke_names[ON]);
+        let ran = ev.field.iter().filter(|h| fm & (1 << h.idx) != 0).fold(0u32, |m, h| m | 1 << h.idx);
+        state.pseudo_targeted.set(targeted | (ran & pseudo));
     }
     if let Some(d) = &c.debug {
         if c.hs.len() > 1 {

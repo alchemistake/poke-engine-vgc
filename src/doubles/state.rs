@@ -249,6 +249,9 @@ pub struct ActiveSlot {
     /// `tarshot` volatile: Fire moves get one more effectiveness step
     /// (`onEffectiveness`). PS data/moves.ts tarshot.condition.
     pub tar_shot: bool,
+    /// `powershift` volatile: Attack and Defense swapped (PS data/moves.ts
+    /// powershift.condition; no `onRestart`, so a second use fails).
+    pub power_shift: bool,
     /// Commander's `commanding` volatile (Tatsugiri inside its Dondozo ally):
     /// skips its actions, moves miss it, cannot be dragged out.
     /// PS data/conditions.ts commanding.
@@ -527,6 +530,7 @@ impl ActiveSlot {
             cursed: false,
             nightmare: false,
             tar_shot: false,
+            power_shift: false,
             commanding: false,
             commanded: None,
             powder: false,
@@ -950,6 +954,10 @@ pub struct MoveScratch {
 pub struct DoublesState {
     /// Scratch flags of the running move (were thread-locals).
     pub tl: MoveScratch,
+    /// Pseudo-weathers (bits over `events::FIELD_IDS`) whose PS effect state
+    /// has a `target`: PS sets it the first time one of their handlers runs
+    /// in `runEvent`; until then they sort as a plain Condition (subOrder 2).
+    pub pseudo_targeted: std::cell::Cell<u32>,
     /// Union of the four slots' event-handler effect bits (`events`), keyed
     /// by both sides' `ver` and the Future Sight / Wish bits.
     pub(crate) fx_union: std::cell::Cell<Option<(u32, u32, u8, crate::doubles::events::FxMask)>>,
@@ -1767,6 +1775,7 @@ impl DoublesState {
         }
         let state = Self {
             tl: MoveScratch { pressure_extra: std::cell::Cell::new(-1), ..Default::default() },
+            pseudo_targeted: std::cell::Cell::new(0),
             fx_union: Default::default(),
             actives_order: Default::default(),
             last_move: None,

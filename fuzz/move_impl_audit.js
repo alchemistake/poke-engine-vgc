@@ -22,6 +22,7 @@ const dir = path.resolve(__dirname, '../src/doubles');
 let src = '';
 for (const f of fs.readdirSync(dir)) if (f.endsWith('.rs') && !GENERATED.has(f)) src += fs.readFileSync(path.join(dir, f), 'utf8');
 src += fs.readFileSync(path.resolve(__dirname, '../src/genx/mechanics.rs'), 'utf8');
+const lines = src.split('\n');
 
 // Fields the engine handles from the move table (choices.rs) generically are
 // not listed; these need code of their own.
@@ -37,7 +38,10 @@ for (const id of [...pool].sort()) {
   if (m.self && Object.keys(m.self).some((k) => typeof m.self[k] === 'function')) hooks.push('self.onHit');
   for (const f of FIELDS) if (m[f] !== undefined && m[f] !== false) hooks.push(f);
   if (!hooks.length) continue;
-  const named = new RegExp(`Choices::${id.toUpperCase()}\\b`).test(src);
+  // A name inside a long list (`| Choices::X` lines, or a line naming 3+
+  // moves) is a flag table, not handling of its own.
+  const re = new RegExp(`Choices::${id.toUpperCase()}\\b`);
+  const named = lines.some((l) => re.test(l) && !/^\s*\|\s*Choices::\w+\s*(=>.*)?$/.test(l) && (l.match(/Choices::/g) || []).length < 3);
   if (!named) out.push({ id, hooks });
 }
 if (process.argv.includes('--json')) console.log(JSON.stringify(out));

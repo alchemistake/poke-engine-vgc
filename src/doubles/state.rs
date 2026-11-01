@@ -43,6 +43,9 @@ pub struct ActiveSlot {
     pub force_switch: bool,
     /// Switching out from Eject Button (PS `switchFlag === true`).
     pub eject_switch: bool,
+    /// Eject Pack `effectState.eject`: a stat was lowered, the pack fires at
+    /// the next AfterMove.
+    pub eject_pack: bool,
     pub force_trapped: bool,
     pub slow_uturn_move: bool,
     pub baton_passing: bool,
@@ -193,6 +196,10 @@ pub struct ActiveSlot {
     pub micle: u8,
     /// `embargo` volatile duration (5): the holder's item is ignored.
     pub embargo: u8,
+    /// `foresight` volatile (Foresight / Odor Sleuth).
+    pub foresight: bool,
+    /// `miracleeye` volatile.
+    pub miracle_eye: bool,
     /// Protosynthesis / Quark Drive volatile: (best stat 0..4 = Atk, Def, SpA,
     /// SpD, Spe; from Booster Energy).
     pub paradox: Option<(u8, bool)>,
@@ -214,6 +221,10 @@ pub struct ActiveSlot {
     /// (PS `onFoeAfterBoost`), applied when the holder's `onAnyAfterMove`,
     /// `onAnySwitchIn` or `onResidual` runs. Indexed like `StatBoosts`.
     pub opportunist_boosts: [i8; 7],
+    /// Mirror Herb's `effectState.boosts` (the same copy as Opportunist).
+    pub mirror_herb_boosts: [i8; 7],
+    /// Me First's `mefirst` volatile: the called move has x1.5 power.
+    pub me_first: bool,
     /// Illusion's disguise, fixed at switch-in (`onBeforeSwitchIn`): the last
     /// unfainted pokemon after the holder then. `Some(None)` = no disguise.
     pub illusion_target: Option<Option<usize>>,
@@ -389,6 +400,7 @@ impl ActiveSlot {
             damage_dealt: DamageDealt::default(),
             force_switch: false,
             eject_switch: false,
+            eject_pack: false,
             force_trapped: false,
             slow_uturn_move: false,
             baton_passing: false,
@@ -454,6 +466,8 @@ impl ActiveSlot {
             grudge: false,
             micle: 0,
             embargo: 0,
+            foresight: false,
+            miracle_eye: false,
             paradox: None,
             paradox_quark: false,
             bide: None,
@@ -462,6 +476,8 @@ impl ActiveSlot {
             active_move_actions: 0,
             illusion_broken: false,
             opportunist_boosts: [0; 7],
+            mirror_herb_boosts: [0; 7],
+            me_first: false,
             illusion_target: None,
             cursed: false,
             bp_double: false,

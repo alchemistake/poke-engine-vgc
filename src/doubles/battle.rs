@@ -3528,15 +3528,28 @@ fn pressure_extra_count(state: &DoublesState, action: &Action) -> i8 {
     } else {
         move_target(action.choice.move_id)
     };
-    let all_foes = matches!(
+    // `mustpressure` moves set `pressureTargets = this.foes()` after the target
+    // switch, unless `getMoveTargets` returned early with no target (PS
+    // data/moves.ts flags: Imprison, Snatch, Spikes, Stealth Rock, Tera Blast,
+    // Toxic Spikes).
+    let must_pressure = matches!(
         action.choice.move_id,
-        Choices::IMPRISON | Choices::SPIKES | Choices::STEALTHROCK | Choices::TOXICSPIKES
-    ) || matches!(ty, Tgt::AllAdjacentFoes | Tgt::AllAdjacent)
+        Choices::IMPRISON
+            | Choices::SPIKES
+            | Choices::STEALTHROCK
+            | Choices::TOXICSPIKES
+            | Choices::TERABLAST
+            | Choices::SNATCH
+    );
+    let no_target = matches!(state.tl.pressure_target.get(), Some(None));
+    let single_ty = matches!(ty, Tgt::Normal | Tgt::Any | Tgt::AdjacentFoe | Tgt::RandomNormal | Tgt::Scripted);
+    let all_foes = (must_pressure && !(single_ty && no_target))
+        || matches!(ty, Tgt::AllAdjacentFoes | Tgt::AllAdjacent)
         // PS getMoveTargets: `all` targets `alliesAndSelf()` plus `foes(true)`
         // (Wonder Room, Sunny Day, ...); `allySide` / `allyTeam` no foes.
         || ty == Tgt::All;
     // `scripted` (Metal Burst, Counter, ...) takes PS's default branch too.
-    let single = matches!(ty, Tgt::Normal | Tgt::Any | Tgt::AdjacentFoe | Tgt::RandomNormal | Tgt::Scripted);
+    let single = single_ty;
     let slots: smallvec::SmallVec<[usize; 2]> = if all_foes {
         smallvec::smallvec![0, 1]
     } else if single && state.tl.pressure_target.get().is_some() {

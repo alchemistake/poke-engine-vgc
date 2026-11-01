@@ -7092,8 +7092,13 @@ fn execute_move_body(
       // `multiaccuracy` (Triple Axel / Triple Kick / Population Bomb): hits after the first roll
       // accuracy again; a miss ends the loop. PS sim/battle-actions.ts
       // hitStepMoveHitLoop. The loop top checks `targets.every(!hp)` before the
-      // roll, so a fainted target ends it here with no draw.
-      if hit_idx > 0 && matches!(choice.move_id, Choices::TRIPLEAXEL | Choices::TRIPLEKICK | Choices::POPULATIONBOMB) {
+      // roll, so a fainted target ends it here with no draw. Skill Link
+      // `onModifyMove` deletes `move.multiaccuracy`: no per-hit roll (PS
+      // data/abilities.ts skilllink).
+      if hit_idx > 0
+          && matches!(choice.move_id, Choices::TRIPLEAXEL | Choices::TRIPLEKICK | Choices::POPULATIONBOMB)
+          && state.side(side).team_member(idx).ability != Abilities::SKILLLINK
+      {
           if !is_self && !is_field && !hit_targets.iter().any(|&(ts, tsl)| switched_in_alive(state, ts, tsl)) {
               break 'hit_loop;
           }

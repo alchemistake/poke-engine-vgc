@@ -70,6 +70,11 @@ pub struct ActiveSlot {
     /// Ripen `abilityState.berryWeaken` (a `Cell`: the damage calc, which
     /// holds the state shared, consumes it).
     pub berry_weaken: std::cell::Cell<bool>,
+    /// PS `usedItemThisTurn` (Pickup).
+    pub used_item_this_turn: bool,
+    /// The terrain a terrain seed last checked (its `onStart` /
+    /// `onTerrainChange`); `None` until the holder's item starts.
+    pub seed_terrain: Option<crate::engine::state::Terrain>,
     /// Choice item `choicelock` volatile: the locked move.
     pub choice_lock: Option<Choices>,
     /// PS `moveThisTurnResult = null` (a NOT_FAIL hit: Protect), this / last turn.
@@ -357,6 +362,8 @@ impl ActiveSlot {
             metronome_vol: false,
             cud_chew: None,
             berry_weaken: std::cell::Cell::new(false),
+            used_item_this_turn: false,
+            seed_terrain: None,
             choice_lock: None,
             move_result_null: false,
             move_null_last_turn: false,
@@ -737,6 +744,14 @@ pub struct MoveScratch {
     pub band_pre: std::cell::Cell<u8>,
     /// The residual action is running (PS `!queue.peek()`).
     pub in_residual: std::cell::Cell<bool>,
+    /// The running move's Pressure PP (side, slot, user, move slot, move), still
+    /// owed until `pressure_done`: PS takes it before the hit, so a Leppa Berry
+    /// eaten mid-move sees it.
+    pub pressure_owed: std::cell::Cell<Option<(crate::doubles::state::Side, usize, crate::state::PokemonIndex, crate::state::PokemonMoveIndex, crate::choices::Choices)>>,
+    pub pressure_done: std::cell::Cell<bool>,
+    /// Slots (bit `side * 2 + slot`) whose Berserk / Anger Shell has not yet
+    /// checked this move's damage (`checkedBerserk` false): no healing berry.
+    pub berserk_pending: std::cell::Cell<u8>,
     /// The target the running move resolved to (after any retarget / redirect),
     /// as PS `getMoveTargets` returns it: Pressure's `pressureTargets`. `None`
     /// until `execute_action_inner` resolves it for this action.

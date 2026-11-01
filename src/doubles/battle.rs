@@ -282,7 +282,7 @@ fn effective_speed_in(state: &DoublesState, side: Side, slot: usize, weather: We
     // PS `getStat('spe')`: `runEvent('ModifySpe')` chains the modifiers (tailwind
     // x2, speed abilities, Choice Scarf), `finalModify` applies them once; then
     // paralysis (priority -101) halves, unless Quick Feet.
-    // TODO(PS parity): Unburden, Slow Start, Iron Ball, Quick Powder, ...
+    // TODO(PS parity): Unburden, Iron Ball, Quick Powder, ...
     // `weather` is PS `effectiveWeather`: none under Cloud Nine / Air Lock.
     let mut m: i64 = 4096;
     let mut chain = |x: i64| m = (m * x + 2048) >> 12;
@@ -292,6 +292,11 @@ fn effective_speed_in(state: &DoublesState, side: Side, slot: usize, weather: We
     // Unburden `onModifySpe`: x2 while the item is gone.
     if s.active()[slot].unburden && p.ability == Abilities::UNBURDEN && p.item == Items::NONE {
         chain(8192);
+    }
+    // Slow Start `onModifySpe`: x0.5 while `effectState.counter` is set.
+    // PS data/abilities.ts slowstart.
+    if s.active()[slot].slow_start > 0 && p.ability == Abilities::SLOWSTART {
+        chain(2048);
     }
     let doubled = match p.ability {
         Abilities::SWIFTSWIM => matches!(weather, Weather::RAIN | Weather::HEAVYRAIN),
@@ -1827,10 +1832,15 @@ pub fn run_fuzz_turn(
                     vol.mirror_coat_vol = Some((None, 0));
                 }
             }
-            // Pursuit's `beforeTurnMove` keeps the move's chosen target location
-            // (PS sim/battle-queue.ts resolveAction): `getActionSpeed` -> `getTarget`.
+            // Pursuit's `beforeTurnMove` keeps the move's `targetLoc`: no
+            // `getRandomTarget` unless it is 0, and `getActionSpeed` makes no
+            // `getTarget` for a non-`move` action.
             if a.choice.move_id == Choices::PURSUIT && !state.side(a.side).active()[a.slot].recharging {
-                let _ = ps_get_target(state, rng, a);
+                if a.target_loc == 0 {
+                    if let Some((ts, tsl)) = ps_get_target(state, rng, a) {
+                        a.target_loc = if ts == a.side { -(tsl as i8 + 1) } else { tsl as i8 + 1 };
+                    }
+                }
                 action_speed_ties(state, rng, a);
             }
             // A recharging pokemon's action is `recharge`, not the chosen move.
@@ -1882,6 +1892,18 @@ pub fn run_fuzz_turn(
                 // the queued Pursuit action anyway (`queue.cancelMove(source)`).
                 try_add_volatile_ties(state, rng, a.side, a.slot);
                 each_event_update(state, rng);
+            }
+            // Pursuit `beforeTurnMove`: skipped for a fainted or inactive user,
+            // else `getTarget` (a draw when the target fainted); no target ends
+            // the action with no `eachEvent`. Then `beforeTurnCallback` ->
+            // `addVolatile('pursuit')`. PS sim/battle.ts runAction, data/moves.ts pursuit.
+            if a.choice.move_id == Choices::PURSUIT && !state.side(a.side).active()[a.slot].recharging {
+                let up = state.side(a.side).active()[a.slot].pokemon_index == Some(a.pokemon_index)
+                    && state.side(a.side).team_member(a.pokemon_index).hp > 0;
+                if up && ps_get_target(state, rng, a).is_some() {
+                    try_add_volatile_ties(state, rng, a.side, a.slot);
+                    each_event_update(state, rng);
+                }
             }
         }
         let mut used_switches = vec![false; turn.switches.len()];
@@ -5731,6 +5753,9 @@ fn execute_move_body(
         if it == Items::NONE
             || ignoring_item(state, p)
             || crate::doubles::megas::is_mega_stone(it)
+            // The item's own `onTakeItem` (`singleEvent('TakeItem')`): plates,
+            // memories, masks, ... refuse on their species.
+            || crate::doubles::item_data::take_lock_num(it).is_some_and(|n| crate::doubles::move_data::lock_num(p.id) == n)
             || crate::doubles::item_data::fling_power(it) == 0
         {
             state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
@@ -7246,6 +7271,11 @@ fn execute_move_body(
     // `null`, not `false`, so Stomping Tantrum's `moveLastTurnResult === false` stays off.
     let mut not_fail_result = false;
     let mut heal_fail_event = false;
+    // Mirror Move / Me First `onTryHit` ran the called move and returned `null`:
+    // the target is dropped (`hitStepTryHitEvent`), so the calling move has no
+    // hit loop and no `eachEvent('Update')`, and keeps the called move's result
+    // (`useMove` only writes `moveThisTurnResult` when it is unchanged).
+    let mut try_hit_null = false;
     let mut hits_done = 0u32;
     // Some hit of a spread attack landed on a target (PS `damage` array).
     let mut any_hit_landed = false;
@@ -10416,6 +10446,7 @@ fn execute_move_body(
                 Some(m) if crate::doubles::move_data::mirror(m) => {
                     let loc = if target_side == side { -(target_slot as i8 + 1) } else { target_slot as i8 + 1 };
                     run_copied_move(state, rng, action, m, &mut copy_order, will_act, queue, loc);
+                    try_hit_null = true;
                 }
                 _ => move_failed = true,
             }
@@ -10446,6 +10477,7 @@ fn execute_move_body(
                     state.side_mut(side).slot_scratch_mut(slot).me_first = true;
                     run_copied_move(state, rng, action, m, &mut copy_order, will_act, queue, loc);
                     state.side_mut(side).slot_scratch_mut(slot).me_first = false;
+                    try_hit_null = true;
                 }
                 None => move_failed = true,
             }
@@ -11542,7 +11574,7 @@ fn execute_move_body(
         }
         // PS useMoveInner: `all` / `foeSide` / `allySide` / `allyTeam` moves run
         // `tryMoveHit` (one `moveHit`, no hit loop and no `eachEvent('Update')`).
-        if is_field || move_failed || matches!(move_ty, Tgt::All | Tgt::FoeSide | Tgt::AllySide | Tgt::AllyTeam) {
+        if is_field || move_failed || try_hit_null || matches!(move_ty, Tgt::All | Tgt::FoeSide | Tgt::AllySide | Tgt::AllyTeam) {
             break;
         }
         hits_done += 1;
@@ -14614,6 +14646,16 @@ fn compute_hit_damage(
             } else {
                 m
             };
+            // Slow Start `onModifyAtk` (priority 5): x0.5 while `effectState.counter`
+            // is set. PS data/abilities.ts slowstart.
+            let m = if attacker.ability == Abilities::SLOWSTART
+                && att_slot.slow_start > 0
+                && choice.category == MoveCategory::Physical
+            {
+                (m * 2048 + 2048) >> 12
+            } else {
+                m
+            };
             // Fire Mane `onModifyAtk` / `onModifySpA` (priority 5): x1.5 Fire moves.
             let m = if attacker.ability == Abilities::FIREMANE && choice.move_type == PokemonType::FIRE {
                 (m * 6144 + 2048) >> 12
@@ -16899,6 +16941,11 @@ fn apply_on_switch_abilities(
     }
     if matches!(ability, Abilities::PROTOSYNTHESIS | Abilities::QUARKDRIVE) {
         paradox_check(state, rng, side, slot);
+        return false;
+    }
+    // Slow Start `onStart`: `effectState.counter = 5`. PS data/abilities.ts slowstart.
+    if ability == Abilities::SLOWSTART {
+        state.side_mut(side).active_slot_mut(slot).slow_start = 5;
         return false;
     }
     // Frisk / Anticipation `onStart` only log (`-item`, `-ability`): no state
@@ -19405,6 +19452,7 @@ enum ResidualKind {
     PartialTrap(Side, usize),
     /// Speed Boost `onResidual`.
     SpeedBoost(Side, usize),
+    SlowStart(Side, usize),
     /// Salt Cure `onResidual` (champions mod: 1/16, 1/8 vs Water / Steel).
     SaltCure(Side, usize),
     /// Grassy Terrain `onFieldResidual`: heal grounded actives by 1/16 max HP.
@@ -19582,7 +19630,7 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
                 if matches!(p.ability, Abilities::HUNGERSWITCH | Abilities::ZENMODE) {
                     push(29, speed, 7, ResidualKind::FaintedMarker);
                 }
-                if p.ability == Abilities::SPEEDBOOST {
+                if matches!(p.ability, Abilities::SPEEDBOOST | Abilities::SLOWSTART) {
                     push(28, speed, 2, ResidualKind::FaintedMarker);
                 }
                 // Grassy Terrain heal (`onResidualOrder` 5, subOrder 2).
@@ -19793,7 +19841,7 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             if a.gastro_acid {
                 match a.gastro_ability {
                     Abilities::HEALER | Abilities::SHEDSKIN | Abilities::HYDRATION => push(5, speed, 3, ResidualKind::Marker),
-                    Abilities::CUDCHEW | Abilities::PICKUP | Abilities::MOODY | Abilities::HARVEST | Abilities::SPEEDBOOST => {
+                    Abilities::CUDCHEW | Abilities::PICKUP | Abilities::MOODY | Abilities::HARVEST | Abilities::SPEEDBOOST | Abilities::SLOWSTART => {
                         push(28, speed, 2, ResidualKind::Marker)
                     }
                     Abilities::OPPORTUNIST | Abilities::HUNGERSWITCH => push(29, speed, 7, ResidualKind::Marker),
@@ -19829,6 +19877,9 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             }
             if p.ability == Abilities::SPEEDBOOST {
                 push(28, speed, 2, ResidualKind::SpeedBoost(side, slot));
+            }
+            if p.ability == Abilities::SLOWSTART {
+                push(28, speed, 2, ResidualKind::SlowStart(side, slot));
             }
         }
     }
@@ -21575,6 +21626,14 @@ fn end_of_turn(
                     let s = state.side_mut(side);
                     s.team_member_mut(idx).hp = (hp + h).min(maxhp);
                     hp_event(state, side, idx, hp, "grassyterrain");
+                }
+            }
+            ResidualKind::SlowStart(side, slot) => {
+                // PS `slowstart.onResidual` (order 28, subOrder 2): the counter
+                // ticks down once `activeTurns` > 0. No draw.
+                let a = state.side_mut(side).active_slot_mut(slot);
+                if a.active_turns > 0 && a.slow_start > 0 {
+                    a.slow_start -= 1;
                 }
             }
             ResidualKind::SpeedBoost(side, slot) => {

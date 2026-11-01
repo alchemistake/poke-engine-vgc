@@ -499,6 +499,7 @@ pub fn ate_type_change(ability: Abilities, choice: &Choice) -> Option<PokemonTyp
         Abilities::AERILATE => from_normal(PokemonType::FLYING),
         Abilities::REFRIGERATE => from_normal(PokemonType::ICE),
         Abilities::GALVANIZE => from_normal(PokemonType::ELECTRIC),
+        Abilities::DRAGONIZE => from_normal(PokemonType::DRAGON),
         Abilities::NORMALIZE => Some(PokemonType::NORMAL),
         _ => None,
     }

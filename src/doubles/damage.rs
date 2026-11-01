@@ -273,6 +273,12 @@ pub struct DamageCtx {
     /// Defender's resist berry type (Chilan: Normal at any effectiveness), and
     /// whether Ripen doubles it. `None` when it cannot be eaten (Substitute).
     pub resist_berry: Option<(PokemonType, bool)>,
+    /// The hit goes through Protect (PS `bypassProtect`): x0.25 after ModifyDamage.
+    pub bypass_protect: bool,
+    /// Parental Bond's second hit (x0.25 after the spread modifier).
+    pub parental_second: bool,
+    /// Metronome (item) `onModifyDamage` modifier (4096 = none).
+    pub metronome_mod: i64,
 }
 
 /// Compute the damage a single-target (or one hit of a spread) move deals to
@@ -421,6 +427,8 @@ pub fn calculate_damage_with(
     base += 2;
     if spread {
         base = modify(base, 0.75, 1.0);
+    } else if ctx.parental_second {
+        base = modify(base, 0.25, 1.0);
     }
     // weather modifier (after spread, before crit)
     match ctx.weather {
@@ -518,6 +526,9 @@ pub fn calculate_damage_with(
     if ctx.life_orb {
         chain_in(5324);
     }
+    if ctx.metronome_mod != 4096 {
+        chain_in(ctx.metronome_mod);
+    }
     if ctx.expert_belt && tm > 0 {
         chain_in(4915);
     }
@@ -531,6 +542,9 @@ pub fn calculate_damage_with(
     }
     if chain != 4096 {
         base = (base * chain + 2047) / 4096;
+    }
+    if ctx.bypass_protect {
+        base = modify(base, 0.25, 1.0);
     }
     // Minimum 1 damage (gen 6+): after the final ModifyDamage modifiers
     // (Multiscale, screens), before the 16-bit truncation.

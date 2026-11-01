@@ -55,6 +55,18 @@ pub struct ActiveSlot {
     pub shed_tailing: bool,
     /// Unburden's volatile: the holder lost its item (Speed x2).
     pub unburden: bool,
+    /// The `gem` volatile: a Normal Gem powers up this move (x1.3).
+    pub gem: bool,
+    /// The running move is Parental Bond's two-hit version.
+    pub parental_bond: bool,
+    /// Metronome (item) volatile: the last move and its consecutive uses.
+    pub metronome_last: Option<Choices>,
+    pub metronome_count: u8,
+    /// PS `moveThisTurnResult = null` (a NOT_FAIL hit: Protect), this / last turn.
+    pub move_result_null: bool,
+    pub move_null_last_turn: bool,
+    /// The item this slot's Fling threw (its base power and effect).
+    pub fling_item: Items,
     /// Revival Blessing hit: the slot's switch answer revives a fainted
     /// party member instead of switching (PS `revivalblessing` slot condition).
     pub reviving: bool,
@@ -328,6 +340,13 @@ impl ActiveSlot {
             hit_number: 1,
             shed_tailing: false,
             unburden: false,
+            gem: false,
+            parental_bond: false,
+            metronome_last: None,
+            metronome_count: 0,
+            move_result_null: false,
+            move_null_last_turn: false,
+            fling_item: Items::NONE,
             reviving: false,
             flinched: false,
             recharging: false,
@@ -447,6 +466,19 @@ pub struct TeamBoosts {
     pub eva: i8,
 }
 
+/// What Transform overwrote (PS `transformInto`), and the species copied.
+#[derive(Debug, Clone)]
+pub struct TransformSave {
+    pub id: PokemonName,
+    pub moves: crate::state::PokemonMoves,
+    pub types: (crate::state::PokemonType, crate::state::PokemonType),
+    /// atk, def, spa, spd, spe.
+    pub stats: [i16; 5],
+    pub weight_kg: f32,
+    /// The species name the pokemon now shows (the target's).
+    pub as_species: &'static str,
+}
+
 /// A slot's cached event-handler effect bits and the inputs outside the
 /// slot they depend on (status, ability, Future Sight / Wish).
 #[derive(Debug, Clone, Copy)]
@@ -533,6 +565,9 @@ pub struct DoublesSide {
     /// Original raw speed of a team member whose `storedStats.spe` was swapped
     /// (Speed Swap); restored by `setSpecies` on switch-in.
     pub saved_speed: [Option<i16>; 6],
+    /// A transformed team member's own species data, restored when it leaves
+    /// the field (PS `transformed`, `clearVolatile` -> `setSpecies(baseSpecies)`).
+    pub transform_save: [Option<Box<TransformSave>>; 6],
 }
 
 impl DoublesSide {
@@ -680,6 +715,12 @@ impl DoublesSide {
 pub struct MoveScratch {
     /// PS `queue.willMove(target)` is false for every other active: Analytic.
     pub analytic_no_move: std::cell::Cell<bool>,
+    /// Slots (bit `side * 2 + slot`) with a move still queued this turn (`queue.willMove`).
+    pub will_move: std::cell::Cell<u8>,
+    /// Slots a Piercing Drill / Unseen Fist hit reached through Protect this move.
+    pub bypass_protect: std::cell::Cell<u8>,
+    /// Focus Band rolls a spread hit already drew (bit slot: rolled, bit slot + 4: saved).
+    pub band_pre: std::cell::Cell<u8>,
     /// The target the running move resolved to (after any retarget / redirect),
     /// as PS `getMoveTargets` returns it: Pressure's `pressureTargets`. `None`
     /// until `execute_action_inner` resolves it for this action.
@@ -809,6 +850,8 @@ pub struct DoublesState {
     /// Wonder Room's `onModifyMove` has run since it started (PS fixes the
     /// handler's subOrder only once `state.target` is set).
     pub wonder_room_seen: bool,
+    /// Pokemon whose Fling `fling` volatile drops the item at the next Update.
+    pub fling_pending: Vec<(Side, PokemonIndex)>,
     /// Switch requests this turn made with no answer in the turn's choices:
     /// (side, slot, revive). A step-by-step controller (`run_fuzz_turn`) reads
     /// these to ask for the answer and re-run the turn.
@@ -1413,6 +1456,7 @@ impl DoublesState {
             damaged_by: std::array::from_fn(|_| Vec::new()),
             saved_stats: [None; 6],
             saved_speed: [None; 6],
+            transform_save: Default::default(),
         };
         let mut side_two = DoublesSide {
             team: std::array::from_fn(|_| Pokemon::default()),
@@ -1441,6 +1485,7 @@ impl DoublesState {
             damaged_by: std::array::from_fn(|_| Vec::new()),
             saved_stats: [None; 6],
             saved_speed: [None; 6],
+            transform_save: Default::default(),
         };
         for (i, m) in teams.a.iter().enumerate().take(6) {
             side_one.team[i] = build_pokemon(m);
@@ -1469,6 +1514,7 @@ impl DoublesState {
             in_move: false,
             queue_cancel: Vec::new(),
             wonder_room_seen: false,
+            fling_pending: Vec::new(),
             side_one,
             side_two,
             weather: StateWeather {
@@ -1751,7 +1797,7 @@ pub fn side_condition_entries(sc: &SideConditions) -> Vec<SideConditionEntry> {
 
 /// Snapshot the full state of both sides for fuzz comparison.
 pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzTurnState {
-    let snap_side = |s: &DoublesSide| -> Vec<FullSlot> {
+    let snap_side = |s: &DoublesSide, sd: Side| -> Vec<FullSlot> {
         s.team
             .iter()
             .enumerate()
@@ -1778,7 +1824,7 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
                     }
                 };
                 FullSlot {
-                    species: s.species_names[i],
+                    species: s.transform_save[i].as_ref().map_or(s.species_names[i], |t| t.as_species),
                     forme: SPECIES_NAMES[p.id as usize],
                     hp: p.hp,
                     maxhp: p.maxhp,
@@ -1800,6 +1846,18 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
                             // Volatiles kept outside `CONDS`.
                             if a.unburden {
                                 v.push("unburden".to_string());
+                            }
+                            // `trapper`: the other end of a `trapped` link this pokemon made.
+                            let me = Some((sd, PokemonIndex::deserialize(&i.to_string())));
+                            if [&state.side_one, &state.side_two]
+                                .iter()
+                                .any(|o| o.active().iter().any(|x| x.trapped && x.trapper == me && x.pokemon_index.is_some()))
+                            {
+                                v.push("trapper".to_string());
+                            }
+                            // A fired two-turn move's `twoturnmove` lasts until the residual.
+                            if a.twoturn_fired && a.charging.is_none() && !v.iter().any(|x| x == "twoturnmove") {
+                                v.push("twoturnmove".to_string());
                             }
                             if p.item == Items::METRONOME {
                                 v.push("metronome".to_string());
@@ -1851,8 +1909,8 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
     };
     FuzzTurnState {
         turn: state.turn,
-        a: snap_side(&state.side_one),
-        b: snap_side(&state.side_two),
+        a: snap_side(&state.side_one, Side::One),
+        b: snap_side(&state.side_two, Side::Two),
         weather: weather_name,
         terrain: match state.terrain.terrain_type {
             Terrain::NONE => "none",

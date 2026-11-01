@@ -17,7 +17,8 @@ const names = enumBody('src/pokemon.rs', 'PokemonName');
 const abilities = enumBody('src/genx/abilities.rs', 'Abilities');
 const rows = [];
 for (const it of d.items.all()) {
-  if (it.isNonstandard || !it.megaStone) continue;
+  // Standard and "Past" stones (the fuzz pool's WIDE_POOL rule).
+  if ((it.isNonstandard && it.isNonstandard !== 'Past') || !it.megaStone) continue;
   const item = it.id.toUpperCase();
   if (!items.has(item)) throw new Error(`Items has no ${item}`);
   for (const [base, mega] of Object.entries(it.megaStone)) {

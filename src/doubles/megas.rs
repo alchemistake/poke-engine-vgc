@@ -34,6 +34,7 @@ pub fn mega_forme(item: Items, base: PokemonName) -> Option<(PokemonName, Abilit
         (Items::CLEFABLITE, PokemonName::CLEFABLE) => Some((PokemonName::CLEFABLEMEGA, Abilities::MAGICBOUNCE)),
         (Items::CRABOMINITE, PokemonName::CRABOMINABLE) => Some((PokemonName::CRABOMINABLEMEGA, Abilities::IRONFIST)),
         (Items::DELPHOXITE, PokemonName::DELPHOX) => Some((PokemonName::DELPHOXMEGA, Abilities::LEVITATE)),
+        (Items::DIANCITE, PokemonName::DIANCIE) => Some((PokemonName::DIANCIEMEGA, Abilities::MAGICBOUNCE)),
         (Items::DRAGALGITE, PokemonName::DRAGALGE) => Some((PokemonName::DRAGALGEMEGA, Abilities::REGENERATOR)),
         (Items::DRAGONINITE, PokemonName::DRAGONITE) => Some((PokemonName::DRAGONITEMEGA, Abilities::MULTISCALE)),
         (Items::DRAMPANITE, PokemonName::DRAMPA) => Some((PokemonName::DRAMPAMEGA, Abilities::BERSERK)),
@@ -59,6 +60,8 @@ pub fn mega_forme(item: Items, base: PokemonName) -> Option<(PokemonName, Abilit
         (Items::HERACRONITE, PokemonName::HERACROSS) => Some((PokemonName::HERACROSSMEGA, Abilities::SKILLLINK)),
         (Items::HOUNDOOMINITE, PokemonName::HOUNDOOM) => Some((PokemonName::HOUNDOOMMEGA, Abilities::SOLARPOWER)),
         (Items::KANGASKHANITE, PokemonName::KANGASKHAN) => Some((PokemonName::KANGASKHANMEGA, Abilities::PARENTALBOND)),
+        (Items::LATIASITE, PokemonName::LATIAS) => Some((PokemonName::LATIASMEGA, Abilities::LEVITATE)),
+        (Items::LATIOSITE, PokemonName::LATIOS) => Some((PokemonName::LATIOSMEGA, Abilities::LEVITATE)),
         (Items::LOPUNNITE, PokemonName::LOPUNNY) => Some((PokemonName::LOPUNNYMEGA, Abilities::SCRAPPY)),
         (Items::LUCARIONITE, PokemonName::LUCARIO) => Some((PokemonName::LUCARIOMEGA, Abilities::ADAPTABILITY)),
         (Items::LUCARIONITEZ, PokemonName::LUCARIO) => Some((PokemonName::LUCARIOMEGAZ, Abilities::AURAGUARD)),
@@ -70,6 +73,8 @@ pub fn mega_forme(item: Items, base: PokemonName) -> Option<(PokemonName, Abilit
         (Items::MEOWSTICITE, PokemonName::MEOWSTIC) => Some((PokemonName::MEOWSTICMMEGA, Abilities::TRACE)),
         (Items::MEOWSTICITE, PokemonName::MEOWSTICF) => Some((PokemonName::MEOWSTICFMEGA, Abilities::TRACE)),
         (Items::METAGROSSITE, PokemonName::METAGROSS) => Some((PokemonName::METAGROSSMEGA, Abilities::TOUGHCLAWS)),
+        (Items::MEWTWONITEX, PokemonName::MEWTWO) => Some((PokemonName::MEWTWOMEGAX, Abilities::STEADFAST)),
+        (Items::MEWTWONITEY, PokemonName::MEWTWO) => Some((PokemonName::MEWTWOMEGAY, Abilities::INSOMNIA)),
         (Items::PIDGEOTITE, PokemonName::PIDGEOT) => Some((PokemonName::PIDGEOTMEGA, Abilities::NOGUARD)),
         (Items::PINSIRITE, PokemonName::PINSIR) => Some((PokemonName::PINSIRMEGA, Abilities::AERILATE)),
         (Items::PYROARITE, PokemonName::PYROAR) => Some((PokemonName::PYROARMEGA, Abilities::FIREMANE)),
@@ -125,6 +130,7 @@ pub fn is_mega_stone(item: Items) -> bool {
         | Items::CLEFABLITE
         | Items::CRABOMINITE
         | Items::DELPHOXITE
+        | Items::DIANCITE
         | Items::DRAGALGITE
         | Items::DRAGONINITE
         | Items::DRAMPANITE
@@ -150,6 +156,8 @@ pub fn is_mega_stone(item: Items) -> bool {
         | Items::HERACRONITE
         | Items::HOUNDOOMINITE
         | Items::KANGASKHANITE
+        | Items::LATIASITE
+        | Items::LATIOSITE
         | Items::LOPUNNITE
         | Items::LUCARIONITE
         | Items::LUCARIONITEZ
@@ -160,6 +168,8 @@ pub fn is_mega_stone(item: Items) -> bool {
         | Items::MEGANIUMITE
         | Items::MEOWSTICITE
         | Items::METAGROSSITE
+        | Items::MEWTWONITEX
+        | Items::MEWTWONITEY
         | Items::PIDGEOTITE
         | Items::PINSIRITE
         | Items::PYROARITE

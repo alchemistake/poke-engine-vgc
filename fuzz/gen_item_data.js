@@ -15,11 +15,20 @@ const variants = src.slice(i + 7, src.indexOf('}', i)).split(',')
 const fling = [];
 const berries = [];
 const gift = [];
+const typeBoost = [];
 for (const v of variants) {
   const it = d.items.get(v.toLowerCase());
   if (!it.exists) continue;
   if (it.fling && it.fling.basePower) fling.push(`        Items::${v} => ${it.fling.basePower},`);
   if (it.isBerry) berries.push(v);
+  // `onBasePower`: `move.type === X` -> chainModify([4915, 4096]), no species check.
+  if (it.onBasePower) {
+    const src = it.onBasePower.toString();
+    const t = src.match(/move\??\.type === "(\w+)"/);
+    if (t && /4915, 4096/.test(src) && !/baseSpecies/.test(src)) {
+      typeBoost.push(`        Items::${v} => Some(PokemonType::${t[1].toUpperCase()}),`);
+    }
+  }
   if (it.naturalGift) gift.push(`        Items::${v} => Some((${it.naturalGift.basePower}, PokemonType::${it.naturalGift.type.toUpperCase()})),`);
 }
 const out = [
@@ -35,6 +44,14 @@ const out = [
   '    match item {',
   ...fling,
   '        _ => 0,',
+  '    }',
+  '}',
+  '',
+  '/// Type-boosting held items (`onBasePower` x4915/4096 for one move type).',
+  'pub fn type_boost_item(item: Items) -> Option<PokemonType> {',
+  '    match item {',
+  ...typeBoost,
+  '        _ => None,',
   '    }',
   '}',
   '',

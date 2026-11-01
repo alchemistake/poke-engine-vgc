@@ -172,6 +172,16 @@ pub struct ActiveSlot {
     pub magnet_rise: u8,
     /// `telekinesis` volatile duration (3): floats; non-OHKO moves always hit.
     pub telekinesis: u8,
+    /// `rollout` volatile (Rollout / Ice Ball lock): (hitCount, contactHitCount,
+    /// duration, the base-power multiplier of the current hit).
+    pub rollout: Option<(u8, u8, u8, u8)>,
+    /// `defensecurl` volatile (doubles Rollout / Ice Ball).
+    pub defense_curl: bool,
+    /// Mimic replaced move slot `k` (Mimic's id and PP saved, restored when the
+    /// pokemon leaves: PS `moveSlots` vs `baseMoveSlots`).
+    pub mimic: Option<(u8, crate::choices::Choices, i8)>,
+    /// `bide` volatile: (duration, total move damage taken, last damaging pokemon).
+    pub bide: Option<(u8, i16, Option<(Side, crate::state::PokemonIndex)>)>,
     /// `smackdown` volatile (no duration): the holder is grounded (PS
     /// `isGrounded`) until it switches out (PS data/moves.ts smackdown).
     pub smackdown: bool,
@@ -417,6 +427,10 @@ impl ActiveSlot {
             taunt: 0,
             magnet_rise: 0,
             telekinesis: 0,
+            rollout: None,
+            defense_curl: false,
+            mimic: None,
+            bide: None,
             smackdown: false,
             active_turns: 0,
             active_move_actions: 0,
@@ -584,6 +598,12 @@ pub struct DoublesSide {
     pub syrup_triggered: [bool; 6],
     /// A Mega Evolution was used (PS: `canMegaEvo = false` for the whole side).
     pub mega_used: bool,
+    /// PS `side.faintedThisTurn` / `faintedLastTurn` (Retaliate).
+    pub fainted_this_turn: bool,
+    pub fainted_last_turn: bool,
+    /// PS `pokemon.swordBoost` / `shieldBoost`: Intrepid Sword / Dauntless Shield
+    /// boost once per battle.
+    pub once_boosted: [bool; 6],
     /// PS `pokemon.lastItem` per team member (Recycle, Harvest).
     pub last_item: [Items; 6],
     /// PS `pokemon.ateBerry` per team member (Belch).
@@ -844,6 +864,8 @@ pub struct DoublesState {
     /// Mud Sport / Water Sport pseudo-weathers (duration 5).
     pub mud_sport: StateTrickRoom,
     pub water_sport: StateTrickRoom,
+    /// Echoed Voice's pseudo-weather: (multiplier, duration).
+    pub echoed_voice: Option<(u8, i8)>,
     pub turn: u32,
     /// Pokemon that reached 0 HP during the current move's hit loop. PS only
     /// resolves faints after the loop, so its per-hit `eachEvent` still sorts
@@ -1507,6 +1529,9 @@ impl DoublesState {
             sc_order: Vec::new(),
             syrup_triggered: [false; 6],
             mega_used: false,
+            fainted_this_turn: false,
+            fainted_last_turn: false,
+            once_boosted: [false; 6],
             last_item: [Items::NONE; 6],
             ate_berry: [false; 6],
             healing_wish_slot: [false; 2],
@@ -1536,6 +1561,9 @@ impl DoublesState {
             sc_order: Vec::new(),
             syrup_triggered: [false; 6],
             mega_used: false,
+            fainted_this_turn: false,
+            fainted_last_turn: false,
+            once_boosted: [false; 6],
             last_item: [Items::NONE; 6],
             ate_berry: [false; 6],
             healing_wish_slot: [false; 2],
@@ -1611,6 +1639,7 @@ impl DoublesState {
                 active: false,
                 turns_remaining: 0,
             },
+            echoed_voice: None,
             turn: 1,
             unresolved_faints: Vec::new(),
             ko_update_ties: Vec::new(),
@@ -1965,6 +1994,9 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
     .filter(|(_, f)| f.active)
     .map(|(id, f)| (*id, f.turns_remaining))
     .collect();
+    if let Some((_, d)) = state.echoed_voice {
+        pseudo.push(("echoedvoice", d));
+    }
     pseudo.sort();
     let pseudo_weather: Vec<&'static str> = pseudo.iter().map(|(id, _)| *id).collect();
     let pseudo_weather_turns: Vec<i8> = pseudo.iter().map(|(_, t)| *t).collect();

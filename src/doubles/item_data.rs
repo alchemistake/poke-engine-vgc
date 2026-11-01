@@ -499,6 +499,53 @@ pub fn fling_power(item: Items) -> u8 {
     }
 }
 
+/// Type-boosting held items (`onBasePower` x4915/4096 for one move type).
+pub fn type_boost_item(item: Items) -> Option<PokemonType> {
+    match item {
+        Items::BLACKBELT => Some(PokemonType::FIGHTING),
+        Items::BLACKGLASSES => Some(PokemonType::DARK),
+        Items::CHARCOAL => Some(PokemonType::FIRE),
+        Items::DRAGONFANG => Some(PokemonType::DRAGON),
+        Items::DREADPLATE => Some(PokemonType::DARK),
+        Items::EARTHPLATE => Some(PokemonType::GROUND),
+        Items::FAIRYFEATHER => Some(PokemonType::FAIRY),
+        Items::FISTPLATE => Some(PokemonType::FIGHTING),
+        Items::METALCOAT => Some(PokemonType::STEEL),
+        Items::MYSTICWATER => Some(PokemonType::WATER),
+        Items::NEVERMELTICE => Some(PokemonType::ICE),
+        Items::ODDINCENSE => Some(PokemonType::PSYCHIC),
+        Items::POISONBARB => Some(PokemonType::POISON),
+        Items::SEAINCENSE => Some(PokemonType::WATER),
+        Items::SHARPBEAK => Some(PokemonType::FLYING),
+        Items::SPELLTAG => Some(PokemonType::GHOST),
+        Items::MIRACLESEED => Some(PokemonType::GRASS),
+        Items::SILKSCARF => Some(PokemonType::NORMAL),
+        Items::SILVERPOWDER => Some(PokemonType::BUG),
+        Items::SKYPLATE => Some(PokemonType::FLYING),
+        Items::SOFTSAND => Some(PokemonType::GROUND),
+        Items::TOXICPLATE => Some(PokemonType::POISON),
+        Items::TWISTEDSPOON => Some(PokemonType::PSYCHIC),
+        Items::HARDSTONE => Some(PokemonType::ROCK),
+        Items::WAVEINCENSE => Some(PokemonType::WATER),
+        Items::MAGNET => Some(PokemonType::ELECTRIC),
+        Items::STONEPLATE => Some(PokemonType::ROCK),
+        Items::INSECTPLATE => Some(PokemonType::BUG),
+        Items::SPOOKYPLATE => Some(PokemonType::GHOST),
+        Items::IRONPLATE => Some(PokemonType::STEEL),
+        Items::FLAMEPLATE => Some(PokemonType::FIRE),
+        Items::SPLASHPLATE => Some(PokemonType::WATER),
+        Items::MEADOWPLATE => Some(PokemonType::GRASS),
+        Items::ZAPPLATE => Some(PokemonType::ELECTRIC),
+        Items::MINDPLATE => Some(PokemonType::PSYCHIC),
+        Items::ICICLEPLATE => Some(PokemonType::ICE),
+        Items::DRACOPLATE => Some(PokemonType::DRAGON),
+        Items::PIXIEPLATE => Some(PokemonType::FAIRY),
+        Items::ROCKINCENSE => Some(PokemonType::ROCK),
+        Items::ROSEINCENSE => Some(PokemonType::GRASS),
+        _ => None,
+    }
+}
+
 /// `item.naturalGift`: Natural Gift base power and type.
 pub fn natural_gift(item: Items) -> Option<(u8, PokemonType)> {
     match item {

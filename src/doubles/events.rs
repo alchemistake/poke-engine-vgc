@@ -64,7 +64,7 @@ pub fn pokemon_effects(state: &DoublesState, side: Side, slot: usize) -> Vec<(St
 
 /// The volatile and slot conditions `visit_pokemon_effects` reports, in
 /// report order (`cond_mask`).
-const CONDS: [(&str, HandlerKind); 71] = [
+const CONDS: [(&str, HandlerKind); 74] = [
     ("confusion", HandlerKind::Volatile),
     ("flinch", HandlerKind::Volatile),
     ("mustrecharge", HandlerKind::Volatile),
@@ -134,6 +134,9 @@ const CONDS: [(&str, HandlerKind); 71] = [
     ("laserfocus", HandlerKind::Volatile),
     ("furycutter", HandlerKind::Volatile),
     ("telekinesis", HandlerKind::Volatile),
+    ("rollout", HandlerKind::Volatile),
+    ("defensecurl", HandlerKind::Volatile),
+    ("bide", HandlerKind::Volatile),
     ("futuremove", HandlerKind::Slot),
     ("wish", HandlerKind::Slot),
 ];
@@ -207,6 +210,15 @@ pub(crate) fn vol_mask(a: &crate::doubles::state::ActiveSlot) -> u128 {
     }
     if a.telekinesis > 0 {
         m |= 1 << 68;
+    }
+    if a.rollout.is_some() {
+        m |= 1 << 69;
+    }
+    if a.defense_curl {
+        m |= 1 << 70;
+    }
+    if a.bide.is_some() {
+        m |= 1 << 71;
     }
     if a.confusion > 0 {
         m |= 1 << 0;
@@ -518,10 +530,11 @@ fn side_mask(state: &DoublesState, side: Side) -> u32 {
 
 /// Weather, terrain and pseudo-weather ids (PS ids); the field's active ones
 /// are a bit mask over this list (`field_mask`).
-const FIELD_IDS: [&str; 18] = [
+const FIELD_IDS: [&str; 19] = [
     "raindance", "primordialsea", "sunnyday", "desolateland", "sandstorm", "hail", "snowscape",
     "electricterrain", "grassyterrain", "mistyterrain", "psychicterrain",
     "trickroom", "gravity", "magicroom", "wonderroom", "fairylock", "mudsport", "watersport",
+    "echoedvoice",
 ];
 
 /// The weathers / terrains of `FIELD_IDS[0..7]` / `FIELD_IDS[7..11]`.
@@ -564,6 +577,7 @@ fn field_mask(state: &DoublesState) -> u32 {
         state.fairy_lock.active,
         state.mud_sport.active,
         state.water_sport.active,
+        state.echoed_voice.is_some(),
     ]
     .iter()
     .enumerate()
@@ -1018,7 +1032,8 @@ fn has_any_handler(t: &Tables, ev: &EventTable, state: &DoublesState) -> bool {
             | (state.wonder_room.active as u32) << 3
             | (state.fairy_lock.active as u32) << 4
             | (state.mud_sport.active as u32) << 5
-            | (state.water_sport.active as u32) << 6;
+            | (state.water_sport.active as u32) << 6
+            | (state.echoed_voice.is_some() as u32) << 7;
         if (ev.field_weather >> (state.weather.weather_type as u32 & 63)) & 1 != 0
             || (ev.field_terrain >> (state.terrain.terrain_type as u32 & 63)) & 1 != 0
             || ev.field_pseudo & pseudo != 0

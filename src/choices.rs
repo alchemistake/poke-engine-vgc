@@ -22177,6 +22177,8 @@ impl Choices {
             #[cfg(not(any(feature = "gen2", feature = "gen3")))]
             Choices::FINALGAMBIT => Some(attacker.hp),
             Choices::SEISMICTOSS | Choices::NIGHTSHADE => Some(attacker.level as i16),
+            Choices::DRAGONRAGE => Some(40),
+            Choices::SONICBOOM => Some(20),
             Choices::SUPERFANG => Some((defender.hp / 2).max(1)),
             #[cfg(not(any(feature = "gen2", feature = "gen3")))]
             Choices::NATURESMADNESS | Choices::RUINATION => Some((defender.hp / 2).max(1)),
@@ -22447,6 +22449,12 @@ fn apply_champions_modifiers(moves: &mut HashMap<Choices, Choice>) {
     moves.get_mut(&Choices::DRAGONCHEER).unwrap().flags.sound = true;
     moves.get_mut(&Choices::HOWL).unwrap().flags.sound = true;
     moves.get_mut(&Choices::DRAGONHAMMER).unwrap().base_power = 100.0;
+    // Hidden Power's type comes from the IVs (`hpType`): champions sets every IV
+    // to 31, which is Dark.
+    moves.get_mut(&Choices::HIDDENPOWER).unwrap().move_type = PokemonType::DARK;
+    // Frustration `basePowerCallback`: `floor((255 - happiness) * 10 / 25) || 1`;
+    // PS sets happiness to 255 (Return is 102).
+    moves.get_mut(&Choices::FRUSTRATION).unwrap().base_power = 1.0;
     moves.get_mut(&Choices::FIRELASH).unwrap().base_power = 90.0;
     moves.get_mut(&Choices::FIRSTIMPRESSION).unwrap().base_power = 100.0;
     moves.get_mut(&Choices::FISHIOUSREND).unwrap().base_power = 80.0;

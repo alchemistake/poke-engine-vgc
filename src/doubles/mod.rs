@@ -12,6 +12,7 @@ pub mod debug;
 pub mod event_handlers;
 pub mod events;
 pub mod item_data;
+pub mod move_data;
 pub mod legal;
 pub mod megas;
 pub mod move_targets;

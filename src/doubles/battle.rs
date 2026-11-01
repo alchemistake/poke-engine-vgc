@@ -397,9 +397,10 @@ fn faint_pokemon(state: &mut DoublesState, side: Side, slot: usize) {
     // PS data/conditions.ts destinybond.onAfterFaint.
     let db = state.side(side).active()[slot].destinybond && state.in_move;
     let la = state.side(side).active()[slot].last_attacker;
-    // Grudge `onFaint`: a move's KO zeroes the PP of the attacker's last move.
+    // Grudge `onFaint`: a move's KO zeroes the PP of the attacker's last move,
+    // an ally's too (`if (!source?.hp || !effect) return`).
     if state.side(side).active()[slot].grudge && state.in_move {
-        if let Some((att_side, att_idx)) = la.filter(|&(a, _)| a != side) {
+        if let Some((att_side, att_idx)) = la.filter(|&(a, i)| state.side(a).team_member(i).hp > 0) {
             let lm = (0..2)
                 .find(|&sl| state.side(att_side).active()[sl].pokemon_index == Some(att_idx))
                 .and_then(|sl| state.side(att_side).active()[sl].last_move);
@@ -4851,8 +4852,9 @@ fn execute_move_body(
             let dmg = confusion_damage(state, rng, side, slot, idx);
             // Disguise `onDamage` (PS data/abilities.ts disguise): the self-hit
             // is a `Move` effect, so it is absorbed and the forme busts (1/8).
-            // Ice Face blocks it too (a Physical `Move` effect).
-            let disguised = disguise_active(state, side, slot) || ice_face_active(state, side, slot);
+            // Ice Face does not: the `confused` effect has no `category`
+            // (PS data/conditions.ts confusion, data/abilities.ts iceface).
+            let disguised = disguise_active(state, side, slot);
             if disguised {
                 // `onDamage` only sets `busted`; the forme change (and its 1/8
                 // damage and raw cached speed) is Disguise's `onUpdate`, after
@@ -5567,7 +5569,12 @@ fn execute_move_body(
     // moves lose the `contact` flag, so Fluffy, Tough Claws, Protect's contact
     // penalty and the contact abilities of the target all see a non-contact move.
     let long_reach_choice;
-    let choice = if choice.flags.contact && state.side(side).team_member(idx).ability == Abilities::LONGREACH {
+    // Punching Glove `onModifyMove`: a punch move loses `contact` too.
+    let glove = choice.flags.punch && {
+        let p = state.side(side).team_member(idx);
+        p.item == Items::PUNCHINGGLOVE && !ignoring_item(state, p)
+    };
+    let choice = if choice.flags.contact && (state.side(side).team_member(idx).ability == Abilities::LONGREACH || glove) {
         long_reach_choice = {
             let mut c = choice.clone();
             c.flags.contact = false;
@@ -8564,7 +8571,11 @@ fn execute_move_body(
             total_damage = total_damage.saturating_add(damage);
             // PS `move.totalDamage` (a Substitute hit adds nothing).
             real_damage = real_damage.saturating_add(damage);
-            hit_damage = Some(damage);
+            // A flung Flower Sweet (`fling.basePower` 0): `getDamage` returns
+            // undefined, so no DamagingHit (Justified, Rocky Helmet, ...).
+            let no_damage = choice.move_id == Choices::FLING
+                && state.side(side).active()[slot].fling_item == Items::FLOWERSWEET;
+            hit_damage = if no_damage { None } else { Some(damage) };
             after_hit_targets.push((target_side, target_slot));
             hit_landed = true;
             // Berserk `onAfterMoveSecondary`: remember the HP before this move's
@@ -10293,6 +10304,7 @@ fn execute_move_body(
             } else {
                 try_add_volatile_ties(state, rng, target_side, target_slot);
                 state.side_mut(target_side).active_slot_mut(target_slot).attract = Some((side, idx));
+                destiny_knot(state, rng, target_side, target_slot, side, idx);
             }
         }
 
@@ -13465,6 +13477,11 @@ fn base_power_with_modifiers(
     } else {
         choice.base_power
     };
+    // PS getDamage: `if (!basePower) return` before the BasePower event (a
+    // Present heal, Helping Hand or not).
+    if bp <= 0.0 && choice.move_id != Choices::RAGEFIST {
+        return 0.0;
+    }
     // ragefist.basePowerCallback: `min(350, 50 + 50 * timesAttacked)`. Each
     // damaging hit taken since switching in adds an `attacked_by` entry (the
     // champions mod resets the counter in `clearVolatile`).
@@ -13566,6 +13583,8 @@ fn base_power_with_modifiers(
             }
         }
         match attacker.item {
+            // punchingglove.onBasePower (priority 23): x4506/4096 for punch moves.
+            Items::PUNCHINGGLOVE if f.punch => mods.push((23, 4506)),
             Items::MUSCLEBAND if physical => mods.push((16, 4505)),
             Items::WISEGLASSES if special => mods.push((16, 4505)),
             _ => {}
@@ -15872,9 +15891,16 @@ fn compute_hit_damage(
                 m
             };
             // Light Ball `onModifyAtk` / `onModifySpA` (priority 1): x2 for Pikachu.
-            let m = if att_item == Items::LIGHTBALL
-                && attacker.id == crate::pokemon::PokemonName::PIKACHU
-                && choice.category != MoveCategory::Status
+            // Thick Club `onModifyAtk` (Cubone / Marowak) and Deep Sea Tooth
+            // `onModifySpA` (Clamperl), priority 1: x2.
+            use crate::pokemon::PokemonName as N;
+            let m = if (att_item == Items::LIGHTBALL
+                && attacker.id == N::PIKACHU
+                && choice.category != MoveCategory::Status)
+                || (att_item == Items::THICKCLUB
+                    && matches!(attacker.id, N::CUBONE | N::MAROWAK | N::MAROWAKALOLA | N::MAROWAKALOLATOTEM)
+                    && choice.category == MoveCategory::Physical)
+                || (att_item == Items::DEEPSEATOOTH && attacker.id == N::CLAMPERL && choice.category == MoveCategory::Special)
             {
                 (m * 8192 + 2048) >> 12
             } else {
@@ -15938,7 +15964,7 @@ fn compute_hit_damage(
             + match att_item {
                 Items::SCOPELENS | Items::RAZORCLAW => 1,
                 Items::LUCKYPUNCH if attacker.id == crate::pokemon::PokemonName::CHANSEY => 2,
-                Items::LEEK if matches!(
+                Items::LEEK | Items::STICK if matches!(
                     attacker.id,
                     crate::pokemon::PokemonName::FARFETCHD
                         | crate::pokemon::PokemonName::FARFETCHDGALAR
@@ -16003,6 +16029,14 @@ fn compute_hit_damage(
                 }
                 if defender.item == Items::ASSAULTVEST && !names_def {
                     m = (m * 6144 + 2048) >> 12;
+                }
+                // Deep Sea Scale `onModifySpD` (Clamperl) / Metal Powder
+                // `onModifyDef` (an untransformed Ditto), priority 2: x2.
+                use crate::pokemon::PokemonName as N;
+                if (defender.item == Items::DEEPSEASCALE && !names_def && defender.id == N::CLAMPERL)
+                    || (defender.item == Items::METALPOWDER && names_def && defender.id == N::DITTO)
+                {
+                    m = (m * 8192 + 2048) >> 12;
                 }
             }
             // Sword / Beads of Ruin `onAnyModifyDef` / `SpD`: x0.75 unless the
@@ -16291,6 +16325,7 @@ fn contact_abilities(
                 && state.side(side).active()[slot].attract.is_none()
             {
                 state.side_mut(side).active_slot_mut(slot).attract = Some((target_side, def_idx));
+                destiny_knot(state, rng, side, slot, target_side, def_idx);
             }
         }
         return;
@@ -17020,6 +17055,27 @@ fn tera_shell_mode(state: &DoublesState, side: Side, slot: usize, defender: &cra
         return 0;
     }
     1
+}
+
+/// Destiny Knot `onAttract` (priority -100): the infatuated holder's source
+/// gets `attract` back (`source.addVolatile('attract', target)`), unless it
+/// already has it. PS data/items.ts destinyknot.
+fn destiny_knot(state: &mut DoublesState, rng: &mut Gen5Rng, hs: Side, hsl: usize, src_side: Side, src_idx: PokemonIndex) {
+    let Some(hidx) = state.side(hs).active()[hsl].pokemon_index else { return };
+    let h = state.side(hs).team_member(hidx);
+    if h.item != Items::DESTINYKNOT || ignoring_item(state, h) || (hs, hidx) == (src_side, src_idx) {
+        return;
+    }
+    let Some(ssl) = (0..2).find(|&sl| state.side(src_side).active()[sl].pokemon_index == Some(src_idx)) else { return };
+    let src = state.side(src_side).team_member(src_idx);
+    if src.hp <= 0 || state.side(src_side).active()[ssl].attract.is_some() {
+        return;
+    }
+    try_add_volatile_ties(state, rng, src_side, ssl);
+    if src.ability == Abilities::OBLIVIOUS || aroma_veil_blocks(state, src_side, AromaVeiled::Attract, None) {
+        return;
+    }
+    state.side_mut(src_side).active_slot_mut(ssl).attract = Some((hs, hidx));
 }
 
 /// Ice Face is up: Eiscue in Ice forme with the ability (not transformed).

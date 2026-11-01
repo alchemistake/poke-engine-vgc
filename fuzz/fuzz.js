@@ -1455,6 +1455,9 @@ function fastCheckBatch(opts, dir, seeds) {
 // at its first failure). The lowest failing seed is then re-run here as a
 // single test, which prints the normal report. Same result as a sequential
 // sweep: the first failing seed in order.
+// Seed the parallel parent re-runs after a worker reported it failing.
+let RERUN_OF = null;
+
 function runParallel(opts) {
   const { spawn } = require('child_process');
   const jobs = Math.min(opts.jobs, opts.count);
@@ -1501,6 +1504,7 @@ function runParallel(opts) {
         // Re-run the first failing seed alone, in this process: full report.
         process.argv = [process.argv[0], __filename, '--seed', String(first), '--count', '1', '--jobs', '1',
           '--engine', opts.engine, '--workdir', opts.workdir];
+        RERUN_OF = first;
         main();
       }
     });
@@ -1711,6 +1715,13 @@ function main() {
   }
 
   log(`\nall ${opts.count} tests passed`);
+  if (RERUN_OF !== null) {
+    // A worker's fast check failed this seed but the stepwise re-run passed:
+    // the two paths disagree (a harness bug). Never report that as a pass.
+    console.log(`=== FUZZ MISMATCH === fast path failed seed ${RERUN_OF}, stepwise re-run passed`);
+    console.log(`reproduce: node fuzz/fuzz.js --seed ${RERUN_OF} --count 1`);
+    process.exit(1);
+  }
   process.exit(0);
 }
 

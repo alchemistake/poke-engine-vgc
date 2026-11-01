@@ -243,6 +243,9 @@ pub struct ActiveSlot {
     pub illusion_target: Option<Option<usize>>,
     /// `curse` volatile (Ghost Curse): loses 1/4 max HP each residual (order 12).
     pub cursed: bool,
+    /// `nightmare` volatile: a sleeping holder loses 1/4 max HP each residual
+    /// (order 11); it ends when the holder's sleep ends.
+    pub nightmare: bool,
     /// Set by the executing move's base-power callback precondition (Payback).
     pub bp_double: bool,
     /// PS `beingCalledBack`: set by `switchIn` on the pokemon leaving the
@@ -509,6 +512,7 @@ impl ActiveSlot {
             me_first: false,
             illusion_target: None,
             cursed: false,
+            nightmare: false,
             bp_double: false,
             being_called_back: false,
             follow_me: 0,

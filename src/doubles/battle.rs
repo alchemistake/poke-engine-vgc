@@ -5504,11 +5504,25 @@ fn execute_move_body(
                 && resolved.map_or(true, |(ts, tsl)| {
                     ts == side
                         || state.side(ts).active()[tsl].substitute_health > 0
-                        || state.side(ts).slot_pokemon(tsl).map_or(true, |p| p.hp <= 0 || p.weight_kg >= 200.0)
+                        || state.side(ts).slot_pokemon(tsl).map_or(true, |p| {
+                            // `getWeight()`: Heavy / Light Metal (breakable) and
+                            // an unsuppressed Float Stone `onModifyWeight`.
+                            let ignore = crate::engine::abilities::ignores_target_ability(
+                                state.side(side).team_member(idx),
+                                choice,
+                                &p.ability,
+                            );
+                            let mut hg = crate::engine::mechanics::weight_hg(p, ignore);
+                            if p.item == Items::FLOATSTONE && !ignoring_item(state, p) {
+                                hg = (hg / 2).max(1);
+                            }
+                            p.hp <= 0 || hg >= 2000
+                        })
                 }) =>
             {
                 // Sky Drop `onTryHit` (charge turn): fails on an ally, a
-                // Substitute or a target of 200 kg or more (no charge).
+                // Substitute or a target whose `getWeight()` is 2000 hg or
+                // more (no charge). PS data/moves.ts skydrop.
                 state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
                 push_order(move_order);
                 return;
@@ -10304,6 +10318,48 @@ fn execute_move_body(
                 None => move_failed = true,
             }
         }
+        // Nightmare: `volatileStatus: 'nightmare'`; `addVolatile` fails on a
+        // target that has it, and its `onStart` on one neither asleep nor
+        // Comatose. PS data/moves.ts nightmare.
+        if choice.move_id == Choices::NIGHTMARE && ti == 0 && !move_failed {
+            let ok = state.side(target_side).slot_pokemon(target_slot).is_some_and(|p| {
+                p.hp > 0 && (p.status == PokemonStatus::SLEEP || p.ability == Abilities::COMATOSE)
+            }) && !state.side(target_side).active()[target_slot].nightmare;
+            if ok {
+                state.side_mut(target_side).active_slot_mut(target_slot).nightmare = true;
+            } else {
+                move_failed = true;
+            }
+        }
+        // Bestow `onHit`: fails when the target holds an item; otherwise the
+        // user's `takeItem` (its own `TakeItem`: Unburden fires before a Mega
+        // Stone refuses; Sticky Hold only stops another pokemon) and the
+        // item's `TakeItem` for the target, then `target.setItem`.
+        // PS data/moves.ts bestow.
+        if choice.move_id == Choices::BESTOW && ti == 0 && !move_failed {
+            match state.side(target_side).active()[target_slot].pokemon_index {
+                Some(tidx) if state.side(target_side).team_member(tidx).item == Items::NONE => {
+                    let mine = state.side(side).team_member(idx).item;
+                    if mine == Items::NONE {
+                        move_failed = true;
+                    } else {
+                        item_lost(state, side, slot, idx);
+                        // Plates / Memories / ... `onTakeItem` also refuse a
+                        // target of their species.
+                        let target_locked = crate::doubles::item_data::take_lock_num(mine)
+                            .is_some_and(|n| crate::doubles::move_data::lock_num(state.side(target_side).team_member(tidx).id) == n);
+                        if !item_takeable(state, side, idx, false, false, true) || target_locked {
+                            move_failed = true;
+                        } else {
+                            state.side_mut(side).team_member_mut(idx).item = Items::NONE;
+                            state.side_mut(target_side).team_member_mut(tidx).item = mine;
+                            item_gained(state, rng, target_side, target_slot, tidx);
+                        }
+                    }
+                }
+                _ => move_failed = true,
+            }
+        }
         // Gastro Acid: `volatileStatus: 'gastroacid'` suppresses the target's
         // ability until it switches out (modelled as No Ability, which the
         // switch-out reset undoes). Fails on unsuppressable abilities.
@@ -10614,6 +10670,8 @@ fn execute_move_body(
                 let hp0_ev = pm.hp;
                 pm.hp = pm.maxhp;
                 hp_event(state, side, idx, hp0_ev, "");
+                // A Nightmare from before this action's wake-up is gone.
+                state.side_mut(side).active_slot_mut(slot).nightmare = false;
             }
         }
 
@@ -10650,6 +10708,9 @@ fn execute_move_body(
             };
             let loc = if target_side == side { -(target_slot as i8 + 1) } else { target_slot as i8 + 1 };
             run_copied_move(state, rng, action, m, &mut copy_order, will_act, queue, loc);
+            // `onTryHit` returns null: the target is dropped, so Nature Power
+            // itself has no hit loop and no `eachEvent('Update')`.
+            try_hit_null = true;
         }
         // Assist `onHit` (PS data/moves.ts assist): `sample` one move slot of
         // the user's teammates (`side.pokemon` order, fainted ones included)
@@ -19880,6 +19941,8 @@ enum ResidualKind {
     BadDreams(Side, usize),
     /// Ghost `curse` damage (order 12).
     Curse(Side, usize),
+    /// `nightmare` damage (order 11).
+    Nightmare(Side, usize),
     LeechSeed(Side, usize),
     Roost(Side, usize),
     Encore(Side, usize),
@@ -20229,6 +20292,9 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             if a.cursed {
                 vols.push(("curse", 12, 2, ResidualKind::Curse(side, slot)));
             }
+            if a.nightmare {
+                vols.push(("nightmare", 11, 2, ResidualKind::Nightmare(side, slot)));
+            }
             if a.encore.is_some() {
                 vols.push(("encore", 16, 2, ResidualKind::Encore(side, slot)));
             }
@@ -20474,8 +20540,29 @@ fn resolve_user_faint(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, s
 
 /// PS `eachEvent('Update')` (sim/battle.ts): speed-sorts all actives, which
 /// draws on speed ties. Called after every action and every hit.
+/// The `nightmare` volatile ends with the holder's sleep: PS `cureStatus` /
+/// `clearStatus` and the `slp` wake-up remove it (sim/pokemon.ts,
+/// data/conditions.ts slp). Synced here, after the action that ended it.
+fn end_nightmares(state: &mut DoublesState) {
+    for sd in [Side::One, Side::Two] {
+        for sl in 0..2 {
+            if !state.side(sd).active()[sl].nightmare {
+                continue;
+            }
+            let asleep = state
+                .side(sd)
+                .slot_pokemon(sl)
+                .is_some_and(|p| p.status == PokemonStatus::SLEEP || p.ability == Abilities::COMATOSE);
+            if !asleep {
+                state.side_mut(sd).active_slot_mut(sl).nightmare = false;
+            }
+        }
+    }
+}
+
 fn each_event_update(state: &mut DoublesState, rng: &mut Gen5Rng) {
     release_sky_drops(state);
+    end_nightmares(state);
     for sd in [Side::One, Side::Two] {
         for sl in 0..2 {
             paradox_check(state, rng, sd, sl);
@@ -21818,6 +21905,16 @@ fn end_of_turn(
             ResidualKind::Curse(side, slot) => {
                 if let Some(p) = state.side(side).slot_pokemon(slot) {
                     if p.hp > 0 {
+                        let q = (p.maxhp / 4).max(1);
+                        apply_indirect_damage(state, rng, side, slot, q);
+                    }
+                }
+            }
+            // Nightmare `onResidual` (order 11): `this.damage(baseMaxhp / 4)`.
+            // PS data/moves.ts nightmare.condition.
+            ResidualKind::Nightmare(side, slot) => {
+                if let Some(p) = state.side(side).slot_pokemon(slot) {
+                    if p.hp > 0 && (p.status == PokemonStatus::SLEEP || p.ability == Abilities::COMATOSE) {
                         let q = (p.maxhp / 4).max(1);
                         apply_indirect_damage(state, rng, side, slot, q);
                     }

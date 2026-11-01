@@ -200,6 +200,10 @@ pub(crate) fn volatile_ids(a: &crate::doubles::state::ActiveSlot) -> Vec<String>
     if a.snatch {
         v.push("snatch".to_string());
     }
+    // Nightmare's volatile (only an `onResidual`, run from the residual list).
+    if a.nightmare {
+        v.push("nightmare".to_string());
+    }
     v.sort();
     v
 }

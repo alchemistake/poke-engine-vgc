@@ -7808,6 +7808,7 @@ fn execute_move_body(
                     | Choices::DIRECLAW
                     | Choices::SALTCURE
                     | Choices::SPIRITSHACKLE
+                    | Choices::ANCHORSHOT
                     | Choices::THROATCHOP
                     | Choices::EERIESPELL
                     | Choices::PSYCHICNOISE
@@ -7857,7 +7858,7 @@ fn execute_move_body(
                     // applies to the user when the hit lands on a Substitute.
                     if !matches!(
                         choice.move_id,
-                        Choices::TRIATTACK | Choices::DIRECLAW | Choices::SALTCURE | Choices::SPIRITSHACKLE
+                        Choices::TRIATTACK | Choices::DIRECLAW | Choices::SALTCURE | Choices::SPIRITSHACKLE | Choices::ANCHORSHOT
                             | Choices::THROATCHOP | Choices::EERIESPELL | Choices::PSYCHICNOISE
                             | Choices::CEASELESSEDGE | Choices::STONEAXE
                     ) {
@@ -11055,10 +11056,10 @@ fn execute_move_body(
             // lock, Psychic Noise's Heal Block. The
             // roll is consumed; hazards for Ceaseless Edge / Stone Axe are
             // applied via `side_condition` above.
-            // Spirit Shackle secondary `onHit`: `if (source.isActive)
+            // Spirit Shackle / Anchor Shot secondary `onHit`: `if (source.isActive)
             // target.addVolatile('trapped', source, move, 'trapper')` (Ghost
-            // targets are immune). PS data/moves.ts spiritshackle.
-            Choices::SPIRITSHACKLE => {
+            // targets are immune). PS data/moves.ts spiritshackle / anchorshot.
+            Choices::SPIRITSHACKLE | Choices::ANCHORSHOT => {
                 let _ = rng.label("secondary").random(100);
                 let alive = state.side(target_side).slot_pokemon(target_slot).is_some_and(|p| p.hp > 0);
                 let ghost = state.side(target_side).slot_pokemon(target_slot).is_some_and(|p| p.has_type(&PokemonType::GHOST))
@@ -12417,6 +12418,7 @@ fn has_secondaries(choice: &Choice) -> bool {
                 | Choices::DIRECLAW
                 | Choices::SALTCURE
                 | Choices::SPIRITSHACKLE
+                | Choices::ANCHORSHOT
                 | Choices::THROATCHOP
                 | Choices::EERIESPELL
                 | Choices::PSYCHICNOISE

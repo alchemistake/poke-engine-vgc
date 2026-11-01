@@ -5242,6 +5242,9 @@ fn execute_move_body(
                 // `onTry` passed: `trySpreadMoveHit` runs PrepareHit (Protean /
                 // Libero) before the hit. PS sim/battle-actions.ts trySpreadMoveHit.
                 prepare_hit(state, side, slot, idx, choice);
+                if try_snatch(state, rng, action, move_order, will_act, queue, &push_order) {
+                    return;
+                }
                 let before = state.side(side).team_boosts[idx as usize].clone();
                 apply_boosts(
                     state,
@@ -5378,6 +5381,9 @@ fn execute_move_body(
         }
         Choices::SWALLOW => {
             prepare_hit(state, side, slot, idx, choice);
+            if try_snatch(state, rng, action, move_order, will_act, queue, &push_order) {
+                return;
+            }
             let layers = state.side(side).active()[slot].stockpile;
             let s = state.side_mut(side);
             let p = s.team_member_mut(idx);
@@ -5688,6 +5694,9 @@ fn execute_move_body(
     // hit steps; a failed Upper Hand / No Retreat / Stuff Cheeks / Belch changes
     // nothing). PS sim/battle-actions.ts `Try` then `PrepareHit`.
     prepare_hit(state, side, slot, idx, choice);
+    if try_snatch(state, rng, action, move_order, will_act, queue, &push_order) {
+        return;
+    }
 
     // Spread moves (allAdjacentFoes / allAdjacent): PS `getMoveTargets` lists
     // the (alive) allies first, then the foes. Each target is filtered like
@@ -8795,6 +8804,15 @@ fn execute_move_body(
                     if !state.side(ts).active()[tslot].magic_coat {
                         try_add_volatile_ties(state, rng, ts, tslot);
                         state.side_mut(ts).active_slot_mut(tslot).magic_coat = true;
+                    }
+                }
+                // Snatch's single-turn volatile (`addVolatile` fails while present).
+                PokemonVolatileStatus::SNATCH => {
+                    if !state.side(ts).active()[tslot].snatch {
+                        try_add_volatile_ties(state, rng, ts, tslot);
+                        state.side_mut(ts).active_slot_mut(tslot).snatch = true;
+                    } else {
+                        move_failed = true;
                     }
                 }
                 // Bide's volatile (duration 3).
@@ -15264,6 +15282,100 @@ fn aroma_veil_blocks(state: &DoublesState, ts: Side, _v: AromaVeiled, attacker: 
     })
 }
 
+/// Moves with PS's `snatch` flag (data/moves.ts, champions mod).
+fn is_snatchable(m: Choices) -> bool {
+    matches!(
+        m,
+        Choices::CLANGOROUSSOUL | Choices::CONVERSION | Choices::DEFENDORDER | Choices::DEFENSECURL
+            | Choices::FILLETAWAY | Choices::GROWTH | Choices::HARDEN | Choices::HONECLAWS | Choices::HOWL
+            | Choices::LUNARBLESSING | Choices::LUNARDANCE | Choices::MILKDRINK | Choices::MIST
+            | Choices::NORETREAT | Choices::POWERSHIFT | Choices::SHOREUP | Choices::STUFFCHEEKS
+            | Choices::TAILGLOW | Choices::TAKEHEART | Choices::VICTORYDANCE | Choices::WISH
+            | Choices::WITHDRAW | Choices::WORKUP | Choices::ACIDARMOR | Choices::AGILITY
+            | Choices::AMNESIA | Choices::AQUARING | Choices::AROMATHERAPY | Choices::AURORAVEIL
+            | Choices::AUTOTOMIZE | Choices::BARRIER | Choices::BELLYDRUM | Choices::BULKUP
+            | Choices::CALMMIND | Choices::CAMOUFLAGE | Choices::CHARGE | Choices::COIL
+            | Choices::COSMICPOWER | Choices::COTTONGUARD | Choices::DOUBLETEAM | Choices::DRAGONDANCE
+            | Choices::FOCUSENERGY | Choices::GEARUP | Choices::HEALBELL | Choices::HEALINGWISH
+            | Choices::HEALORDER | Choices::IMPRISON | Choices::INGRAIN | Choices::IRONDEFENSE
+            | Choices::LASERFOCUS | Choices::LIFEDEW | Choices::LIGHTSCREEN | Choices::LUCKYCHANT
+            | Choices::MAGNETICFLUX | Choices::MAGNETRISE | Choices::MATBLOCK | Choices::MEDITATE
+            | Choices::MINIMIZE | Choices::MOONLIGHT | Choices::MORNINGSUN | Choices::NASTYPLOT
+            | Choices::POWERTRICK | Choices::QUICKGUARD | Choices::QUIVERDANCE | Choices::RECOVER
+            | Choices::RECYCLE | Choices::REFLECT | Choices::REFRESH | Choices::REST
+            | Choices::ROCKPOLISH | Choices::ROOST | Choices::SAFEGUARD | Choices::SHARPEN
+            | Choices::SHELLSMASH | Choices::SHELTER | Choices::SHIFTGEAR | Choices::SLACKOFF
+            | Choices::SOFTBOILED | Choices::STOCKPILE | Choices::SUBSTITUTE | Choices::SWALLOW
+            | Choices::SWORDSDANCE | Choices::SYNTHESIS | Choices::TAILWIND | Choices::WIDEGUARD
+    )
+}
+
+/// Snatch `onAnyPrepareHit` (priority -1, after the user's Libero / Protean):
+/// an active pokemon holding the `snatch` volatile drops it and uses the
+/// snatchable move itself (`useMove`, "[from] Snatch"); the user's move
+/// returns null (fails, no `-fail`). A snatched copy is never snatched again
+/// (`move.sourceEffect === 'snatch'`). Returns true when the move was taken.
+/// PS data/moves.ts snatch.condition.
+/// TODO(PS parity): two Snatch holders with tied speed (PrepareHit sort draw),
+/// Sky Drop (`isSkyDropped`).
+fn try_snatch(
+    state: &mut DoublesState,
+    rng: &mut Gen5Rng,
+    action: &Action,
+    move_order: &mut Vec<OrderEntry>,
+    will_act: bool,
+    queue: &[Action],
+    push_order: &dyn Fn(&mut Vec<OrderEntry>),
+) -> bool {
+    let (side, slot) = (action.side, action.slot);
+    if !is_snatchable(action.choice.move_id) || state.side(side).active()[slot].snatched {
+        return false;
+    }
+    let mut holders: smallvec::SmallVec<[(Side, usize, i16); 4]> = smallvec::SmallVec::new();
+    for s in [Side::One, Side::Two] {
+        for sl in 0..2 {
+            if state.side(s).active()[sl].snatch && state.side(s).slot_pokemon(sl).is_some_and(|p| p.hp > 0) {
+                holders.push((s, sl, effective_speed(state, s, sl).unwrap_or(0)));
+            }
+        }
+    }
+    holders.sort_by(|a, b| b.2.cmp(&a.2));
+    let Some(&(ts, tsl, _)) = holders.first() else { return false };
+    let Some(sidx) = state.side(ts).active()[tsl].pokemon_index else { return false };
+    state.side_mut(ts).active_slot_mut(tsl).snatch = false;
+    push_order(move_order);
+    let mut sub = action.clone();
+    sub.side = ts;
+    sub.slot = tsl;
+    sub.pokemon_index = sidx;
+    sub.target = tsl;
+    sub.target_loc = 0;
+    state.side_mut(ts).slot_scratch_mut(tsl).external_call = true;
+    state.side_mut(ts).slot_scratch_mut(tsl).snatched = true;
+    // PS `useMove` resets the snatcher's `moveThisTurnResult`, then stores the
+    // snatched move's result (sim/battle-actions.ts useMove).
+    state.side_mut(ts).slot_scratch_mut(tsl).move_result_this_turn = None;
+    let (saved_pt, saved_pe) = (state.tl.pressure_target.get(), state.tl.pressure_extra.get());
+    let (saved_po, saved_pd) = (state.tl.pressure_owed.get(), state.tl.pressure_done.get());
+    execute_action_inner(state, rng, &sub, move_order, will_act, queue);
+    state.tl.pressure_target.set(saved_pt);
+    state.tl.pressure_extra.set(saved_pe);
+    state.tl.pressure_owed.set(saved_po);
+    state.tl.pressure_done.set(saved_pd);
+    {
+        let b = state.side_mut(ts).slot_scratch_mut(tsl);
+        if b.pokemon_index == Some(sidx) && b.move_result_this_turn.is_none() {
+            b.move_result_this_turn = Some(true);
+        }
+    }
+    state.side_mut(ts).slot_scratch_mut(tsl).external_call = false;
+    state.side_mut(ts).slot_scratch_mut(tsl).snatched = false;
+    // `runEvent('PrepareHit')` returned null: `trySpreadMoveHit` reports the
+    // user's move as failed (`moveThisTurnResult` false).
+    state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
+    true
+}
+
 /// The user's `onPrepareHit` handlers: Libero / Protean (once per switch-in,
 /// the user becomes the move's type). PS data/abilities.ts libero / protean.
 /// TODO(PS parity): Protean's champions override, Tera.
@@ -18846,6 +18958,10 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             if a.beak_blast {
                 vols.push(("beakblast", NO_ORDER, 2, ResidualKind::Marker));
             }
+            // PS data/moves.ts snatch.condition: duration 1 (cleared at turn end).
+            if a.snatch {
+                vols.push(("snatch", NO_ORDER, 2, ResidualKind::Marker));
+            }
             if a.recharging {
                 vols.push(("mustrecharge", NO_ORDER, 2, ResidualKind::Marker)); // mustrecharge
             }
@@ -21085,6 +21201,7 @@ fn end_of_turn(
             a.lost_focus = false;
             a.beak_blast = false;
             a.chilly_reception = false;
+            a.snatch = false;
             a.stats_raised_this_turn = false;
             a.stats_lowered_this_turn = false;
             a.last_attacker = None;

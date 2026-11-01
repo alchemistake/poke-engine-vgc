@@ -3433,6 +3433,41 @@ pub(crate) fn real_ability(state: &DoublesState, side: Side, idx: PokemonIndex) 
         .unwrap_or(state.side(side).team_member(idx).ability)
 }
 
+/// PS `pokemon.setAbility(ability)` from Role Play / Doodle: `End` of the old
+/// ability, then the new one's `Start`. PS sim/pokemon.ts setAbility.
+fn copy_ability(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize, u: PokemonIndex, ta: Abilities) {
+    // A user under Gastro Acid has No Ability here (the engine's
+    // model of the `gastroacid` volatile). PS `setAbility` still
+    // sets the copy, but `singleEvent('Start')` is suppressed
+    // (`suppressingAbility`) and the suppression lasts until the
+    // user switches out, so the copy is not applied here (only
+    // the suppressed ability is replaced).
+    if state.side(side).team_member(u).ability == Abilities::NONE && state.side(side).active()[slot].gastro_acid {
+        state.side_mut(side).active_mut()[slot].gastro_ability = ta;
+    } else if state.side(side).team_member(u).ability != Abilities::NONE {
+        // `setAbility`: `singleEvent('End', oldAbility)` first; a Cloud
+        // Nine / Air Lock `onEnd` runs `eachEvent('WeatherChange')`.
+        // PS sim/pokemon.ts setAbility, data/abilities.ts cloudnine.
+        if matches!(real_ability(state, side, u), Abilities::CLOUDNINE | Abilities::AIRLOCK) {
+            let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+        }
+        state.side_mut(side).team_member_mut(u).ability = ta;
+        reset_protean_effect(state, side, u);
+        // Mimicry `onStart` -> `onTerrainChange`: the type follows
+        // the terrain (PS data/abilities.ts mimicry).
+        refresh_mimicry_slot(state, side, slot);
+        // PS `setAbility` runs the new ability's Start event
+        // (Sand Stream, Drought, ...), as Skill Swap does: its
+        // `eachEvent('WeatherChange')` & co. is a sort of all actives.
+        if apply_on_switch_abilities(state, side, slot, rng) {
+            let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+            // Forecast `onWeatherChange` right after that sort (forme change resets
+            // the cached speed before the next sort). PS data/abilities.ts forecast.
+            update_forecast(state);
+        }
+    }
+}
+
 /// PS `pokemon.getAbility()`: the held ability even while the `gastroacid`
 /// volatile suppresses it (the engine stores it in `gastro_ability`).
 fn held_ability(state: &DoublesState, side: Side, slot: usize, idx: PokemonIndex) -> Abilities {
@@ -9392,38 +9427,38 @@ fn execute_move_body(
             };
             match (user_idx, target_ability) {
                 (Some(u), Some(ta)) if !blocked && state.side(side).team_member(u).ability != ta => {
-                    // A user under Gastro Acid has No Ability here (the engine's
-                    // model of the `gastroacid` volatile). PS `setAbility` still
-                    // sets the copy, but `singleEvent('Start')` is suppressed
-                    // (`suppressingAbility`) and the suppression lasts until the
-                    // user switches out, so the copy is not applied here (only
-                    // the suppressed ability is replaced).
-                    if state.side(side).team_member(u).ability == Abilities::NONE && state.side(side).active()[slot].gastro_acid {
-                        state.side_mut(side).active_mut()[slot].gastro_ability = ta;
-                    } else if state.side(side).team_member(u).ability != Abilities::NONE {
-                        // `setAbility`: `singleEvent('End', oldAbility)` first; a Cloud
-                        // Nine / Air Lock `onEnd` runs `eachEvent('WeatherChange')`.
-                        // PS sim/pokemon.ts setAbility, data/abilities.ts cloudnine.
-                        if matches!(real_ability(state, side, u), Abilities::CLOUDNINE | Abilities::AIRLOCK) {
-                            let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
-                        }
-                        state.side_mut(side).team_member_mut(u).ability = ta;
-                        reset_protean_effect(state, side, u);
-                        // Mimicry `onStart` -> `onTerrainChange`: the type follows
-                        // the terrain (PS data/abilities.ts mimicry).
-                        refresh_mimicry_slot(state, side, slot);
-                        // PS `setAbility` runs the new ability's Start event
-                        // (Sand Stream, Drought, ...), as Skill Swap does: its
-                        // `eachEvent('WeatherChange')` & co. is a sort of all actives.
-                        if apply_on_switch_abilities(state, side, slot, rng) {
-                            let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
-                            // Forecast `onWeatherChange` right after that sort (forme change resets
-                            // the cached speed before the next sort). PS data/abilities.ts forecast.
-                            update_forecast(state);
-                        }
-                    }
+                    copy_ability(state, rng, side, slot, u, ta);
                 }
                 _ => move_failed = true,
+            }
+        }
+
+        // Doodle `onHit` (PS data/moves.ts doodle): unless the target's ability
+        // has failroleplay, the user and its ally each take it (`setAbility`),
+        // skipping one that already has it or whose ability can't be suppressed.
+        // Fails when nobody changed.
+        if choice.move_id == Choices::DOODLE && ti == 0 {
+            let target_ability = state.side(target_side).active()[target_slot]
+                .pokemon_index
+                .map(|t| held_ability(state, target_side, target_slot, t));
+            let mut success = false;
+            if let Some(ta) = target_ability.filter(|&ta| !crate::engine::mechanics::fail_role_play(ta)) {
+                // `source.alliesAndSelf()`: the user's side in slot order.
+                for sl in 0..2 {
+                    let Some(u) = state.side(side).active()[sl].pokemon_index else { continue };
+                    if state.side(side).team_member(u).hp <= 0
+                        || held_ability(state, side, sl, u) == ta
+                        || crate::engine::mechanics::cant_suppress(real_ability(state, side, u))
+                        || crate::engine::mechanics::cant_suppress(ta)
+                    {
+                        continue;
+                    }
+                    copy_ability(state, rng, side, sl, u, ta);
+                    success = true;
+                }
+            }
+            if !success {
+                move_failed = true;
             }
         }
 
@@ -17638,6 +17673,22 @@ fn after_hit_item_moves(
 /// A berry's `onEat` on `idx` (eaten by its holder, flung at it, or stolen
 /// with Bug Bite / Pluck). PS data/items.ts.
 fn berry_effect(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize, idx: PokemonIndex, item: Items) {
+    berry_effect_labeled(state, rng, side, slot, idx, item, "other: onEat");
+}
+
+/// `berry_effect` with the PRNG purpose of an `onEat` draw (Starf Berry
+/// `sample`), which the fuzz harness names after the eating PS handler:
+/// `onHit` (Fling, Bug Bite) gives "other: onEat", a pinch `onUpdate` gives
+/// "trace", Cud Chew `onResidual` gives "residual roll".
+fn berry_effect_labeled(
+    state: &mut DoublesState,
+    rng: &mut Gen5Rng,
+    side: Side,
+    slot: usize,
+    idx: PokemonIndex,
+    item: Items,
+    draw_label: &'static str,
+) {
     // `singleEvent('Eat', item, ..., eater)` is suppressed while the eater
     // ignores items (Klutz, Magic Room): a stolen berry does nothing.
     if ignoring_item(state, state.side(side).team_member(idx)) {
@@ -17693,7 +17744,7 @@ fn berry_effect(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: u
                 .map(|(k, _)| k as u8)
                 .collect();
             if !stats.is_empty() {
-                let k = stats[rng.label("sample").random(stats.len() as u32) as usize];
+                let k = stats[rng.label(draw_label).random(stats.len() as u32) as usize];
                 let n = if ripen { 4 } else { 2 };
                 let mut b = StatBoosts::default();
                 match k {
@@ -17828,7 +17879,7 @@ fn item_update(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: us
     // A heal berry's `onTryEatItem` needs `TryHeal` (Heal Block refuses it).
     if pinch && (stat_pinch || (heal_pinch && !heal_blocked)) {
         use_item(state, rng, side, slot, idx, true);
-        berry_effect(state, rng, side, slot, idx, item);
+        berry_effect_labeled(state, rng, side, slot, idx, item, "trace");
         cheek_pouch(state, side, slot, idx);
         return;
     }
@@ -20900,7 +20951,7 @@ fn end_of_turn(
                     continue;
                 }
                 state.side_mut(side).slot_scratch_mut(slot).cud_chew = None;
-                berry_effect(state, rng, side, slot, idx, item);
+                berry_effect_labeled(state, rng, side, slot, idx, item, "residual roll");
                 state.side_mut(side).ate_berry[idx as usize] = true;
             }
             ResidualKind::Leftovers(side, slot) => {

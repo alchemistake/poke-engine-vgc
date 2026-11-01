@@ -38,7 +38,7 @@ const SWITCH_CHANCE = 12;
 // Mixed into every test's controller seed. Change it when the harness makes
 // different battles (team rules, choice mix), so old seeds are never re-run.
 // v2 (2026-11-01): items, Mega picks, 66 stat points, switches, ally targets.
-const SEED_SPACE = [0x6d2b, 0x79f1, 0x1c3e, 0x4a97];
+const SEED_SPACE = [0x3b5d, 0x8e21, 0x52c7, 0x1f9a]; // wide pool (teams.js WIDE_POOL)
 const ALLY_TARGET_CHANCE = 8;
 
 // pokemon-showdown, loaded on first use: a sweep whose PS battles are all

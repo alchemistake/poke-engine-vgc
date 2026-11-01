@@ -1,6 +1,11 @@
 // Hand-rolled random team generator for the VGC Reg M-C fuzz tester.
 //
-// Fully random, but always a team the format's own validator accepts
+// Fully random. The pool is wider than the format (WIDE_POOL): every species,
+// move and held item that is standard or "Past" in the champions dex (no CAP,
+// Custom, LGPE, Future, Z-Crystals, Primal Orbs), with NatDex movepools, so
+// the engine is tested beyond Reg M-C. The format's own Species / Item Clause
+// still hold. Species that need an item (Zacian-Crowned, plates, ...) hold it.
+// With WIDE_POOL off, teams are ones the format's validator accepts
 // (pokemon-showdown `TeamValidator`, Flat Rules): species (every team-legal
 // species and forme), stat points (66 total, 0-32 per stat, champions
 // semantics), nature, ability (within the species' pool), moves (up to 4
@@ -24,6 +29,10 @@ const SP_TOTAL = 66;
 const SP_MAX = 32;
 // Chance a pokemon holds no item (Acrobatics, Knock Off / Trick no-ops, ...).
 const NO_ITEM_CHANCE = 20; // 1 in 20
+// Widen the pool past Reg M-C (see the header). A change here is a new harness:
+// bump fuzz.js SEED_SPACE with it.
+const WIDE_POOL = true;
+const wideOk = (e) => e.exists && (!e.isNonstandard || e.isNonstandard === 'Past');
 
 /**
  * Effective level-50 stats from a generated set, matching the champions mod
@@ -75,8 +84,52 @@ let POOL = null;
  *   forme for a Mega pick), `sheet` the species on the team sheet, `abilities`
  *   the sheet species' legal abilities, `stone` the forced Mega Stone or null.
  */
+function buildWideSpeciesPool(modDex) {
+  const stonesFor = new Map();
+  for (const it of modDex.items.all()) {
+    if (!wideOk(it) || !it.megaStone) continue;
+    for (const base of Object.keys(it.megaStone)) {
+      if (!stonesFor.has(base)) stonesFor.set(base, []);
+      stonesFor.get(base).push(it.name);
+    }
+  }
+  const pool = [];
+  for (const sp of modDex.species.all()) {
+    if (!wideOk(sp) || sp.battleOnly) continue;
+    if (!sp.abilities || Object.keys(sp.abilities).length === 0) continue;
+    const moves = [...modDex.species.getMovePool(sp.id, true)]
+      .filter((m) => { const mv = modDex.moves.get(m); return wideOk(mv) && !mv.isZ && !mv.isMax; })
+      .sort();
+    if (moves.length === 0) continue;
+    const abilities = [...new Set(Object.values(sp.abilities))]
+      .filter((a) => wideOk(modDex.abilities.get(a)));
+    if (abilities.length === 0) continue;
+    // A forme that needs its item (Zacian-Crowned, Arceus plates, ...) holds it.
+    const required = sp.requiredItems || (sp.requiredItem ? [sp.requiredItem] : null);
+    if (required) {
+      // Arceus formes also accept a Z-Crystal: only the Plate (no Z-Moves here).
+      for (const it of required.slice().sort()) {
+        if (modDex.items.get(it).zMove) continue;
+        pool.push({ sp, sheet: sp, moves, abilities, stone: it });
+      }
+      continue;
+    }
+    pool.push({ sp, sheet: sp, moves, abilities, stone: null });
+    for (const stone of (stonesFor.get(sp.name) || []).sort()) {
+      const mega = modDex.species.get(modDex.items.get(stone).megaStone[sp.name]);
+      if (!mega.exists) continue;
+      pool.push({ sp: mega, sheet: sp, moves, abilities, stone });
+    }
+  }
+  return pool;
+}
+
 function buildSpeciesPool(modDex) {
   if (POOL) return POOL;
+  if (WIDE_POOL) {
+    POOL = buildWideSpeciesPool(modDex);
+    return POOL;
+  }
   const V = validator();
   const stonesFor = new Map(); // species name -> [mega stone names]
   for (const it of modDex.items.all()) {
@@ -116,7 +169,7 @@ let ITEMS = null;
 function buildItemPool(modDex) {
   if (ITEMS) return ITEMS;
   ITEMS = modDex.items.all()
-    .filter((it) => !it.isNonstandard && !it.megaStone && !it.zMove && !it.isPrimalOrb)
+    .filter((it) => (WIDE_POOL ? wideOk(it) : !it.isNonstandard) && !it.megaStone && !it.zMove && !it.isPrimalOrb)
     .map((it) => it.name)
     .sort();
   return ITEMS;
@@ -182,7 +235,7 @@ function genTeam(controller, modDex) {
       moves: picked,
       item,
     };
-    const problems = setProblems(set);
+    const problems = WIDE_POOL ? null : setProblems(set);
     if (problems) throw new Error(`genTeam made an illegal set:\n${problems.join('\n')}\n${JSON.stringify(set)}`);
     usedBase.add(sheet.baseSpecies);
     if (item) usedItems.add(item);

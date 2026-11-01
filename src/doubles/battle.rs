@@ -6492,6 +6492,7 @@ fn execute_move_body(
         false,
         side_total_fainted(state, side),
         1,
+        float_stone_pair(state, state.side(side).team_member(idx), state.side(target_side).slot_pokemon(target_slot)),
     ) > 0.0
         // Spit Up's `basePowerCallback` is 100 per Stockpile layer (onTry needs one),
         // so it is an attack with power for the immunity step (PS hitStepTryImmunity).
@@ -12506,6 +12507,7 @@ fn base_power_with_modifiers(
         state.terrain.terrain_type == crate::engine::state::Terrain::ELECTRICTERRAIN && defender_grounded,
         total_fainted,
         hit_number,
+        float_stone_pair(state, attacker, Some(defender)),
     );
     let bp = if fixed_bp > 0.0 {
         fixed_bp
@@ -13536,6 +13538,17 @@ fn weather_suppressed(state: &DoublesState) -> bool {
     })
 }
 
+/// Float Stone held and not suppressed (Klutz, Embargo, Magic Room) on the
+/// attacker and the defender, for `dynamic_base_power`'s weights.
+fn float_stone_pair(
+    state: &DoublesState,
+    attacker: &crate::state::Pokemon,
+    defender: Option<&crate::state::Pokemon>,
+) -> (bool, bool) {
+    let fs = |p: &crate::state::Pokemon| p.item == Items::FLOATSTONE && !ignoring_item(state, p);
+    (fs(attacker), defender.is_some_and(fs))
+}
+
 /// PS `side.totalFainted`: fainted members of the battle team.
 fn side_total_fainted(state: &DoublesState, side: Side) -> u32 {
     let sd = state.side(side);
@@ -13563,12 +13576,20 @@ fn dynamic_base_power(
     total_fainted: u32,
     // PS `move.hit`: Triple Axel / Triple Kick.
     hit_number: u32,
+    // An unsuppressed Float Stone on (attacker, defender): its `onModifyWeight`
+    // halves the weight (`trunc(weighthg / 2)`). PS data/items.ts floatstone.
+    float_stone: (bool, bool),
 ) -> f32 {
     use crate::engine::mechanics as m;
     let (att_spe, def_spe) = speeds;
     let def_hg = |d: &crate::state::Pokemon| {
         let ignore = crate::engine::abilities::ignores_target_ability(attacker, choice, &d.ability);
-        m::weight_hg(d, ignore)
+        let hg = m::weight_hg(d, ignore);
+        if float_stone.1 { (hg / 2).max(1) } else { hg }
+    };
+    let att_hg = {
+        let hg = m::weight_hg(attacker, false);
+        if float_stone.0 { (hg / 2).max(1) } else { hg }
     };
     match choice.move_id {
         // PS acrobatics.basePowerCallback: doubled with no item.
@@ -13625,7 +13646,7 @@ fn dynamic_base_power(
         Choices::GYROBALL => m::gyro_ball_power(att_spe, def_spe),
         Choices::GRASSKNOT | Choices::LOWKICK => m::grass_knot_power(defender.map(def_hg).unwrap_or(1)),
         Choices::HEAVYSLAM | Choices::HEATCRASH => {
-            m::heavy_slam_power(m::weight_hg(attacker, false), defender.map(def_hg).unwrap_or(1))
+            m::heavy_slam_power(att_hg, defender.map(def_hg).unwrap_or(1))
         }
         Choices::REVERSAL | Choices::FLAIL => m::reversal_power(attacker.hp, attacker.maxhp),
         Choices::HARDPRESS => defender.map(|d| m::target_hp_power(100, d.hp, d.maxhp)).unwrap_or(100.0),
@@ -14603,8 +14624,11 @@ fn compute_hit_damage(
             ) && !crate::engine::abilities::ignores_target_ability(attacker, choice, &defender.ability),
             sniper: attacker.ability == Abilities::SNIPER,
             tinted_lens: attacker.ability == Abilities::TINTEDLENS,
-            no_crit: matches!(defender.ability, Abilities::SHELLARMOR | Abilities::BATTLEARMOR)
-                && !crate::engine::abilities::ignores_target_ability(attacker, choice, &defender.ability),
+            // Lucky Chant `onCriticalHit: false` on the target's side (not
+            // breakable). PS data/moves.ts luckychant.
+            no_crit: (matches!(defender.ability, Abilities::SHELLARMOR | Abilities::BATTLEARMOR)
+                && !crate::engine::abilities::ignores_target_ability(attacker, choice, &defender.ability))
+                || state.side(target_side).side_conditions.lucky_chant > 0,
             guts: attacker.ability == Abilities::GUTS,
             attack_mod: {
             let m = crate::engine::mechanics::attacker_stat_modifier(attacker, choice);
@@ -20752,7 +20776,7 @@ fn end_of_turn(
                     if !immune {
                         // `onWeather` (eachEvent), not `onResidual`: the fuzzer's `onDamage` label.
                         let f = state.tl.in_field_event.replace(false);
-                        apply_indirect_damage(state, rng, side, slot, (p2.maxhp / 16) as i16);
+                        apply_indirect_damage(state, rng, side, slot, (p2.maxhp / 16).max(1) as i16);
                         state.tl.in_field_event.set(f);
                     }
                 }
@@ -20768,9 +20792,11 @@ fn end_of_turn(
                 // PS data/conditions.ts brn.onResidual: `baseMaxhp / 16`, then
                 // data/abilities.ts heatproof.onDamage (`effect.id === 'brn'`):
                 // half of it, before the int clamp.
-                PokemonStatus::BURN if p.ability == Abilities::HEATPROOF => (p.maxhp / 32) as i16,
-                PokemonStatus::BURN => (p.maxhp / 16) as i16,
-                PokemonStatus::POISON => (p.maxhp / 8) as i16,
+                // `spreadDamage` clamps a nonzero fraction to at least 1
+                // (`clampIntRange(targetDamage, 1)`), so a 1-HP Shedinja still takes 1.
+                PokemonStatus::BURN if p.ability == Abilities::HEATPROOF => (p.maxhp / 32).max(1) as i16,
+                PokemonStatus::BURN => (p.maxhp / 16).max(1) as i16,
+                PokemonStatus::POISON => (p.maxhp / 8).max(1) as i16,
                 PokemonStatus::TOXIC => {
                     let stage = state.side(side).toxic_stage[idx as usize].max(1);
                     ((p.maxhp / 16).max(1) * stage as i16) as i16

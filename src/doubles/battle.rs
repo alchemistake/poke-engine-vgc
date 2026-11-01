@@ -3738,8 +3738,19 @@ fn execute_action_inner(
         Abilities::STALWART | Abilities::PROPELLERTAIL
     ) || action.choice.move_id == Choices::SNIPESHOT;
     // A called move (Sleep Talk, Copycat, ...) has no queued `originalTarget`.
-    let tracked = if tracks && action.target_loc != 0 && !state.side(side).active()[slot].external_call {
-        action.orig_target.and_then(|(ts, ti)| {
+    // A `recharge` queued before its user gained Stalwart (Skill Swap this turn)
+    // still has `lastMoveTargetLoc` as its location: that pokemon is followed.
+    let recharge_orig = if action.recharge
+        && action.target_loc == 0
+        && action.orig_target.is_none()
+        && matches!(state.side(side).team_member(action.pokemon_index).ability, Abilities::STALWART | Abilities::PROPELLERTAIL)
+    {
+        orig_target_at(state, side, state.side(side).active()[slot].last_target_loc)
+    } else {
+        None
+    };
+    let tracked = if tracks && (action.target_loc != 0 || recharge_orig.is_some()) && !state.side(side).active()[slot].external_call {
+        action.orig_target.or(recharge_orig).and_then(|(ts, ti)| {
             (0..2).find(|&sl| {
                 state.side(ts).active()[sl].pokemon_index == Some(ti)
                     && state.side(ts).team_member(ti).hp > 0

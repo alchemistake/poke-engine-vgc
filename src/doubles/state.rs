@@ -875,6 +875,11 @@ pub struct MoveScratch {
     /// eaten mid-move sees it.
     pub pressure_owed: std::cell::Cell<Option<(crate::doubles::state::Side, usize, crate::state::PokemonIndex, crate::state::PokemonMoveIndex, crate::choices::Choices)>>,
     pub pressure_done: std::cell::Cell<bool>,
+    /// The caller move (user side, user, move slot, move) of a move run by
+    /// `useMove` from a move's handler (Mirror Move, Sleep Talk, ...): PS
+    /// `useMoveInner` `callerMoveForPressure` takes the called move's Pressure
+    /// PP from the caller's slot.
+    pub pressure_caller: std::cell::Cell<Option<(Side, crate::state::PokemonIndex, crate::state::PokemonMoveIndex, crate::choices::Choices)>>,
     /// Slots (bit `side * 2 + slot`) whose Berserk / Anger Shell has not yet
     /// checked this move's damage (`checkedBerserk` false): no healing berry.
     pub berserk_pending: std::cell::Cell<u8>,

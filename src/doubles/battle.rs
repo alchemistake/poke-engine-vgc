@@ -3674,6 +3674,20 @@ fn mold_breaker_forget(state: &mut DoublesState, side: Side, idx: PokemonIndex) 
     state.mold_saved.retain(|&mut (s, i, _)| (s, i) != (side, idx));
 }
 
+/// The move slot (index, move) a running move's Pressure PP comes off: the
+/// caller's for a move a caller move's handler `useMove`d (PS useMoveInner
+/// `deductPP(callerMoveForPressure || moveOrMoveName, extraPP)`).
+fn pressure_pp_slot(state: &DoublesState, action: &Action) -> (crate::state::PokemonMoveIndex, Choices) {
+    match state.tl.pressure_caller.get() {
+        Some((cs, ci, k, id))
+            if (cs, ci) == (action.side, action.pokemon_index) && state.side(action.side).active()[action.slot].external_call =>
+        {
+            (k, id)
+        }
+        _ => (action.choice.move_index, action.choice.move_id),
+    }
+}
+
 /// Pressure `onDeductPP`: one extra PP per Pressure foe among the move's
 /// `pressureTargets` (PS sim/battle-actions.ts useMoveInner,
 /// sim/pokemon.ts getMoveTargets; `mustpressure` moves count every foe,
@@ -3699,21 +3713,22 @@ fn pressure_deduct_pp(state: &mut DoublesState, action: &Action) {
     if state.side(action.side).active()[action.slot].bounced {
         return;
     }
+    let (move_index, move_id) = pressure_pp_slot(state, action);
     let s = state.side_mut(action.side);
-    let mv = &mut s.team_member_mut(action.pokemon_index).moves[&action.choice.move_index];
+    let mv = &mut s.team_member_mut(action.pokemon_index).moves[&move_index];
     // PS deducts before the move runs: a Transform has since replaced the
     // move slots, so the PP comes off the saved original moves.
-    if mv.id != action.choice.move_id {
+    if mv.id != move_id {
         if let Some(t) = s.transform_save[action.pokemon_index as usize].as_mut() {
-            let mv = &mut t.moves[&action.choice.move_index];
-            if mv.id == action.choice.move_id {
+            let mv = &mut t.moves[&move_index];
+            if mv.id == move_id {
                 mv.pp = (mv.pp - extra).max(0);
             }
         }
         // Mimic replaced its own slot: the PP comes off the saved Mimic.
         if let Some(sl) = (0..2).find(|&sl| s.active()[sl].pokemon_index == Some(action.pokemon_index)) {
             if let Some((k, id, pp)) = s.active()[sl].mimic {
-                if id == action.choice.move_id && k as usize == action.choice.move_index as usize {
+                if id == move_id && k as usize == move_index as usize {
                     s.active_slot_mut(sl).mimic = Some((k, id, (pp - extra).max(0)));
                 }
             }
@@ -3801,6 +3816,9 @@ fn pressure_extra_count(state: &DoublesState, action: &Action) -> i8 {
         .into_iter()
         .filter(|&sl| sl < 2)
         .filter(|&sl| state.side(foe).slot_pokemon(sl).is_some_and(|p| p.hp > 0 && p.ability == Abilities::PRESSURE))
+        // Pressure `onDeductPP` is an ability handler: an active Neutralizing
+        // Gas suppresses it (PS sim/pokemon.ts ignoringAbility).
+        .filter(|&sl| !neutralizing_gas_suppresses(state, foe, sl))
         .count() as i8;
     extra
 }
@@ -4710,8 +4728,12 @@ fn execute_move_body(
         return;
     }
 
-    // Taunt `onBeforeMove` (priority 5): Status moves are blocked.
-    if state.side(side).active()[slot].taunt > 0 && action.choice.category == MoveCategory::Status {
+    // Taunt `onBeforeMove` (priority 5): Status moves but Me First are blocked.
+    // PS data/moves.ts taunt.
+    if state.side(side).active()[slot].taunt > 0
+        && action.choice.category == MoveCategory::Status
+        && action.choice.move_id != Choices::MEFIRST
+    {
         return;
     }
 
@@ -12675,8 +12697,37 @@ fn run_copied_move(
     state.side_mut(action.side).slot_scratch_mut(action.slot).external_call = true;
     let n = copy_order.len();
     let outer_no_target = state.tl.no_target_fail.replace(false);
+    // The called move's Pressure PP comes off the caller's slot; the caller's
+    // own Pressure scratch (resolved before its `onTryHit` / `onHit`) must
+    // survive the called move. PS useMoveInner `callerMoveForPressure`.
+    let (saved_pt, saved_pe) = (state.tl.pressure_target.get(), state.tl.pressure_extra.get());
+    let (saved_po, saved_pd) = (state.tl.pressure_owed.get(), state.tl.pressure_done.get());
+    let saved_caller = state
+        .tl
+        .pressure_caller
+        .replace(Some((action.side, action.pokemon_index, action.choice.move_index, action.choice.move_id)));
+    state.tl.pressure_target.set(None);
+    state.tl.pressure_extra.set(-1);
+    state.tl.pressure_owed.set(Some((
+        action.side,
+        action.slot,
+        action.pokemon_index,
+        action.choice.move_index,
+        action.choice.move_id,
+    )));
+    state.tl.pressure_done.set(false);
     execute_action_inner(state, rng, &sub, copy_order, will_act, queue);
     let copied_no_target = state.tl.no_target_fail.replace(outer_no_target);
+    // The called move reached `useMoveInner`'s Pressure block (announced,
+    // with a target).
+    if copy_order.len() > n && !copied_no_target && state.tl.pressure_target.get().is_some_and(|t| t.is_some()) {
+        pressure_deduct_pp(state, &sub);
+    }
+    state.tl.pressure_caller.set(saved_caller);
+    state.tl.pressure_target.set(saved_pt);
+    state.tl.pressure_extra.set(saved_pe);
+    state.tl.pressure_owed.set(saved_po);
+    state.tl.pressure_done.set(saved_pd);
     // The copy may swap positions (Ally Switch): the flag travels with the
     // `ActiveSlot`, so clear it on every slot of the side, not only `action.slot`.
     for sl in 0..2 {
@@ -18603,6 +18654,19 @@ fn after_hit_item_moves(
 
 /// A berry's `onEat` on `idx` (eaten by its holder, flung at it, or stolen
 /// with Bug Bite / Pluck). PS data/items.ts.
+/// Mystery Berry `onEat`: move slot `k` gets 5 PP back, capped at its max
+/// (5 while transformed). PS data/items.ts mysteryberry.
+fn mystery_berry_restore(pm: &mut crate::state::Pokemon, k: usize, transformed: bool) {
+    let m = match k {
+        0 => &mut pm.moves.m0,
+        1 => &mut pm.moves.m1,
+        2 => &mut pm.moves.m2,
+        _ => &mut pm.moves.m3,
+    };
+    let max = if transformed { 5 } else { max_pp(m.id) };
+    m.pp = (m.pp + 5).min(max);
+}
+
 fn berry_effect(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize, idx: PokemonIndex, item: Items) {
     berry_effect_labeled(state, rng, side, slot, idx, item, "other: onEat");
 }
@@ -18749,6 +18813,24 @@ fn berry_effect_labeled(
                 m.pp = (m.pp + restore).min(cap(m.id));
             }
         }
+        // Mystery Berry `onEat` without the `leppaberry` volatile (Fling, Cud
+        // Chew): the first slot with the lowest PP gets 5 back, no Ripen.
+        // PS data/items.ts mysteryberry.
+        Items::MYSTERYBERRY => {
+            let transformed = state.side(side).transform_save[idx as usize].is_some();
+            let pm = state.side_mut(side).team_member_mut(idx);
+            let mut best: Option<usize> = None;
+            let mut low = 99;
+            for (k, m) in [&pm.moves.m0, &pm.moves.m1, &pm.moves.m2, &pm.moves.m3].iter().enumerate() {
+                if m.id != Choices::NONE && m.pp < low {
+                    best = Some(k);
+                    low = m.pp;
+                }
+            }
+            if let Some(k) = best {
+                mystery_berry_restore(pm, k, transformed);
+            }
+        }
         _ => {
             let st = state.side(side).team_member(idx).status;
             if cure(st) {
@@ -18883,6 +18965,25 @@ fn item_update(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: us
                 };
                 let max = if transformed { 5 } else { max_pp(m.id) };
                 m.pp = (m.pp + restore).min(max);
+                cheek_pouch(state, side, slot, idx);
+            }
+        }
+        // Mystery Berry `onUpdate`: eaten when the holder's last move is at 0
+        // PP; the `leppaberry` volatile hands that slot to `onEat` (+5).
+        // PS data/items.ts mysteryberry.
+        Items::MYSTERYBERRY => {
+            pressure_pay_now(state, side, idx);
+            let Some(lm) = state.side(side).active()[slot].last_move else { return };
+            let transformed = state.side(side).transform_save[idx as usize].is_some();
+            let moves = &state.side(side).team_member(idx).moves;
+            if let Some(k) = [&moves.m0, &moves.m1, &moves.m2, &moves.m3]
+                .iter()
+                .position(|m| m.id == lm && m.id != Choices::NONE)
+                .filter(|&k| [&moves.m0, &moves.m1, &moves.m2, &moves.m3][k].pp == 0)
+            {
+                use_item(state, rng, side, slot, idx, true);
+                let pm = state.side_mut(side).team_member_mut(idx);
+                mystery_berry_restore(pm, k, transformed);
                 cheek_pouch(state, side, slot, idx);
             }
         }
@@ -21289,7 +21390,7 @@ fn no_usable_moves(state: &DoublesState, side: Side, slot: usize, idx: PokemonIn
             || m.disabled
             || a.disabled.is_some_and(|(d, _)| d == m.id)
             || imprison_blocks(state, side, m.id)
-            || (a.taunt > 0 && m.choice().category == MoveCategory::Status)
+            || (a.taunt > 0 && m.choice().category == MoveCategory::Status && m.id != Choices::MEFIRST)
             // PS data/mods/champions/moves.ts fakeout / firstimpression
             // `onDisableMove`: disabled once `activeMoveActions` is non-zero.
             || (matches!(m.id, Choices::FAKEOUT | Choices::FIRSTIMPRESSION) && a.active_move_actions > 0)

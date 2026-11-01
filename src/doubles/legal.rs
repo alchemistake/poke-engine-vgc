@@ -73,7 +73,7 @@ fn move_disabled(state: &DoublesState, side: Side, slot: usize, idx: PokemonInde
         || m.disabled
         || a.disabled.is_some_and(|(d, _)| d == m.id)
         || imprison_blocks(state, side, m.id)
-        || (a.taunt > 0 && m.choice().category == MoveCategory::Status)
+        || (a.taunt > 0 && m.choice().category == MoveCategory::Status && m.id != Choices::MEFIRST)
         // PS data/mods/champions/moves.ts fakeout / firstimpression.
         || (matches!(m.id, Choices::FAKEOUT | Choices::FIRSTIMPRESSION) && a.active_move_actions > 0)
         || (state.gravity.active && has_gravity_flag(m.id))

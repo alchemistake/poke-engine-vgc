@@ -9972,6 +9972,25 @@ fn execute_move_body(
                 apply_boosts(state, rng, side, idx, &StatBoosts { attack: 12, ..Default::default() }, false);
             }
         }
+        // Fillet Away: `onTry` fails at or below half HP; `onTryHit` boosts
+        // Atk / SpA / Spe by 2 (fails when none changes); `onHit` then pays
+        // floor(maxhp / 2) (`directDamage`). PS data/moves.ts filletaway.
+        if choice.move_id == Choices::FILLETAWAY && ti == 0 && !move_failed {
+            let (hp, maxhp) = {
+                let p = state.side(side).team_member(idx);
+                (p.hp as i32, p.maxhp as i32)
+            };
+            if hp * 2 <= maxhp || maxhp == 1 {
+                move_failed = true;
+            } else {
+                let b = StatBoosts { attack: 2, special_attack: 2, speed: 2, ..Default::default() };
+                if apply_boosts_from(state, rng, side, idx, &b, false, false) {
+                    apply_direct_damage(state, side, slot, (maxhp / 2) as i16);
+                } else {
+                    move_failed = true;
+                }
+            }
+        }
         // Soak `onHit`: `setType('Water')` (fails if already pure Water).
         // PS data/moves.ts soak. The original types come back on switch-out
         // (`type_change`, as for Libero).

@@ -24,8 +24,9 @@ const get = (k) => {
 };
 const SEED = get('--seed');
 const TURN = get('--turn');
+const MODE = args.includes('--mode') ? args[args.indexOf('--mode') + 1] : (process.env.FUZZ_MODE || 'random');
 if (Number.isNaN(SEED) || Number.isNaN(TURN)) {
-  console.error('usage: node fuzz/ps_trace.js --seed <S> --turn <T>');
+  console.error('usage: node fuzz/ps_trace.js --seed <S> --turn <T> [--mode random|champions]');
   process.exit(2);
 }
 
@@ -158,7 +159,7 @@ process.on('exit', () => {
 console.log = () => {};
 console.error = () => {};
 // --verbose: no fast path, so the battle is played (and traced) once.
-process.argv = [process.argv[0], 'fuzz.js', '--seed', String(SEED), '--count', '1', '--verbose', '--workdir',
+process.argv = [process.argv[0], 'fuzz.js', '--seed', String(SEED), '--count', '1', '--verbose', '--mode', MODE, '--workdir',
   path.join(__dirname, "work", "trace")];
 // Loaded as a module, fuzz.js does not run its CLI: call it.
 require('./fuzz.js').main();

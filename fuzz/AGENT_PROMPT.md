@@ -17,7 +17,19 @@ All commands below run from `poke-engine/`.
 ## 1. The workflow (follow it exactly)
 
 **Score** = number of consecutive passing battles from seed 0 (seeds
-0..N-1 all pass). The baseline is in `fuzz/SCORE`. Your job is to raise it.
+0..N-1 all pass). The fuzzer has two modes, each with its own score:
+- `champions` — **the main fuzzer method.** Format-legal sets only (Reg M-C
+  species, moves, abilities, items). Add `--mode champions` to every
+  fuzz.js / ps_trace.js command (`FUZZ_MODE=champions` for census.js).
+  Baseline in `fuzz/SCORE_CHAMPIONS`.
+- `random` (the CLI default) — every species / move / ability / item, past
+  gens included. Secondary coverage. Baseline in `fuzz/SCORE`.
+
+Your job is to raise the **champions** score unless the user names the
+other mode. **Champions comes first:** when a fix for a past-gen move, item
+or ability (random mode) conflicts with champions behaviour, keep the
+champions behaviour; never trade a champions pass for a random-mode pass.
+The guard checks both scores.
 
 **Setup, once per session:**
 ```shell
@@ -29,7 +41,7 @@ cargo build --release --features champions --no-default-features
 
 **The cycle:**
 1. **Find the first failure.**
-   `node fuzz/fuzz.js --seed 0 --count 1000000` (see "Sweep speed" below). No
+   `node fuzz/fuzz.js --seed 0 --count 1000000 --mode champions` (see "Sweep speed" below). No
    output and exit 0 means all 1000000 pass: stop and report. The sweep stops
    at the first failure, so it only runs (and caches) the battles up to it.
    Otherwise copy the `reproduce:` line (e.g. `--seed 2 --count 1`). That

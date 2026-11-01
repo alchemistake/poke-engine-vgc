@@ -16,8 +16,21 @@ exits immediately at the first divergent turn.
 cd .. && cargo build --release --features champions --no-default-features
 
 # run the fuzzer
-node fuzz/fuzz.js --seed <testerSeed> --count <numTests>
+node fuzz/fuzz.js --seed <testerSeed> --count <numTests> [--mode random|champions]
 ```
+
+### Modes
+
+| mode | teams | score file |
+|---|---|---|
+| `random` (default) | every species, move, ability and item, past gens included (`teams.js` WIDE_POOL) | `fuzz/SCORE` |
+| `champions` | only sets the format's validator accepts (Reg M-C legal species, moves, abilities, items) | `fuzz/SCORE_CHAMPIONS` |
+
+Each mode has its own seed space, so seed N is a different battle in each
+mode. It also has its own PS cache (`fuzz/work/ps-cache`,
+`fuzz/work/ps-cache-champions`) and default workdir (`fuzz/work`,
+`fuzz/work/champions`). `ps_trace.js` takes `--mode` too; `census.js`
+reads `FUZZ_MODE`. `fuzz/guard.sh` checks both scores.
 
 Options:
 
@@ -55,7 +68,7 @@ Options:
      in 12 actions is a voluntary switch instead; switch requests pick a
      random legal replacement; fainted slots without a replacement send
      `pass`.
-   - the controller seed mixes in `SEED_SPACE` (fuzz.js): a harness change
+   - the controller seed mixes in the mode's `SEED_SPACES` entry (fuzz.js): a harness change
      that makes different battles gets a new one, so seed N is never an old
      harness's battle.
 2. The PS battle is driven turn by turn; after every turn a **full-state

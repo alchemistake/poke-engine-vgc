@@ -354,6 +354,9 @@ pub struct ActiveSlot {
     pub hurt_hp: i16,
     /// PS `pokemon.newlySwitched`: switched in since the turn started (Payback).
     pub newly_switched: bool,
+    /// Switched in, its ability `onStart` not run yet (Unnerve's
+    /// `effectState.unnerved` is still unset).
+    pub ability_unstarted: bool,
     /// The `twoturnmove` volatile (duration 2) is still around for this
     /// turn's residual after the charged move fired.
     pub twoturn_fired: bool,
@@ -585,6 +588,7 @@ impl ActiveSlot {
             hurt_this_turn: false,
             hurt_hp: 0,
             newly_switched: false,
+            ability_unstarted: false,
             twoturn_fired: false,
             encore: None,
             torment: false,
@@ -732,6 +736,11 @@ pub struct DoublesSide {
     /// `slotCondition: 'healingwish' | 'lunardance'`): they wait for the next
     /// pokemon switched into that slot.
     pub healing_wish_slot: [bool; 2],
+    /// The slot's Healing Wish / Lunar Dance was visited by an Ally Switch
+    /// `runEvent('Swap')` without being used: PS's `runEvent` set its
+    /// `effectState.target` to that pokemon, so `fieldEvent('SwitchIn')` skips
+    /// it from then on (only another Swap can still use it).
+    pub healing_wish_detached: [bool; 2],
     /// The slot's `healing_wish_slot` condition is Lunar Dance (also restores PP).
     pub lunar_dance_slot: [bool; 2],
     /// PS `moveSlot.used` per team member / move slot (set by `deductPP`).
@@ -1017,6 +1026,10 @@ pub struct DoublesState {
     /// resolves faints after the loop, so its per-hit `eachEvent` still sorts
     /// them: (side, slot, team index).
     pub unresolved_faints: Vec<(crate::doubles::state::Side, usize, PokemonIndex)>,
+    /// Boosts of a pokemon KO'd but not yet through `faintMessages`: PS keeps
+    /// them until `clearVolatile` (a move whose user fell to Spiky Shield
+    /// still uses its stages). The engine clears them at the KO.
+    pub fainted_boosts: Vec<(crate::doubles::state::Side, PokemonIndex, TeamBoosts)>,
     /// KO'd pokemon (still in `unresolved_faints`) whose Attract and Syrup
     /// Bomb volatiles still tie in `eachEvent('Update')`.
     pub ko_update_ties: Vec<(crate::doubles::state::Side, usize, PokemonIndex)>,
@@ -1780,6 +1793,7 @@ impl DoublesState {
             last_item: [Items::NONE; 6],
             ate_berry: [false; 6],
             healing_wish_slot: [false; 2],
+            healing_wish_detached: [false; 2],
             lunar_dance_slot: [false; 2],
             moves_used: [[false; 4]; 6],
             damaged_by: std::array::from_fn(|_| Vec::new()),
@@ -1813,6 +1827,7 @@ impl DoublesState {
             last_item: [Items::NONE; 6],
             ate_berry: [false; 6],
             healing_wish_slot: [false; 2],
+            healing_wish_detached: [false; 2],
             lunar_dance_slot: [false; 2],
             moves_used: [[false; 4]; 6],
             damaged_by: std::array::from_fn(|_| Vec::new()),
@@ -1890,6 +1905,7 @@ impl DoublesState {
             echoed_voice: None,
             turn: 1,
             unresolved_faints: Vec::new(),
+            fainted_boosts: Vec::new(),
             ko_update_ties: Vec::new(),
             mold_saved: arrayvec::ArrayVec::new(),
             gas_saved: arrayvec::ArrayVec::new(),

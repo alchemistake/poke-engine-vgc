@@ -1,8 +1,14 @@
 // Fuzz tester: runs poke-engine and pokemon-showdown on the same random
 // battles and compares full per-turn state.
 //
-//   node fuzz.js --seed <testerSeed> --count <numTests> [--workdir dir] [--engine path]
+//   node fuzz.js --seed <testerSeed> --count <numTests> [--mode random|champions]
+//                [--workdir dir] [--engine path]
 //
+// - Modes (teams.js): `random` (default) draws from every species, move,
+//   ability and item, past gens included; `champions` only makes sets the
+//   format's validator accepts. Each mode has its own seed space, PS cache,
+//   default workdir (fuzz/work, fuzz/work/champions) and score file
+//   (fuzz/SCORE, fuzz/SCORE_CHAMPIONS).
 // - The tester seed drives the controller PRNG (team generation, battle seed
 //   selection, and all in-game move/switch/team-preview choices). Re-running
 //   with the same seed reproduces the exact same test cases.
@@ -17,6 +23,21 @@
 const path = require('path');
 const fs = require('fs');
 const { spawnSync } = require('child_process');
+
+// Mixed into every test's controller seed (see makeTest). Change it when the
+// harness makes different battles (team rules, choice mix), so old seeds are
+// never re-run. v2 (2026-11-01): items, Mega picks, 66 stat points, switches,
+// ally targets. One per mode (`--mode`): the modes never share a battle.
+const SEED_SPACES = {
+  random: [0x3b5d, 0x8e21, 0x52c7, 0x1f9a], // wide pool (teams.js WIDE_POOL)
+  champions: [0x6a17, 0xc3e9, 0x27b4, 0x9d02], // validator-legal Reg M-C sets
+};
+const MODES = Object.keys(SEED_SPACES);
+// The mode: `--mode`, else FUZZ_MODE (inherited by workers and teams.js).
+let MODE = null;
+const seedSpace = () => SEED_SPACES[MODE];
+// The `--mode` part of a command line (none for the default mode).
+const modeArg = () => (MODE === 'random' ? '' : ` --mode ${MODE}`);
 
 // Parallel sweep parent: start the workers BEFORE loading pokemon-showdown
 // (the parent only needs it to print a report). See runParallel / main.
@@ -35,10 +56,6 @@ const FORMAT = 'gen9championsvgc2026regmc';
 // the pokemon is free to leave); 1 in ALLY_TARGET_CHANCE single-target moves
 // aims at the ally.
 const SWITCH_CHANCE = 12;
-// Mixed into every test's controller seed. Change it when the harness makes
-// different battles (team rules, choice mix), so old seeds are never re-run.
-// v2 (2026-11-01): items, Mega picks, 66 stat points, switches, ally targets.
-const SEED_SPACE = [0x3b5d, 0x8e21, 0x52c7, 0x1f9a]; // wide pool (teams.js WIDE_POOL)
 const ALLY_TARGET_CHANCE = 8;
 
 // pokemon-showdown, loaded on first use: a sweep whose PS battles are all
@@ -63,7 +80,8 @@ function parseArgs() {
   const opts = {
     seed: null,
     count: null,
-    workdir: path.join(__dirname, 'work'),
+    mode: process.env.FUZZ_MODE || 'random',
+    workdir: null,
     engine: path.resolve(__dirname, '..', 'target', 'release', 'poke-engine'),
     verbose: false,
     // Internal (parallel workers): test seeds are seed, seed+step, ...; on
@@ -77,6 +95,7 @@ function parseArgs() {
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--seed') opts.seed = parseInt(args[++i], 10);
     else if (args[i] === '--count') opts.count = parseInt(args[++i], 10);
+    else if (args[i] === '--mode') opts.mode = args[++i];
     else if (args[i] === '--workdir') opts.workdir = path.resolve(args[++i]);
     else if (args[i] === '--engine') opts.engine = path.resolve(args[++i]);
     else if (args[i] === '--verbose') opts.verbose = true;
@@ -90,8 +109,17 @@ function parseArgs() {
     }
   }
   if (opts.seed === null || opts.count === null || Number.isNaN(opts.seed) || Number.isNaN(opts.count)) {
-    console.error('usage: node fuzz.js --seed <n> --count <n> [--workdir dir] [--engine path] [--verbose]');
+    console.error('usage: node fuzz.js --seed <n> --count <n> [--mode random|champions] [--workdir dir] [--engine path] [--verbose]');
     process.exit(2);
+  }
+  if (!MODES.includes(opts.mode)) {
+    console.error(`unknown mode: ${opts.mode} (one of: ${MODES.join(', ')})`);
+    process.exit(2);
+  }
+  MODE = opts.mode;
+  process.env.FUZZ_MODE = MODE;
+  if (!opts.workdir) {
+    opts.workdir = MODE === 'random' ? path.join(__dirname, 'work') : path.join(__dirname, 'work', MODE);
   }
   return opts;
 }
@@ -721,9 +749,14 @@ function stepPSBattle(battleSeed, teamA, teamB, controller, onInit, onTurn) {
         // left (a pokemon can only switch in once); the rest must pass.
         // `pos` is PS's CURRENT side.pokemon index (used in the choice
         // string); the recorded position is the stable battle-team index.
+        // A pokemon a queued switch action still brings in is taken too
+        // (PS `clearChoice`: `switchIns` starts from `queue.getSwitches`).
+        const queued = new Set(battle.queue.list
+          .filter((a) => a.choice === 'switch' && a.pokemon && a.pokemon.side === side && a.target)
+          .map((a) => a.target));
         const candidates = side.pokemon
           .map((q, pos) => ({ q, pos }))
-          .filter((x) => !x.q.fainted && x.q.hp > 0 && !side.active.includes(x.q));
+          .filter((x) => !x.q.fainted && x.q.hp > 0 && !side.active.includes(x.q) && !queued.has(x.q));
         reqs[si].forceSwitch.forEach((flag, slot) => {
           if (!flag) return;
           const p = side.active[slot];
@@ -1185,7 +1218,7 @@ function writeFailure(opts, testIdx, info) {
 function compactReport(opts, testIdx, info) {
   const out = [];
   out.push(`=== FUZZ MISMATCH === test #${testIdx + 1} of ${opts.count} (tester seed ${opts.seed})`);
-  out.push(`reproduce: node fuzz/fuzz.js --seed ${opts.seed + testIdx} --count 1`);
+  out.push(`reproduce: node fuzz/fuzz.js --seed ${opts.seed + testIdx} --count 1${modeArg()}`);
   out.push(`battle seed: ${info.battleSeed.join(', ')}`);
   const teamLine = (tag, bt) => {
     if (!bt) return;
@@ -1337,7 +1370,8 @@ function psCacheDir() {
     h.update(`${f}:${fs.statSync(path.join(PS_DIR, 'dist', f)).mtimeMs};`);
   }
   h.update(FORMAT);
-  const root = path.join(__dirname, 'work', 'ps-cache');
+  h.update(MODE);
+  const root = path.join(__dirname, 'work', MODE === 'random' ? 'ps-cache' : `ps-cache-${MODE}`);
   PS_CACHE_DIR = path.join(root, h.digest('hex').slice(0, 16));
   if (!fs.existsSync(PS_CACHE_DIR)) {
     // New harness / PS build: older caches can never be used again.
@@ -1388,15 +1422,16 @@ const FAST_CHUNK_CACHED = 128;
 // the test seed, so a test can be rebuilt identically).
 function makeTest(testSeed) {
   // Controller seed words: the low and high 16 bits of the test seed, mixed
-  // with SEED_SPACE, so every seed up to 2^32 - 1 is a distinct battle and
-  // no seed replays a battle of an older harness (new SEED_SPACE = new games).
+  // with the mode's SEED_SPACES entry, so every seed up to 2^32 - 1 is a
+  // distinct battle and no seed replays a battle of an older harness or of
+  // the other mode (new seed space = new games).
   const lo = testSeed & 0xffff;
   const hi = Math.floor(testSeed / 65536) & 0xffff;
   const controller = new (ps().PRNG)([
-    lo ^ SEED_SPACE[0],
-    ((lo + 1) & 0xffff) ^ SEED_SPACE[1],
-    ((lo + 2) & 0xffff) ^ ((hi * 40503) & 0xffff) ^ SEED_SPACE[2],
-    ((lo + 3) & 0xffff) ^ hi ^ SEED_SPACE[3],
+    lo ^ seedSpace()[0],
+    ((lo + 1) & 0xffff) ^ seedSpace()[1],
+    ((lo + 2) & 0xffff) ^ ((hi * 40503) & 0xffff) ^ seedSpace()[2],
+    ((lo + 3) & 0xffff) ^ hi ^ seedSpace()[3],
   ]);
   // 1. Battle seed (4 x 16-bit words), from the controller stream.
   const battleSeed = [0, 0, 0, 0].map(() => controller.random(65536));
@@ -1484,7 +1519,7 @@ function runParallel(opts) {
     const child = spawn(
       process.execPath,
       [__filename, '--seed', String(opts.seed + j), '--count', String(count), '--step', String(jobs),
-        '--check-only', '--jobs', '1', '--engine', opts.engine, ...(opts.cache ? [] : ['--no-cache']),
+        '--check-only', '--jobs', '1', '--mode', opts.mode, '--engine', opts.engine, ...(opts.cache ? [] : ['--no-cache']),
         '--workdir', path.join(opts.workdir, `worker-${j}`)],
       { stdio: ['ignore', 'pipe', 'inherit'] }
     );
@@ -1726,7 +1761,7 @@ function main() {
     // A worker's fast check failed this seed but the stepwise re-run passed:
     // the two paths disagree (a harness bug). Never report that as a pass.
     console.log(`=== FUZZ MISMATCH === fast path failed seed ${RERUN_OF}, stepwise re-run passed`);
-    console.log(`reproduce: node fuzz/fuzz.js --seed ${RERUN_OF} --count 1`);
+    console.log(`reproduce: node fuzz/fuzz.js --seed ${RERUN_OF} --count 1${modeArg()}`);
     process.exit(1);
   }
   process.exit(0);

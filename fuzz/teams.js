@@ -1,11 +1,15 @@
 // Hand-rolled random team generator for the VGC Reg M-C fuzz tester.
 //
-// Fully random. The pool is wider than the format (WIDE_POOL): every species,
+// Two modes (`FUZZ_MODE`, set by fuzz.js `--mode`):
+// - random (default): fully random, wider than the format (WIDE_POOL).
+// - champions: only sets the format's validator accepts.
+//
+// random: the pool is wider than the format (WIDE_POOL): every species,
 // move and held item that is standard or "Past" in the champions dex (no CAP,
 // Custom, LGPE, Future, Z-Crystals, Primal Orbs), with NatDex movepools, so
 // the engine is tested beyond Reg M-C. The format's own Species / Item Clause
 // still hold. Species that need an item (Zacian-Crowned, plates, ...) hold it.
-// With WIDE_POOL off, teams are ones the format's validator accepts
+// champions: teams are ones the format's validator accepts
 // (pokemon-showdown `TeamValidator`, Flat Rules): species (every team-legal
 // species and forme), stat points (66 total, 0-32 per stat, champions
 // semantics), nature, ability (within the species' pool), moves (up to 4
@@ -29,9 +33,10 @@ const SP_TOTAL = 66;
 const SP_MAX = 32;
 // Chance a pokemon holds no item (Acrobatics, Knock Off / Trick no-ops, ...).
 const NO_ITEM_CHANCE = 20; // 1 in 20
-// Widen the pool past Reg M-C (see the header). A change here is a new harness:
-// bump fuzz.js SEED_SPACE with it.
-const WIDE_POOL = true;
+// Widen the pool past Reg M-C (see the header): every mode but champions.
+// A pool change is a new harness: bump that mode's fuzz.js SEED_SPACE with it.
+const mode = () => process.env.FUZZ_MODE || 'random';
+const widePool = () => mode() !== 'champions';
 const wideOk = (e) => e.exists && (!e.isNonstandard || e.isNonstandard === 'Past');
 
 /**
@@ -68,7 +73,7 @@ function setProblems(set) {
   return validator().validateSet(JSON.parse(JSON.stringify(set)), {}) || null;
 }
 
-let POOL = null;
+const POOL = {};
 
 /**
  * Build the species pool once from the FORMAT's own species table
@@ -126,10 +131,10 @@ function buildWideSpeciesPool(modDex) {
 }
 
 function buildSpeciesPool(modDex) {
-  if (POOL) return POOL;
-  if (WIDE_POOL) {
-    POOL = buildWideSpeciesPool(modDex);
-    return POOL;
+  if (POOL[mode()]) return POOL[mode()];
+  if (widePool()) {
+    POOL[mode()] = buildWideSpeciesPool(modDex);
+    return POOL[mode()];
   }
   const V = validator();
   const stonesFor = new Map(); // species name -> [mega stone names]
@@ -160,20 +165,20 @@ function buildSpeciesPool(modDex) {
     }
   }
   if (pool.length === 0) throw new Error('empty species pool');
-  POOL = pool;
+  POOL[mode()] = pool;
   return pool;
 }
 
-let ITEMS = null;
+const ITEMS = {};
 
 /** Every item the format allows, minus Mega Stones (those go only to their species). */
 function buildItemPool(modDex) {
-  if (ITEMS) return ITEMS;
-  ITEMS = modDex.items.all()
-    .filter((it) => (WIDE_POOL ? wideOk(it) : !it.isNonstandard) && !it.megaStone && !it.zMove && !it.isPrimalOrb)
+  if (ITEMS[mode()]) return ITEMS[mode()];
+  ITEMS[mode()] = modDex.items.all()
+    .filter((it) => (widePool() ? wideOk(it) : !it.isNonstandard) && !it.megaStone && !it.zMove && !it.isPrimalOrb)
     .map((it) => it.name)
     .sort();
-  return ITEMS;
+  return ITEMS[mode()];
 }
 
 /** 66 stat points, each stat capped at 32 (champions / VGC sheet rules). */
@@ -236,7 +241,7 @@ function genTeam(controller, modDex) {
       moves: picked,
       item,
     };
-    const problems = WIDE_POOL ? null : setProblems(set);
+    const problems = widePool() ? null : setProblems(set);
     if (problems) throw new Error(`genTeam made an illegal set:\n${problems.join('\n')}\n${JSON.stringify(set)}`);
     usedBase.add(sheet.baseSpecies);
     if (item) usedItems.add(item);

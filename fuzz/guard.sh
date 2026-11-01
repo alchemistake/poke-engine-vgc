@@ -2,7 +2,7 @@
 # Guard rails for the fuzz-parity work. Run from anywhere:
 #
 #   fuzz/guard.sh            # all checks; fails (exit 1) on any violation
-#   fuzz/guard.sh --update   # same, and raise fuzz/SCORE if the score went up
+#   fuzz/guard.sh --update   # same, and raise a score file if its score went up
 #
 # The git pre-commit hook (fuzz/install-hooks.sh) runs it, so a commit is
 # refused when a check fails. Checks:
@@ -13,8 +13,8 @@
 #   3. src/choices.rs is not bulk-rewritten.
 #   4. No build artifacts / fuzz output are staged.
 #   5. The champions build succeeds and `cargo test` is green.
-#   6. Score (consecutive passing battles from seed 0) did not drop below
-#      fuzz/SCORE.
+#   6. Score (consecutive passing battles from seed 0) did not drop, for each
+#      fuzzer mode: random -> fuzz/SCORE, champions -> fuzz/SCORE_CHAMPIONS.
 set -u
 cd "$(dirname "$0")/.."           # poke-engine/
 ROOT="$(pwd)"
@@ -34,7 +34,7 @@ fi
 # 2. Protected files. Compared against HEAD (staged + unstaged).
 PROTECTED=(
   fuzz/fuzz.js fuzz/fuzz_purpose.js fuzz/teams.js fuzz/ps_trace.js fuzz/ps_lookup.sh
-  fuzz/guard.sh fuzz/install-hooks.sh fuzz/SCORE
+  fuzz/guard.sh fuzz/install-hooks.sh fuzz/SCORE fuzz/SCORE_CHAMPIONS
   src/doubles/species_types.rs src/doubles/species_weights.rs src/doubles/move_targets.rs
   src/doubles/event_handlers.rs fuzz/gen_event_handlers.js
   src/doubles/ability_flags.rs fuzz/gen_ability_flags.js
@@ -42,8 +42,8 @@ PROTECTED=(
 if [ "${ALLOW_HARNESS_EDIT:-0}" != "1" ]; then
   for f in "${PROTECTED[@]}"; do
     if git cat-file -e "HEAD:$f" 2>/dev/null && ! git diff --quiet HEAD -- "$f"; then
-      # fuzz/SCORE may only go up through `guard.sh --update`.
-      if [ "$f" = "fuzz/SCORE" ]; then continue; fi
+      # The score files may only go up through `guard.sh --update`.
+      if [ "$f" = "fuzz/SCORE" ] || [ "$f" = "fuzz/SCORE_CHAMPIONS" ]; then continue; fi
       fail "protected file changed: $f (harness / generated data). If the harness is wrong, notify the user and stop."
     fi
   done
@@ -90,24 +90,27 @@ else
   ok "cargo test green ($(echo "$TESTS" | awk '{print $1}') passed)"
 fi
 
-# 6. Score.
+# 6. Score, per fuzzer mode (one at a time: each sweep uses every core).
 TARGET=1000000
-OUT=$(node fuzz/fuzz.js --seed 0 --count $TARGET 2>&1)
-if [ -z "$OUT" ]; then
-  SCORE=$TARGET
-else
-  # The first failing seed (from the report's `reproduce:` line) is the score.
-  SCORE=$(echo "$OUT" | grep -oE 'reproduce: node fuzz/fuzz.js --seed [0-9]+' | head -1 | grep -oE '[0-9]+$')
-  SCORE=${SCORE:-0}
-fi
-BEST=$(cat fuzz/SCORE 2>/dev/null || echo 0)
-echo "score: $SCORE (consecutive passing battles from seed 0; baseline fuzz/SCORE = $BEST)"
-if [ "$SCORE" -lt "$BEST" ]; then
-  fail "score dropped from $BEST to $SCORE: seed $SCORE regressed. Reproduce: node fuzz/fuzz.js --seed $SCORE --count 1"
-elif [ "$SCORE" -gt "$BEST" ] && [ "${1:-}" = "--update" ]; then
-  echo "$SCORE" > fuzz/SCORE
-  ok "fuzz/SCORE raised to $SCORE"
-fi
+for MODE in random champions; do
+  if [ "$MODE" = "random" ]; then FILE=fuzz/SCORE; MARG=""; else FILE=fuzz/SCORE_CHAMPIONS; MARG=" --mode $MODE"; fi
+  OUT=$(node fuzz/fuzz.js --seed 0 --count $TARGET --mode $MODE 2>&1)
+  if [ -z "$OUT" ]; then
+    SCORE=$TARGET
+  else
+    # The first failing seed (from the report's `reproduce:` line) is the score.
+    SCORE=$(echo "$OUT" | grep -oE 'reproduce: node fuzz/fuzz.js --seed [0-9]+' | head -1 | grep -oE '[0-9]+$')
+    SCORE=${SCORE:-0}
+  fi
+  BEST=$(cat $FILE 2>/dev/null || echo 0)
+  echo "score ($MODE): $SCORE (consecutive passing battles from seed 0; baseline $FILE = $BEST)"
+  if [ "$SCORE" -lt "$BEST" ]; then
+    fail "$MODE score dropped from $BEST to $SCORE: seed $SCORE regressed. Reproduce: node fuzz/fuzz.js --seed $SCORE --count 1$MARG"
+  elif [ "$SCORE" -gt "$BEST" ] && [ "${1:-}" = "--update" ]; then
+    echo "$SCORE" > $FILE
+    ok "$FILE raised to $SCORE"
+  fi
+done
 
 if [ "$FAIL" = "1" ]; then
   echo "GUARD: FAILED"

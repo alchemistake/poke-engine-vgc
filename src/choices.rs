@@ -22454,6 +22454,12 @@ fn apply_champions_modifiers(moves: &mut HashMap<Choices, Choice>) {
     // Frustration `basePowerCallback`: `floor((255 - happiness) * 10 / 25) || 1`;
     // PS sets happiness to 255 (Return is 102).
     moves.get_mut(&Choices::FRUSTRATION).unwrap().base_power = 1.0;
+    // Venom Drench `onHit`: -1 Atk / SpA / Spe on a poisoned target (the
+    // poison check is in the doubles hit loop).
+    moves.get_mut(&Choices::VENOMDRENCH).unwrap().boost = Some(Boost {
+        target: MoveTarget::Opponent,
+        boosts: StatBoosts { attack: -1, defense: 0, special_attack: -1, special_defense: 0, speed: -1, accuracy: 0, evasion: 0 },
+    });
     moves.get_mut(&Choices::FIRELASH).unwrap().base_power = 90.0;
     moves.get_mut(&Choices::FIRSTIMPRESSION).unwrap().base_power = 100.0;
     moves.get_mut(&Choices::FISHIOUSREND).unwrap().base_power = 80.0;

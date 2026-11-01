@@ -466,6 +466,17 @@ pub fn main() {
                             "crash": c.crash.unwrap_or(0.0),
                             "pp": c.pp,
                             "multihit": c.multihit,
+                            "boosts": c.boost.as_ref().map(|b| {
+                                let x = &b.boosts;
+                                vec![x.attack, x.defense, x.special_attack, x.special_defense, x.speed, x.accuracy, x.evasion]
+                            }),
+                            "self_boosts": c.self_boosts.as_ref().map(|x| {
+                                vec![x.attack, x.defense, x.special_attack, x.special_defense, x.speed, x.accuracy, x.evasion]
+                            }),
+                            "status": c.status.as_ref().map(|s| format!("{:?}", s.status)),
+                            "volatile": c.volatile_status.as_ref().map(|v| format!("{:?}", v.volatile_status)),
+                            "side_condition": c.side_condition.as_ref().map(|v| format!("{:?}", v.condition)),
+                            "secondaries": c.secondaries.as_ref().map(|v| v.len()).unwrap_or(0),
                         }),
                     );
                 }

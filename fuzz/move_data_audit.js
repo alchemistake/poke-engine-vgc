@@ -45,6 +45,17 @@ for (const id of [...moves].sort()) {
   if (Math.abs(e.recoil - psRec) > 0.01) bad.push(`recoil ${e.recoil} vs ${psRec.toFixed(3)}`);
   const psDrain = mv.drain ? mv.drain[0] / mv.drain[1] : 0;
   if (Math.abs(e.drain - psDrain) > 0.01) bad.push(`drain ${e.drain} vs ${psDrain.toFixed(3)}`);
+  // Stat changes: PS `boosts` (target or user) / `self.boosts` against the
+  // engine's `boost` / `self_boosts` (either table, as the engine stores some
+  // self drops in `boost`). Evasion is set in code for a few moves.
+  const KEYS = ['atk', 'def', 'spa', 'spd', 'spe', 'accuracy', 'evasion'];
+  const vec = (b) => (b ? KEYS.map((k) => b[k] || 0).join(',') : null);
+  const psB = vec(mv.boosts || (mv.self && mv.self.boosts));
+  const peB = new Set([e.boosts, e.self_boosts].filter(Boolean).map((v) => v.join(',')));
+  const CODE_BOOSTS = ['doubleteam', 'minimize', 'sweetscent', 'growth', 'curse'];
+  if (psB && !peB.has(psB) && !CODE_BOOSTS.includes(id)) bad.push(`boosts [${[...peB].join(' | ') || 'none'}] vs [${psB}]`);
+  if (mv.status && !e.status) bad.push(`status none vs ${mv.status}`);
+  if (mv.secondary && !mv.secondary.self && !e.secondaries) bad.push(`no secondaries vs ${JSON.stringify(Object.keys(mv.secondary))}`);
   if (bad.length) out.push(`${id}: ${bad.join(', ')}`);
 }
 console.log(`${out.length} of ${moves.size} pool moves differ`);

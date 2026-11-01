@@ -2351,6 +2351,12 @@ pub fn side_condition_entries_into(sc: &SideConditions, v: &mut arrayvec::ArrayV
     if sc.wide_guard != 0 {
         v.push(SideConditionEntry { id: "wideguard", duration: Some(sc.wide_guard) });
     }
+    if sc.crafty_shield != 0 {
+        v.push(SideConditionEntry { id: "craftyshield", duration: Some(sc.crafty_shield) });
+    }
+    if sc.mat_block != 0 {
+        v.push(SideConditionEntry { id: "matblock", duration: Some(sc.mat_block) });
+    }
 }
 
 pub fn side_condition_entries(sc: &SideConditions) -> Vec<SideConditionEntry> {

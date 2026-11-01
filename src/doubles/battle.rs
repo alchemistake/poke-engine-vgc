@@ -1970,7 +1970,7 @@ pub fn run_fuzz_turn(
         for p in pre.iter().copied() {
             match p {
                 PreAction::Switch { side, slot, position, .. } => {
-                    let pursued = pursuit_before_switch(state, rng, side, slot, &mut actions, &pre, &mut mega_done, &mut move_order);
+                    let pursued = pursuit_before_switch(state, rng, side, slot, &mut actions, &pre, &mut mega_done, &mut move_order, 0);
                     run_switch_action(state, rng, side, slot, position, pursued);
                     // Hazards set off the newcomer's Emergency Exit: PS asks for a
                     // switch at once (`runPursuitActivation`, the answer's
@@ -2320,6 +2320,8 @@ pub fn run_fuzz_turn(
                     !used_switches[k] && sw.pivot && sw.side == key && sw.slot == slot && sw.position.is_some()
                 });
                 if answered && state.side(side).slot_pokemon(slot).is_some_and(|p| p.hp > 0) {
+                    // `runEvent('BeforeSwitchOut')`: a foe's queued Pursuit runs now.
+                    pursuit_before_switch(state, rng, side, slot, &mut actions, &pre, &mut mega_done, &mut move_order, i);
                     each_event_update(state, rng);
                 }
             }
@@ -4046,11 +4048,13 @@ fn execute_action_body(
     state.tl.acc_step.set(false);
     state.tl.before_move_aborted.set(false);
     let order_len_outer = move_order.len();
+    // A Micle Berry eaten during this move (Bug Bite) was not up at its check.
+    let micle_before = state.side(action.side).active()[action.slot].micle > 0;
     execute_action_inner(state, rng, action, move_order, will_act, queue);
     // Micle Berry's volatile ends at the user's next accuracy check (a move at
     // another target, not OHKO, that got past its TryHit / onTry steps).
     // PS data/items.ts micleberry.condition.onSourceAccuracy.
-    if move_order.len() > order_len_outer && state.tl.acc_step.get() && !action.choice.ohko && !action.recharge {
+    if micle_before && move_order.len() > order_len_outer && state.tl.acc_step.get() && !action.choice.ohko && !action.recharge {
         let t = move_target(action.choice.move_id);
         if !matches!(t, Tgt::SelfTarget | Tgt::All | Tgt::AllySide | Tgt::AllyTeam | Tgt::FoeSide) {
             if let Some(sl) = (0..2).find(|&sl| state.side(action.side).active()[sl].pokemon_index == Some(action.pokemon_index)) {
@@ -6309,6 +6313,14 @@ fn execute_move_body(
             })
         })
     {
+        state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
+        push_order(move_order);
+        return;
+    }
+
+    // Aurora Veil `onTry`: `field.isWeather(['hail', 'snow'])`, so it fails
+    // before Snatch can take it. PS data/moves.ts auroraveil.
+    if choice.move_id == Choices::AURORAVEIL && !matches!(effective_weather(state), Weather::HAIL | Weather::SNOW) {
         state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
         push_order(move_order);
         return;
@@ -15612,8 +15624,8 @@ fn compute_hit_damage(
         // the stat VALUE only: `calculateStat` swaps the name, but the stage
         // passed in is still the named stat's (`defBoosts`).
         let names_def = match choice.move_id {
-            Choices::PSYSHOCK => true,
-            Choices::SECRETSWORD => false,
+            // `overrideDefensiveStat: 'def'` (Psyshock, Psystrike, Secret Sword).
+            Choices::PSYSHOCK | Choices::PSYSTRIKE | Choices::SECRETSWORD => true,
             _ => is_physical,
         };
         let def_boost_stat = if names_def { def_boost.def } else { def_boost.spd };
@@ -20263,6 +20275,8 @@ fn pursuit_before_switch(
     pre: &[PreAction],
     mega_done: &mut Vec<(Side, PokemonIndex)>,
     move_order: &mut Vec<OrderEntry>,
+    // Actions before this index already ran (a pivot mid-turn).
+    from: usize,
 ) -> bool {
     if !state.side(side).slot_pokemon(slot).is_some_and(|p| p.hp > 0) {
         return false;
@@ -20272,6 +20286,7 @@ fn pursuit_before_switch(
     let foe = side.other();
     let pursuers: Vec<(usize, PokemonIndex)> = actions
         .iter()
+        .skip(from)
         .filter(|a| a.side == foe && a.choice.move_id == Choices::PURSUIT && !a.recharge)
         .filter_map(|a| {
             (0..2)
@@ -20315,7 +20330,7 @@ fn pursuit_before_switch(
             continue;
         }
         // `queue.cancelMove(source)`.
-        let Some(k) = actions.iter().position(|a| a.side == foe && a.pokemon_index == pidx) else { continue };
+        let Some(k) = actions.iter().skip(from).position(|a| a.side == foe && a.pokemon_index == pidx).map(|k| k + from) else { continue };
         let mut a = actions.remove(k);
         activated = true;
         // The Pursuit user Mega Evolves first when it was going to this turn.

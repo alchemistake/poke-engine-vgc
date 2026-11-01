@@ -249,6 +249,8 @@ pub struct DamageOutcome {
     pub crit: bool,
     /// The defender ate its resist berry (`onSourceModifyDamage`).
     pub berry: bool,
+    /// The defender's Tera Shell made this hit not very effective.
+    pub tera_shell: bool,
 }
 
 /// Context for a single damage calculation: effective (boosted) stats and the
@@ -335,6 +337,10 @@ pub struct DamageCtx {
     /// Iron Ball `onEffectiveness`: a Ground move at a Flying holder (not
     /// already grounded) is neutral (every type returns 0).
     pub iron_ball_neutral: bool,
+    /// Tera Shell (`runEffectiveness`): 1 = the full-HP Terapagos-Terastal
+    /// resists a hit that is not already resisted; 2 = a later hit of a move it
+    /// already resisted (typeMod -1 whatever the HP).
+    pub tera_shell: u8,
 }
 
 /// Compute the damage a single-target (or one hit of a spread) move deals to
@@ -380,7 +386,7 @@ pub fn calculate_damage_with(
     on_event: &mut dyn FnMut(DamageEvent, &mut Gen5Rng) -> bool,
 ) -> Option<DamageOutcome> {
     if choice.category == MoveCategory::Status || choice.category == MoveCategory::Switch {
-        return Some(DamageOutcome { damage: 0, crit: false, berry: false });
+        return Some(DamageOutcome { damage: 0, crit: false, berry: false, tera_shell: false });
     }
     let base_power = if ctx.base_power_override > 0.0 {
         ctx.base_power_override
@@ -388,7 +394,7 @@ pub fn calculate_damage_with(
         choice.base_power
     };
     if base_power == 0.0 {
-        return Some(DamageOutcome { damage: 0, crit: false, berry: false });
+        return Some(DamageOutcome { damage: 0, crit: false, berry: false, tera_shell: false });
     }
 
     // Type immunity is checked in getDamage BEFORE any draws.
@@ -410,6 +416,11 @@ pub fn calculate_damage_with(
     if ctx.disguise || ctx.iron_ball_neutral {
         // disguise.onEffectiveness returns 0 (after the immunity check).
         tm = 0;
+    }
+    // PS sim/pokemon.ts runEffectiveness: Tera Shell returns -1 after the type loop.
+    let tera_shell = ctx.tera_shell == 2 || (ctx.tera_shell == 1 && tm >= 0);
+    if tera_shell {
+        tm = -1;
     }
 
     let level = attacker.level;
@@ -627,6 +638,7 @@ pub fn calculate_damage_with(
         damage: result as i16,
         crit,
         berry,
+        tera_shell,
     })
 }
 

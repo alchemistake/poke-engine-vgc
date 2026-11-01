@@ -64,6 +64,12 @@ pub struct ActiveSlot {
     pub metronome_count: u8,
     /// The Metronome item's `metronome` volatile is up (item `onStart`).
     pub metronome_vol: bool,
+    /// Cud Chew `effectState`: the berry eaten and the residuals left until it
+    /// is eaten again.
+    pub cud_chew: Option<(Items, u8)>,
+    /// Ripen `abilityState.berryWeaken` (a `Cell`: the damage calc, which
+    /// holds the state shared, consumes it).
+    pub berry_weaken: std::cell::Cell<bool>,
     /// Choice item `choicelock` volatile: the locked move.
     pub choice_lock: Option<Choices>,
     /// PS `moveThisTurnResult = null` (a NOT_FAIL hit: Protect), this / last turn.
@@ -349,6 +355,8 @@ impl ActiveSlot {
             metronome_last: None,
             metronome_count: 0,
             metronome_vol: false,
+            cud_chew: None,
+            berry_weaken: std::cell::Cell::new(false),
             choice_lock: None,
             move_result_null: false,
             move_null_last_turn: false,
@@ -727,6 +735,8 @@ pub struct MoveScratch {
     pub bypass_protect: std::cell::Cell<u8>,
     /// Focus Band rolls a spread hit already drew (bit slot: rolled, bit slot + 4: saved).
     pub band_pre: std::cell::Cell<u8>,
+    /// The residual action is running (PS `!queue.peek()`).
+    pub in_residual: std::cell::Cell<bool>,
     /// The target the running move resolved to (after any retarget / redirect),
     /// as PS `getMoveTargets` returns it: Pressure's `pressureTargets`. `None`
     /// until `execute_action_inner` resolves it for this action.

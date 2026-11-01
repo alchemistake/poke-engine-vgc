@@ -107,14 +107,28 @@ pub fn mold_move() -> bool {
 /// checked (data/moves.ts smackdown, sim/pokemon.ts isGrounded). The chart's
 /// Ground -> Flying entry is then neutral (sim/dex.ts getEffectiveness), so
 /// that view drops the Flying typing and Levitate for this type check only.
-pub fn smackdown_ground_view<'a>(move_type: &PokemonType, defender: &'a Pokemon, smackdown: bool) -> Cow<'a, Pokemon> {
+pub fn smackdown_ground_view<'a>(
+    move_type: &PokemonType,
+    defender: &'a Pokemon,
+    smackdown: bool,
+    item_ignored: bool,
+) -> Cow<'a, Pokemon> {
     use crate::engine::abilities::Abilities;
+    use crate::engine::items::Items;
+    // An ignored Air Balloon (Klutz, Magic Room) does not lift its holder.
+    let balloon = defender.item == Items::AIRBALLOON && (item_ignored || smackdown);
     let airborne_typing = defender.types.0 == PokemonType::FLYING || defender.types.1 == PokemonType::FLYING;
     let levitates = matches!(defender.ability, Abilities::LEVITATE | Abilities::EELEVATE);
-    if !(smackdown && *move_type == PokemonType::GROUND && (airborne_typing || levitates)) {
+    if *move_type != PokemonType::GROUND || !(balloon || (smackdown && (airborne_typing || levitates))) {
         return Cow::Borrowed(defender);
     }
     let mut d = defender.clone();
+    if balloon {
+        d.item = Items::NONE;
+    }
+    if !smackdown {
+        return Cow::Owned(d);
+    }
     if d.types.0 == PokemonType::FLYING {
         d.types.0 = PokemonType::TYPELESS;
     }
@@ -273,12 +287,18 @@ pub struct DamageCtx {
     /// Defender's resist berry type (Chilan: Normal at any effectiveness), and
     /// whether Ripen doubles it. `None` when it cannot be eaten (Substitute).
     pub resist_berry: Option<(PokemonType, bool)>,
+    /// Ripen `onSourceModifyDamage`: a resist berry eaten outside a hit
+    /// (`abilityState.berryWeaken`) halves the next damage.
+    pub ripen_weaken: bool,
     /// The hit goes through Protect (PS `bypassProtect`): x0.25 after ModifyDamage.
     pub bypass_protect: bool,
     /// Parental Bond's second hit (x0.25 after the spread modifier).
     pub parental_second: bool,
     /// Metronome (item) `onModifyDamage` modifier (4096 = none).
     pub metronome_mod: i64,
+    /// Iron Ball `onEffectiveness`: a Ground move at a Flying holder (not
+    /// already grounded) is neutral (every type returns 0).
+    pub iron_ball_neutral: bool,
 }
 
 /// Compute the damage a single-target (or one hit of a spread) move deals to
@@ -351,7 +371,7 @@ pub fn calculate_damage_with(
         let m = crate::engine::damage_calc::type_effectiveness_modifier(&PokemonType::FLYING, defender);
         tm += m.log2().round() as i32;
     }
-    if ctx.disguise {
+    if ctx.disguise || ctx.iron_ball_neutral {
         // disguise.onEffectiveness returns 0 (after the immunity check).
         tm = 0;
     }
@@ -539,6 +559,9 @@ pub fn calculate_damage_with(
             berry = true;
             chain_in(if ripen { 1024 } else { 2048 });
         }
+    }
+    if ctx.ripen_weaken && !berry {
+        chain_in(2048);
     }
     if chain != 4096 {
         base = (base * chain + 2047) / 4096;

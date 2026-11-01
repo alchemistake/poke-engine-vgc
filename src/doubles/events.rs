@@ -163,7 +163,9 @@ pub(crate) fn volatile_ids(a: &crate::doubles::state::ActiveSlot) -> Vec<String>
     let mut m = vol_mask(a);
     let mut v = Vec::new();
     while m != 0 {
-        v.push(CONDS[m.trailing_zeros() as usize].0.to_string());
+        let id = CONDS[m.trailing_zeros() as usize].0;
+        // One bit holds both redirect volatiles.
+        v.push(if id == "followme" && a.follow_me == 2 { "ragepowder" } else { id }.to_string());
         m &= m - 1;
     }
     if let Some(mv) = charging(a) {
@@ -555,6 +557,7 @@ fn field_mask(state: &DoublesState) -> u32 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Event {
     Accuracy,
+    AfterMega,
     BasePower,
     BeforeMove,
     ChangeBoost,
@@ -580,8 +583,9 @@ pub enum Event {
 }
 
 impl Event {
-    const ALL: [Event; 23] = [
+    const ALL: [Event; 24] = [
         Event::Accuracy,
+        Event::AfterMega,
         Event::BasePower,
         Event::BeforeMove,
         Event::ChangeBoost,
@@ -610,6 +614,7 @@ impl Event {
     pub fn name(self) -> &'static str {
         match self {
             Event::Accuracy => "Accuracy",
+            Event::AfterMega => "AfterMega",
             Event::BasePower => "BasePower",
             Event::BeforeMove => "BeforeMove",
             Event::ChangeBoost => "ChangeBoost",

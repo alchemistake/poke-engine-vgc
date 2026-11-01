@@ -85,6 +85,9 @@ fn move_disabled(state: &DoublesState, side: Side, slot: usize, idx: PokemonInde
         // PS data/items.ts choicescarf -> `choicelock` `onDisableMove`.
         || (p.item == Items::CHOICESCARF
             && a.choice_lock.is_some_and(|l| l != m.id && p.moves.into_iter().any(|k| k.id == l)))
+        // PS data/moves.ts belch / stuffcheeks `onDisableMove`.
+        || (m.id == Choices::BELCH && !state.side(side).ate_berry[idx as usize])
+        || (m.id == Choices::STUFFCHEEKS && !crate::doubles::item_data::is_berry(p.item))
         // PS data/moves.ts gigatonhammer / bloodmoon `onDisableMove`.
         || (matches!(m.id, Choices::GIGATONHAMMER | Choices::BLOODMOON) && a.last_move == Some(m.id))
 }

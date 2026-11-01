@@ -727,6 +727,8 @@ pub struct DoublesSide {
     /// `slotCondition: 'healingwish' | 'lunardance'`): they wait for the next
     /// pokemon switched into that slot.
     pub healing_wish_slot: [bool; 2],
+    /// The slot's `healing_wish_slot` condition is Lunar Dance (also restores PP).
+    pub lunar_dance_slot: [bool; 2],
     /// PS `moveSlot.used` per team member / move slot (set by `deductPP`).
     pub moves_used: [[bool; 4]; 6],
     /// PS `pokemon.attackedBy` entries with damage (`getLastDamagedBy`), per
@@ -1606,6 +1608,29 @@ fn move_lookup(mv: &str) -> Choices {
 }
 
 fn build_pokemon(m: &TeamMember) -> Pokemon {
+    // Zacian / Zamazenta `onBattleStart` with their Rusted item: the Crowned
+    // forme (stats, types, weight) and Iron Head becomes its Behemoth move.
+    // PS data/conditions.ts zacian / zamazenta.
+    let crowned = match (to_id(&m.species).as_str(), to_id(&m.item).as_str()) {
+        ("zacian", "rustedsword") => Some(("Zacian-Crowned", "behemothblade")),
+        ("zamazenta", "rustedshield") => Some(("Zamazenta-Crowned", "behemothbash")),
+        _ => None,
+    };
+    let crowned_member;
+    let m = match crowned {
+        Some((species, behemoth)) => {
+            let mut c = m.clone();
+            c.species = species.to_string();
+            for mv in c.moves.iter_mut() {
+                if to_id(mv) == "ironhead" {
+                    *mv = behemoth.to_string();
+                }
+            }
+            crowned_member = c;
+            &crowned_member
+        }
+        None => m,
+    };
     // Forme names (e.g. "Furfrou-Debutante") may not be in the table or the
     // PokemonName enum; fall back to the base species (before the "-").
     let sp = species_lookup(&m.species);
@@ -1744,6 +1769,7 @@ impl DoublesState {
             last_item: [Items::NONE; 6],
             ate_berry: [false; 6],
             healing_wish_slot: [false; 2],
+            lunar_dance_slot: [false; 2],
             moves_used: [[false; 4]; 6],
             damaged_by: std::array::from_fn(|_| Vec::new()),
             saved_stats: [None; 6],
@@ -1776,6 +1802,7 @@ impl DoublesState {
             last_item: [Items::NONE; 6],
             ate_berry: [false; 6],
             healing_wish_slot: [false; 2],
+            lunar_dance_slot: [false; 2],
             moves_used: [[false; 4]; 6],
             damaged_by: std::array::from_fn(|_| Vec::new()),
             saved_stats: [None; 6],

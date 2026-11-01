@@ -205,6 +205,10 @@ pub(crate) fn volatile_ids(a: &crate::doubles::state::ActiveSlot) -> Vec<String>
     if a.pursuit_vol {
         v.push("pursuit".to_string());
     }
+    // Spotlight's single-turn volatile: the same (PS data/moves.ts spotlight).
+    if a.spotlight {
+        v.push("spotlight".to_string());
+    }
     if a.shell_trap > 0 {
         v.push("shelltrap".to_string());
     }
@@ -671,6 +675,7 @@ pub enum Event {
     ChangeBoost,
     Damage,
     DisableMove,
+    Hit,
     Immunity,
     MaybeTrapPokemon,
     ModifyAccuracy,
@@ -691,7 +696,7 @@ pub enum Event {
 }
 
 impl Event {
-    const ALL: [Event; 24] = [
+    const ALL: [Event; 25] = [
         Event::Accuracy,
         Event::AfterMega,
         Event::BasePower,
@@ -699,6 +704,7 @@ impl Event {
         Event::ChangeBoost,
         Event::Damage,
         Event::DisableMove,
+        Event::Hit,
         Event::Immunity,
         Event::MaybeTrapPokemon,
         Event::ModifyAccuracy,
@@ -728,6 +734,7 @@ impl Event {
             Event::ChangeBoost => "ChangeBoost",
             Event::Damage => "Damage",
             Event::DisableMove => "DisableMove",
+            Event::Hit => "Hit",
             Event::Immunity => "Immunity",
             Event::MaybeTrapPokemon => "MaybeTrapPokemon",
             Event::ModifyAccuracy => "ModifyAccuracy",

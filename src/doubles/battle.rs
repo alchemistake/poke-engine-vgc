@@ -3312,7 +3312,9 @@ fn is_breakable(a: Abilities) -> bool {
 // (`activePokemon.isActive`); a pokemon dragged in mid-move is not blanked.
 fn mold_breaker_suppress(state: &mut DoublesState, action: &Action) -> bool {
     let user = state.side(action.side).team_member(action.pokemon_index).ability;
-    let ignores = user == Abilities::MOLDBREAKER
+    // Teravolt / Turboblaze share Mold Breaker's `onModifyMove`
+    // (`move.ignoreAbility = true`). PS data/abilities.ts teravolt, turboblaze.
+    let ignores = matches!(user, Abilities::MOLDBREAKER | Abilities::TERAVOLT | Abilities::TURBOBLAZE)
         || matches!(action.choice.move_id, Choices::MOONGEISTBEAM | Choices::PHOTONGEYSER | Choices::SUNSTEELSTRIKE);
     if !ignores || action.recharge {
         return false;
@@ -3459,6 +3461,27 @@ fn damaging_hit_self_abilities(state: &mut DoublesState, rng: &mut Gen5Rng, ts: 
     if ability == Abilities::STAMINA && state.side(ts).team_member(didx).hp > 0 {
         apply_boosts(state, rng, ts, didx, &StatBoosts { defense: 1, ..Default::default() }, false);
     }
+}
+
+/// The `gastroacid` volatile's `onStart`: the ability's `End` runs, then it is
+/// suppressed until the holder switches out (modelled as No Ability, which the
+/// switch-out reset undoes). A Cloud Nine / Air Lock `onEnd` runs
+/// `eachEvent('WeatherChange')`; Protosynthesis / Quark Drive `onEnd` drops
+/// their volatile. PS data/moves.ts gastroacid, data/abilities.ts.
+fn gastro_acid_start(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize, idx: PokemonIndex) {
+    let a = real_ability(state, side, idx);
+    if a != Abilities::NONE {
+        if matches!(a, Abilities::CLOUDNINE | Abilities::AIRLOCK) {
+            let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+        }
+        if matches!(a, Abilities::PROTOSYNTHESIS | Abilities::QUARKDRIVE) {
+            state.side_mut(side).active_slot_mut(slot).paradox = None;
+        }
+        mold_breaker_forget(state, side, idx);
+        state.side_mut(side).team_member_mut(idx).ability = Abilities::NONE;
+    }
+    state.side_mut(side).active_slot_mut(slot).gastro_acid = true;
+    state.side_mut(side).slot_scratch_mut(slot).gastro_ability = a;
 }
 
 /// PS `cantsuppress` abilities: Gastro Acid fails on them (onTryHit), and
@@ -5152,7 +5175,6 @@ fn execute_move_body(
             ChargeSetup::Always { .. } => true,
             ChargeSetup::NotSun { .. } => eff_weather != Weather::SUN,
             ChargeSetup::OnlyRain { .. } => !matches!(eff_weather, Weather::RAIN | Weather::HEAVYRAIN),
-            ChargeSetup::OnlySnow { .. } => matches!(eff_weather, Weather::HAIL | Weather::SNOW),
         };
         // PS data/moves.ts electroshot `onTryMove`: `boost({spa: 1})` runs on the
         // charge turn and on the rain-skip turn, before the weather check (the
@@ -5214,8 +5236,7 @@ fn execute_move_body(
                 let turns = match choice.charge_setup {
                     ChargeSetup::Always { turns }
                     | ChargeSetup::NotSun { turns }
-                    | ChargeSetup::OnlyRain { turns }
-                    | ChargeSetup::OnlySnow { turns } => turns,
+                    | ChargeSetup::OnlyRain { turns } => turns,
                     ChargeSetup::None => 0,
                 };
                 // `attacker.addVolatile('twoturnmove')`, whose `onStart` runs
@@ -9909,17 +9930,7 @@ fn execute_move_body(
                 if gastro_cant_suppress(a) {
                     move_failed = true;
                 } else {
-                    if a != Abilities::NONE {
-                        // PS gastroacid `onStart`: `singleEvent('End', ability)`. A Cloud
-                        // Nine / Air Lock `onEnd` runs `eachEvent('WeatherChange')`.
-                        if matches!(a, Abilities::CLOUDNINE | Abilities::AIRLOCK) {
-                            let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
-                        }
-                        mold_breaker_forget(state, target_side, tidx);
-                        state.side_mut(target_side).team_member_mut(tidx).ability = Abilities::NONE;
-                    }
-                    state.side_mut(target_side).active_slot_mut(target_slot).gastro_acid = true;
-                    state.side_mut(target_side).slot_scratch_mut(target_slot).gastro_ability = a;
+                    gastro_acid_start(state, rng, target_side, target_slot, tidx);
                 }
             }
         }
@@ -10113,6 +10124,25 @@ fn execute_move_body(
                     if pm.status == PokemonStatus::SLEEP {
                         pm.status = PokemonStatus::NONE;
                     }
+                }
+            }
+        }
+
+        // Core Enforcer `onHit` / `onAfterSubDamage`: `addVolatile('gastroacid')`
+        // unless the target's ability can't be suppressed, it switched in this
+        // turn or it still has a queued move. PS data/moves.ts coreenforcer.
+        if choice.move_id == Choices::COREENFORCER && ti == 0 && !move_failed {
+            if let Some(tidx) = state.side(target_side).active()[target_slot].pokemon_index {
+                let t = &state.side(target_side).active()[target_slot];
+                let will_move = queue.iter().any(|q| q.side == target_side && q.pokemon_index == tidx);
+                if state.side(target_side).team_member(tidx).hp > 0
+                    && !t.gastro_acid
+                    && !t.newly_switched
+                    && !will_move
+                    && !gastro_cant_suppress(real_ability(state, target_side, tidx))
+                {
+                    try_add_volatile_ties(state, rng, target_side, target_slot);
+                    gastro_acid_start(state, rng, target_side, target_slot, tidx);
                 }
             }
         }

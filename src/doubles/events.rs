@@ -174,6 +174,10 @@ pub(crate) fn volatile_ids(a: &crate::doubles::state::ActiveSlot) -> Vec<String>
             v.push(id);
         }
     }
+    // Chilly Reception's `priorityChargeCallback` volatile (no handlers).
+    if a.chilly_reception {
+        v.push("chillyreception".to_string());
+    }
     v.sort();
     v
 }

@@ -115,8 +115,10 @@ pub fn smackdown_ground_view<'a>(
 ) -> Cow<'a, Pokemon> {
     use crate::engine::abilities::Abilities;
     use crate::engine::items::Items;
-    // An ignored Air Balloon (Klutz, Magic Room) does not lift its holder.
-    let balloon = defender.item == Items::AIRBALLOON && (item_ignored || smackdown);
+    // An ignored Air Balloon (Klutz, Magic Room) does not lift its holder,
+    // nor does an ignored Iron Ball ground it.
+    let balloon = (defender.item == Items::AIRBALLOON && (item_ignored || smackdown))
+        || (defender.item == Items::IRONBALL && item_ignored);
     let airborne_typing = defender.types.0 == PokemonType::FLYING || defender.types.1 == PokemonType::FLYING;
     let levitates = matches!(defender.ability, Abilities::LEVITATE | Abilities::EELEVATE);
     if *move_type != PokemonType::GROUND || !(balloon || (smackdown && (airborne_typing || levitates))) {

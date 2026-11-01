@@ -348,6 +348,11 @@ pub struct ActiveSlot {
     /// hit this pokemon with a physical / special move, and twice the damage.
     pub counter_vol: Option<(Option<(Side, usize)>, i16)>,
     pub mirror_coat_vol: Option<(Option<(Side, usize)>, i16)>,
+    /// `pursuit` volatile (duration 1), added by Pursuit's `beforeTurnCallback`.
+    pub pursuit_vol: bool,
+    /// `spotlight` volatile (duration 1): foes' single-target moves are
+    /// redirected to this pokemon (`onFoeRedirectTarget`, priority 2).
+    pub spotlight: bool,
     /// PS `moveThisTurnResult` / `moveLastTurnResult` (false = the move failed;
     /// None = undefined or null). Stomping Tantrum reads the last turn's.
     pub move_result_this_turn: Option<bool>,
@@ -546,6 +551,8 @@ impl ActiveSlot {
             aqua_ring: false,
             counter_vol: None,
             mirror_coat_vol: None,
+            pursuit_vol: false,
+            spotlight: false,
             move_result_this_turn: None,
             move_result_last_turn: None,
             ally_switch: None,

@@ -549,6 +549,16 @@ fn resolve_faints(state: &mut DoublesState, rng: &mut Gen5Rng, pick: impl Fn(Sid
                 }
             }
         }
+        // `singleEvent('End', ability)`: Neutralizing Gas `onEnd` restarts the
+        // other abilities, with the holder and the faints behind it still
+        // counted as active (`getAllActive`).
+        if state.side(side).team_member(idx).ability == Abilities::NEUTRALIZINGGAS {
+            let mut view: Vec<(Side, usize, PokemonIndex)> = picked[k..].to_vec();
+            view.extend(keep.iter().copied());
+            state.unresolved_faints = view;
+            gas_end(state, rng, side, idx);
+            state.unresolved_faints = Vec::new();
+        }
         let s = state.side_mut(side);
         // PS `clearVolatile` -> `setSpecies(baseSpecies)` restores the base
         // `storedStats`, so a Speed Swap (or Guard / Power Split) is undone
@@ -2484,7 +2494,8 @@ pub fn run_fuzz_turn(
                         // (Cloud Nine / Air Lock weather change) are not run here.
                         if baton_gastro {
                             if let Some(ni) = state.side(side).active()[slot].pokemon_index {
-                                let a = state.side(side).team_member(ni).ability;
+                                let a = real_ability(state, side, ni);
+                                state.gas_saved.retain(|&mut (s, i, _)| (s, i) != (side, ni));
                                 if !gastro_cant_suppress(a) {
                                     if a != Abilities::NONE {
                                         mold_breaker_forget(state, side, ni);
@@ -3274,14 +3285,18 @@ fn possible_switches(state: &DoublesState, side: Side) -> Vec<usize> {
 /// `singleEvent('End', ability)` before the swap. Cloud Nine / Air Lock `onEnd`
 /// runs `eachEvent('WeatherChange')`, a speed sort of all actives. A fainted
 /// pokemon (faint replacements) runs no End event here; its faint handles it.
-fn switch_out_end_event(state: &DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize) {
-    let live_cloud = state
-        .side(side)
-        .slot_pokemon(slot)
-        .map(|p| p.hp > 0 && matches!(p.ability, Abilities::CLOUDNINE | Abilities::AIRLOCK))
-        .unwrap_or(false);
-    if live_cloud {
+fn switch_out_end_event(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize) {
+    let Some(idx) = state.side(side).active()[slot].pokemon_index else { return };
+    if state.side(side).team_member(idx).hp <= 0 {
+        return;
+    }
+    // `End` runs under Gastro Acid / Neutralizing Gas too (PS singleEvent).
+    let ability = real_ability(state, side, idx);
+    if matches!(ability, Abilities::CLOUDNINE | Abilities::AIRLOCK) {
         let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+    }
+    if state.side(side).team_member(idx).ability == Abilities::NEUTRALIZINGGAS {
+        gas_end(state, rng, side, idx);
     }
 }
 
@@ -3488,15 +3503,17 @@ fn status_on_try_hit_fails(
 
 #[inline]
 pub(crate) fn real_ability(state: &DoublesState, side: Side, idx: PokemonIndex) -> Abilities {
-    if state.mold_saved.is_empty() {
+    if state.mold_saved.is_empty() && state.gas_saved.is_empty() {
         return state.side(side).team_member(idx).ability;
     }
+    let cur = state.side(side).team_member(idx).ability;
     state
         .mold_saved
         .iter()
+        .chain(state.gas_saved.iter().filter(|_| cur == Abilities::NONE))
         .find(|&&(s, i, _)| s == side && i == idx)
         .map(|&(_, _, a)| a)
-        .unwrap_or(state.side(side).team_member(idx).ability)
+        .unwrap_or(cur)
 }
 
 /// PS `pokemon.setAbility(ability)` from Role Play / Doodle: `End` of the old
@@ -3516,6 +3533,9 @@ fn copy_ability(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: u
         // PS sim/pokemon.ts setAbility, data/abilities.ts cloudnine.
         if matches!(real_ability(state, side, u), Abilities::CLOUDNINE | Abilities::AIRLOCK) {
             let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+        }
+        if state.side(side).team_member(u).ability == Abilities::NEUTRALIZINGGAS {
+            gas_end(state, rng, side, u);
         }
         state.side_mut(side).team_member_mut(u).ability = ta;
         reset_protean_effect(state, side, u);
@@ -3553,9 +3573,12 @@ fn set_ability_raw(state: &mut DoublesState, side: Side, idx: PokemonIndex, abil
         let a = &state.side(side).active()[sl];
         a.gastro_acid && a.pokemon_index == Some(idx)
     });
-    match gastro_slot {
-        Some(sl) => state.side_mut(side).slot_scratch_mut(sl).gastro_ability = ability,
-        None => state.side_mut(side).team_member_mut(idx).ability = ability,
+    let gas = state.gas_saved.iter().position(|&(s, i, _)| (s, i) == (side, idx));
+    match (gastro_slot, gas) {
+        (Some(sl), _) => state.side_mut(side).slot_scratch_mut(sl).gastro_ability = ability,
+        // Still suppressed by Neutralizing Gas (`gas_sync` re-checks it).
+        (None, Some(k)) if state.side(side).team_member(idx).ability == Abilities::NONE => state.gas_saved[k].2 = ability,
+        _ => state.side_mut(side).team_member_mut(idx).ability = ability,
     }
 }
 
@@ -3566,6 +3589,9 @@ fn set_ability_raw(state: &mut DoublesState, side: Side, idx: PokemonIndex, abil
 fn set_ability_with_end(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, idx: PokemonIndex, ability: Abilities) {
     if matches!(real_ability(state, side, idx), Abilities::CLOUDNINE | Abilities::AIRLOCK) {
         let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+    }
+    if state.side(side).team_member(idx).ability == Abilities::NEUTRALIZINGGAS {
+        gas_end(state, rng, side, idx);
     }
     set_ability_raw(state, side, idx, ability);
 }
@@ -3607,8 +3633,14 @@ fn gastro_acid_start(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, sl
         mold_breaker_forget(state, side, idx);
         state.side_mut(side).team_member_mut(idx).ability = Abilities::NONE;
     }
+    // The volatile now holds the suppressed ability.
+    state.gas_saved.retain(|&mut (s, i, _)| (s, i) != (side, idx));
     state.side_mut(side).active_slot_mut(slot).gastro_acid = true;
     state.side_mut(side).slot_scratch_mut(slot).gastro_ability = a;
+    // The ability's `End`: Neutralizing Gas `onEnd` restarts the others.
+    if a == Abilities::NEUTRALIZINGGAS {
+        gas_end(state, rng, side, idx);
+    }
 }
 
 /// PS `cantsuppress` abilities: Gastro Acid fails on them (onTryHit), and
@@ -3922,6 +3954,9 @@ fn execute_action_body(
     if mold_breaker {
         mold_breaker_restore(state);
     }
+    // An ability changed by the move (Skill Swap, Entrainment, ...) is
+    // suppressed again while Neutralizing Gas is up.
+    gas_sync(state);
     // `runAction` -> `eachEvent('Update')`: the abilities' `onUpdate` cures
     // (a status set through Mold Breaker, a swapped-in Limber, ...).
     for sd in [Side::One, Side::Two] {
@@ -9340,6 +9375,9 @@ fn execute_move_body(
                     if matches!(tm.ability, Abilities::CLOUDNINE | Abilities::AIRLOCK) {
                         let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
                     }
+                    if state.side(ts).team_member(ti).ability == Abilities::NEUTRALIZINGGAS {
+                        gas_end(state, rng, ts, ti);
+                    }
                     set_ability_raw(state, ts, ti, src_ability);
                     reset_protean_effect(state, ts, ti);
                     ability_update_cures(state, ts, tsl);
@@ -10571,7 +10609,7 @@ fn execute_move_body(
         // Core Enforcer `onHit` / `onAfterSubDamage`: `addVolatile('gastroacid')`
         // unless the target's ability can't be suppressed, it switched in this
         // turn or it still has a queued move. PS data/moves.ts coreenforcer.
-        if choice.move_id == Choices::COREENFORCER && ti == 0 && !move_failed {
+        if choice.move_id == Choices::COREENFORCER && !move_failed {
             if let Some(tidx) = state.side(target_side).active()[target_slot].pokemon_index {
                 let t = &state.side(target_side).active()[target_slot];
                 let will_move = queue.iter().any(|q| q.side == target_side && q.pokemon_index == tidx);
@@ -17287,12 +17325,9 @@ fn refresh_mimicry_slot(state: &mut DoublesState, side: Side, slot: usize) {
     s.team_member_mut(idx).types = want;
 }
 
-/// PS `pokemon.ignoringAbility()` for Neutralizing Gas: another active,
-/// unfainted holder (not under Gastro Acid, which blanks it here) suppresses
-/// the ability, unless it is `cantsuppress` or the pokemon holds Ability
-/// Shield. PS sim/pokemon.ts ignoringAbility.
-/// TODO(PS parity): Neutralizing Gas only gates Start events here; the other
-/// ability handlers and the restart on `onEnd` are not modelled.
+/// PS `pokemon.ignoringAbility()` for Neutralizing Gas: an active holder
+/// suppresses the ability, unless it is `cantsuppress` (or Neutralizing Gas
+/// itself) or the pokemon holds Ability Shield. PS sim/pokemon.ts ignoringAbility.
 fn neutralizing_gas_suppresses(state: &DoublesState, side: Side, slot: usize) -> bool {
     let Some(p) = state.side(side).slot_pokemon(slot) else { return false };
     if gastro_cant_suppress(p.ability)
@@ -17301,12 +17336,112 @@ fn neutralizing_gas_suppresses(state: &DoublesState, side: Side, slot: usize) ->
     {
         return false;
     }
-    [Side::One, Side::Two].iter().any(|&sd| {
+    gas_active(state)
+}
+
+/// The `ignoringAbility()` holder loop: an active Neutralizing Gas holder
+/// (a pokemon KO'd in the running move stays active until its faint is
+/// resolved) that is not under Gastro Acid (blanked here), not transformed
+/// and not `ending`. PS sim/pokemon.ts ignoringAbility.
+fn gas_active(state: &DoublesState) -> bool {
+    let src = |s: Side, i: PokemonIndex| {
+        let p = state.side(s).team_member(i);
+        p.ability == Abilities::NEUTRALIZINGGAS
+            && state.gas_ending != Some((s, i))
+            && state.side(s).transform_save[i as usize].is_none()
+    };
+    [Side::One, Side::Two].iter().any(|&s| {
         (0..2).any(|sl| {
-            (sd, sl) != (side, slot)
-                && state.side(sd).slot_pokemon(sl).is_some_and(|q| q.hp > 0 && q.ability == Abilities::NEUTRALIZINGGAS)
+            state.side(s).active()[sl]
+                .pokemon_index
+                .is_some_and(|i| state.side(s).team_member(i).hp > 0 && src(s, i))
         })
-    })
+    }) || state.unresolved_faints.iter().any(|&(s, _, i)| src(s, i))
+}
+
+/// An ability Neutralizing Gas suppresses: not `cantsuppress`, not the Gas
+/// itself, no Ability Shield. PS sim/pokemon.ts ignoringAbility.
+fn gas_suppressible(state: &DoublesState, side: Side, idx: PokemonIndex, a: Abilities) -> bool {
+    a != Abilities::NONE && a != Abilities::NEUTRALIZINGGAS && !gastro_cant_suppress(a) && !ability_shielded(state, side, idx)
+}
+
+/// Neutralizing Gas suppression (PS `ignoringAbility()`, checked on every
+/// ability event) modelled by blanking: while a holder is active, every
+/// other active's suppressible ability reads No Ability and is kept in
+/// `gas_saved` (as Mold Breaker's `mold_saved`). Brings the blanks in line
+/// with the field and returns the active slots whose ability came back.
+fn gas_sync(state: &mut DoublesState) -> arrayvec::ArrayVec<(Side, usize), 4> {
+    let mut restored = arrayvec::ArrayVec::new();
+    let on = gas_active(state);
+    if !on && state.gas_saved.is_empty() {
+        return restored;
+    }
+    for (s, i, a) in std::mem::take(&mut state.gas_saved) {
+        let Some(sl) = (0..2).find(|&sl| state.side(s).active()[sl].pokemon_index == Some(i)) else {
+            // Left the field (`clearVolatile` reset the ability), unless its
+            // faint is still unresolved.
+            if state.unresolved_faints.iter().any(|&(fs, _, fi)| (fs, fi) == (s, i)) {
+                state.gas_saved.push((s, i, a));
+            }
+            continue;
+        };
+        let cur = state.side(s).team_member(i).ability;
+        // A direct write (Skill Swap, ...) replaced the blank.
+        let real = if cur == Abilities::NONE { a } else { cur };
+        if state.side(s).active()[sl].gastro_acid {
+            continue;
+        }
+        if on && gas_suppressible(state, s, i, real) {
+            state.side_mut(s).team_member_mut(i).ability = Abilities::NONE;
+            state.gas_saved.push((s, i, real));
+        } else {
+            state.side_mut(s).team_member_mut(i).ability = real;
+            restored.push((s, sl));
+        }
+    }
+    if on {
+        for s in [Side::One, Side::Two] {
+            for sl in 0..2 {
+                let Some(i) = state.side(s).active()[sl].pokemon_index else { continue };
+                if state.side(s).team_member(i).hp <= 0 || state.gas_saved.iter().any(|&(gs, gi, _)| (gs, gi) == (s, i)) {
+                    continue;
+                }
+                let a = state.side(s).team_member(i).ability;
+                if gas_suppressible(state, s, i, a) {
+                    state.side_mut(s).team_member_mut(i).ability = Abilities::NONE;
+                    state.gas_saved.push((s, i, a));
+                }
+            }
+        }
+    }
+    restored
+}
+
+/// Neutralizing Gas `onEnd` (the holder switches out, faints or loses the
+/// ability): unless another holder is active, the suppressed abilities come
+/// back and each active's ability `Start` runs again in speed order
+/// (`speedSort(getAllActive())`). PS data/abilities.ts neutralizinggas.
+fn gas_end(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, idx: PokemonIndex) {
+    if state.side(side).transform_save[idx as usize].is_some() {
+        return;
+    }
+    state.gas_ending = Some((side, idx));
+    if gas_active(state) {
+        state.gas_ending = None;
+        return;
+    }
+    let restored = gas_sync(state);
+    let order = sorted_actives(state, rng, "speed tie (move order)");
+    for (s, sl) in order {
+        if !restored.contains(&(s, sl)) {
+            continue;
+        }
+        if apply_on_switch_abilities(state, s, sl, rng) {
+            let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+            update_forecast(state);
+        }
+    }
+    state.gas_ending = None;
 }
 
 fn slot_has_ability(state: &DoublesState, side: Side, slot: usize, ability: Abilities) -> bool {
@@ -17319,6 +17454,9 @@ fn apply_on_switch_abilities(
     slot: usize,
     rng: &mut Gen5Rng,
 ) -> bool {
+    // The leads enter together: a Neutralizing Gas lead suppresses the others
+    // before any Start runs.
+    gas_sync(state);
     // A holder KO'd by the current hit still runs its Start event (PS
     // `singleEvent('Start')` after Skill Swap ignores `fainted`), so the
     // pokemon comes from `unresolved_faints` when its slot is already empty.
@@ -19624,6 +19762,9 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
             None
         };
     }
+    // Neutralizing Gas: the incoming pokemon is suppressed at once (or its
+    // own Gas suppresses the others); the leaving one's blank is dropped.
+    gas_sync(state);
 }
 
 /// PS `fieldEvent('SwitchIn')` for the pokemon now in `slot`: Healing Wish

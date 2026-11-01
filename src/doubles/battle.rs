@@ -1817,6 +1817,12 @@ pub fn run_fuzz_turn(
                     vol.mirror_coat_vol = Some((None, 0));
                 }
             }
+            // Pursuit's `beforeTurnMove` keeps the move's chosen target location
+            // (PS sim/battle-queue.ts resolveAction): `getActionSpeed` -> `getTarget`.
+            if a.choice.move_id == Choices::PURSUIT && !state.side(a.side).active()[a.slot].recharging {
+                let _ = ps_get_target(state, rng, a);
+                action_speed_ties(state, rng, a);
+            }
             // A recharging pokemon's action is `recharge`, not the chosen move.
             // Beak Blast's `priorityChargeMove` resolves the same way (PS
             // data/moves.ts beakblast.priorityChargeCallback), in its action's turn.
@@ -1858,18 +1864,26 @@ pub fn run_fuzz_turn(
         // each is an action of its own and ends with `eachEvent('Update')`.
         for a in actions.iter() {
             // A recharging pokemon's action is `recharge` (no `beforeTurnMove`).
-            if matches!(a.choice.move_id, Choices::COUNTER | Choices::MIRRORCOAT) && !state.side(a.side).active()[a.slot].recharging {
-                // `beforeTurnCallback` -> `addVolatile('counter' / 'mirrorcoat')`.
+            if matches!(a.choice.move_id, Choices::COUNTER | Choices::MIRRORCOAT | Choices::PURSUIT)
+                && !state.side(a.side).active()[a.slot].recharging
+            {
+                // `beforeTurnCallback` -> `addVolatile('counter' / 'mirrorcoat' / 'pursuit')`.
+                // Pursuit's volatile is not stored: its `onFoeBeforeSwitchOut` needs
+                // the queued Pursuit action anyway (`queue.cancelMove(source)`).
                 try_add_volatile_ties(state, rng, a.side, a.slot);
                 each_event_update(state, rng);
             }
         }
         let mut used_switches = vec![false; turn.switches.len()];
+        let mut move_order: Vec<OrderEntry> = Vec::new();
+        // Mega Evolutions already run by a Pursuit user before its move.
+        let mut mega_done: Vec<(Side, PokemonIndex)> = Vec::new();
         // Switch actions (order 103) and Mega Evolutions (order 104).
         for p in pre.iter().copied() {
             match p {
                 PreAction::Switch { side, slot, position, .. } => {
-                    run_switch_action(state, rng, side, slot, position);
+                    let pursued = pursuit_before_switch(state, rng, side, slot, &mut actions, &pre, &mut mega_done, &mut move_order);
+                    run_switch_action(state, rng, side, slot, position, pursued);
                     // Hazards set off the newcomer's Emergency Exit: PS asks for a
                     // switch at once (`runPursuitActivation`, the answer's
                     // `updateSpeed`, the `instaswitch`).
@@ -1891,6 +1905,9 @@ pub fn run_fuzz_turn(
                     }
                 }
                 PreAction::Mega { side, slot, idx } => {
+                    if mega_done.contains(&(side, idx)) {
+                        continue;
+                    }
                     if state.side(side).active()[slot].pokemon_index == Some(idx) {
                         run_mega_evo(state, rng, side, slot);
                     }
@@ -1932,7 +1949,6 @@ pub fn run_fuzz_turn(
         // Execute in order. A pivot move (Volt Switch / U-turn) switches its
         // user out right after it acts, using the controller's answer to PS's
         // mid-turn switch request (PS `runAction` -> `makeRequest('switch')`).
-        let mut move_order: Vec<OrderEntry> = Vec::new();
         let mut i = 0;
         // An instructed Counter / Mirror Coat: its `beforeTurnMove` action, run
         // as the next action (see the Instruct handling below).
@@ -4731,6 +4747,11 @@ fn execute_move_body(
     {
         modified.accuracy = 50.0;
     }
+    // Pursuit `onModifyMove`: never misses a target that is switching out
+    // (`beingCalledBack` / `switchFlag`). PS data/moves.ts pursuit.
+    if modified.move_id == Choices::PURSUIT && pursuit_target_leaving(state, side, action.target_loc) {
+        modified.always_hit = true;
+    }
     // Raging Bull `onModifyType`: the Paldean Tauros breed's type.
     if modified.move_id == Choices::RAGINGBULL {
         let sp = state.side(side).species_names[idx as usize].to_lowercase();
@@ -5638,6 +5659,11 @@ fn execute_move_body(
     // Assurance `basePowerCallback`: doubled if the target was hurt earlier this turn.
     if choice.move_id == Choices::ASSURANCE && !is_self && !is_field {
         state.side_mut(side).slot_scratch_mut(slot).bp_double = state.side(target_side).active()[target_slot].hurt_this_turn;
+    }
+    // Pursuit `basePowerCallback`: doubled on a target that is switching out.
+    if choice.move_id == Choices::PURSUIT && !is_self && !is_field {
+        let t = &state.side(target_side).active()[target_slot];
+        state.side_mut(side).slot_scratch_mut(slot).bp_double = t.being_called_back || t.force_switch;
     }
     if choice.move_id == Choices::PAYBACK && !is_self && !is_field {
         let tidx = state.side(target_side).active()[target_slot].pokemon_index;
@@ -18170,16 +18196,123 @@ fn revive_member_raw(state: &mut DoublesState, side: Side, position: usize) {
     s.toxic_stage[position] = 0;
 }
 
+/// Pursuit's target location holds a pokemon that is switching out (PS
+/// `target.beingCalledBack || target.switchFlag`).
+fn pursuit_target_leaving(state: &DoublesState, side: Side, loc: i8) -> bool {
+    let (ts, tsl) = if loc > 0 { (side.other(), (loc - 1) as usize) } else { (side, (-loc - 1) as usize) };
+    loc != 0 && tsl < 2 && {
+        let t = &state.side(ts).active()[tsl];
+        t.being_called_back || t.force_switch
+    }
+}
+
 /// A chosen switch (PS `runAction` `switch` -> `switchIn`, then the queued
 /// `runSwitch` action). PS sim/battle.ts runAction, sim/battle-actions.ts
 /// switchIn / runSwitch.
-fn run_switch_action(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize, position: usize) {
+fn run_switch_action(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize, position: usize, pursued: bool) {
     if state.side(side).active()[slot].pokemon_index.is_none() {
         return;
     }
-    // `runPursuitActivation`: `eachEvent('Update')` (gen >= 5).
+    // `runPursuitActivation`: `eachEvent('Update')` (gen >= 5), then
+    // `resolveFaints` when Pursuit activated.
     each_event_update(state, rng);
+    if pursued {
+        resolve_faints(state, rng, |_, _| true);
+    }
+    // gen >= 5: a pokemon KOed by Pursuit before it could switch cancels the
+    // switch. PS sim/battle-actions.ts switchIn.
+    let alive = state.side(side).slot_pokemon(slot).is_some_and(|p| p.hp > 0);
+    state.side_mut(side).slot_scratch_mut(slot).being_called_back = false;
+    if !alive {
+        return;
+    }
     run_switch_in(state, rng, side, slot, position);
+}
+
+/// `switchIn` -> `runPursuitActivation` -> `runEvent('BeforeSwitchOut')`: each
+/// foe with the `pursuit` volatile whose Pursuit is still queued runs it at
+/// the leaving pokemon now (`queue.cancelMove(source)`, `runMove`), Mega
+/// Evolving first if it was going to. Returns whether Pursuit activated.
+/// PS data/moves.ts pursuit (`condition.onFoeBeforeSwitchOut`).
+#[allow(clippy::too_many_arguments)]
+fn pursuit_before_switch(
+    state: &mut DoublesState,
+    rng: &mut Gen5Rng,
+    side: Side,
+    slot: usize,
+    actions: &mut Vec<Action>,
+    pre: &[PreAction],
+    mega_done: &mut Vec<(Side, PokemonIndex)>,
+    move_order: &mut Vec<OrderEntry>,
+) -> bool {
+    if !state.side(side).slot_pokemon(slot).is_some_and(|p| p.hp > 0) {
+        return false;
+    }
+    // `switchIn`: `oldActive.beingCalledBack = true`.
+    state.side_mut(side).slot_scratch_mut(slot).being_called_back = true;
+    let foe = side.other();
+    let pursuers: Vec<(usize, PokemonIndex)> = actions
+        .iter()
+        .filter(|a| a.side == foe && a.choice.move_id == Choices::PURSUIT && !a.recharge)
+        .filter_map(|a| {
+            (0..2)
+                .find(|&sl| state.side(foe).active()[sl].pokemon_index == Some(a.pokemon_index))
+                .map(|sl| (sl, a.pokemon_index))
+        })
+        .collect();
+    if pursuers.is_empty() {
+        return false;
+    }
+    // runEvent handler order: speed, ties shuffled.
+    let order: Vec<(usize, PokemonIndex)> = if pursuers.len() >= 2 {
+        let hs: Vec<ResidualHandler> = pursuers
+            .iter()
+            .enumerate()
+            .map(|(k, &(_, i))| ResidualHandler {
+                order: 0,
+                priority: 0,
+                speed: state.side(foe).speed_cache[i as usize] as i32,
+                sub_order: 0,
+                kind: ResidualKind::Status(foe, k),
+            })
+            .collect();
+        sort_residual_handlers(hs, rng, "speed tie (eachEvent)")
+            .into_iter()
+            .filter_map(|h| match h.kind {
+                ResidualKind::Status(_, k) => Some(pursuers[k]),
+                _ => None,
+            })
+            .collect()
+    } else {
+        pursuers
+    };
+    let mut activated = false;
+    for (_, pidx) in order {
+        let Some(psl) = (0..2).find(|&sl| state.side(foe).active()[sl].pokemon_index == Some(pidx)) else { continue };
+        if state.side(foe).team_member(pidx).hp == 0
+            || !state.side(side).slot_pokemon(slot).is_some_and(|p| p.hp > 0)
+            || state.side(foe).active()[psl].encore.is_some_and(|(m, _)| m != Choices::PURSUIT)
+        {
+            continue;
+        }
+        // `queue.cancelMove(source)`.
+        let Some(k) = actions.iter().position(|a| a.side == foe && a.pokemon_index == pidx) else { continue };
+        let mut a = actions.remove(k);
+        activated = true;
+        // The Pursuit user Mega Evolves first when it was going to this turn.
+        let mega = pre.iter().any(|p| matches!(*p, PreAction::Mega { side: s2, idx, .. } if s2 == foe && idx == pidx));
+        if mega && !mega_done.contains(&(foe, pidx)) {
+            mega_done.push((foe, pidx));
+            run_mega_evo(state, rng, foe, psl);
+        }
+        state.side_mut(side).active_slot_mut(slot).destinybond = false;
+        // `runMove('pursuit', source, source.getLocOf(pokemon))`.
+        a.slot = psl;
+        a.target_loc = slot as i8 + 1;
+        a.orig_target = orig_target_at(state, foe, a.target_loc);
+        execute_action(state, rng, &a, move_order, &actions[..]);
+    }
+    activated
 }
 
 /// `switchIn` and the `runSwitch` action that follows it (shared by a

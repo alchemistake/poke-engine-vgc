@@ -9641,6 +9641,46 @@ fn execute_move_body(
             }
         }
 
+        // Rototiller `onHitField` (target all): every active pokemon that is not
+        // grounded is immune (`runImmunity('Ground')`); each grounded Grass type
+        // gets +1 Atk and +1 SpA (`boost`, the user as the source), in
+        // `getAllActive` order. Fails with no grounded Grass type and no
+        // airborne pokemon. PS data/moves.ts rototiller.
+        if choice.move_id == Choices::ROTOTILLER && ti == 0 && !move_failed {
+            let mut targets: Vec<(Side, usize, PokemonIndex)> = Vec::new();
+            let mut any_airborne = false;
+            for sd in [Side::One, Side::Two] {
+                for sl in 0..2 {
+                    let Some(ai) = state.side(sd).active()[sl].pokemon_index else { continue };
+                    let p = state.side(sd).team_member(ai);
+                    if p.hp <= 0 {
+                        continue;
+                    }
+                    if !ps_grounded(state, sd, sl) {
+                        any_airborne = true;
+                        continue;
+                    }
+                    if p.has_type(&PokemonType::GRASS) || state.side(sd).active()[sl].added_type == PokemonType::GRASS {
+                        targets.push((sd, sl, ai));
+                    }
+                }
+            }
+            if targets.is_empty() && !any_airborne {
+                move_failed = true;
+            }
+            for (sd, sl, ai) in targets {
+                apply_boosts_from(
+                    state,
+                    rng,
+                    sd,
+                    ai,
+                    &StatBoosts { attack: 1, special_attack: 1, ..Default::default() },
+                    sd != side,
+                    !(sd == side && sl == slot),
+                );
+            }
+        }
+
         // Disable `condition.onStart`: fails if already disabled or the last
         // move is out of PP; the duration drops by one when the target still
         // has a queued action. PS data/moves.ts disable.

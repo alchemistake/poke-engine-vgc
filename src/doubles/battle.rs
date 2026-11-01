@@ -4492,6 +4492,15 @@ fn execute_move_body(
                         if sub > 0 {
                             state.side_mut(ts).active_slot_mut(tsl).substitute_health = sub - dmg.min(sub);
                         } else {
+                            // Rage `onHit`: the release is a damaging move from
+                            // another pokemon, +1 Atk. PS data/moves.ts rage.
+                            if state.side(ts).active()[tsl].rage && dmg > 0 {
+                                if let Some(ti) = state.side(ts).active()[tsl].pokemon_index {
+                                    if state.side(ts).team_member(ti).hp > dmg {
+                                        apply_boosts(state, rng, ts, ti, &StatBoosts { attack: 1, ..Default::default() }, false);
+                                    }
+                                }
+                            }
                             apply_damage(state, ts, tsl, dmg);
                         }
                     }

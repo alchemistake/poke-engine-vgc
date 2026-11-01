@@ -95,7 +95,8 @@ function buildWideSpeciesPool(modDex) {
   }
   const pool = [];
   for (const sp of modDex.species.all()) {
-    if (!wideOk(sp) || sp.battleOnly) continue;
+    // No Dynamax in gen 9: Gigantamax formes are not team picks.
+    if (!wideOk(sp) || sp.battleOnly || sp.forme === 'Gmax') continue;
     if (!sp.abilities || Object.keys(sp.abilities).length === 0) continue;
     const moves = [...modDex.species.getMovePool(sp.id, true)]
       .filter((m) => { const mv = modDex.moves.get(m); return wideOk(mv) && !mv.isZ && !mv.isMax; })

@@ -2127,6 +2127,7 @@ pub fn run_fuzz_turn(
                             a.charge = old.charge;
                             a.dragon_cheer = old.dragon_cheer;
                             a.magnet_rise = old.magnet_rise;
+                            a.telekinesis = old.telekinesis;
                             a.no_retreat = old.no_retreat;
                             a.throat_chop = old.throat_chop;
                             a.stall = old.stall;
@@ -3945,6 +3946,17 @@ fn execute_move_body(
         }
     }
 
+    // Truant `onBeforeMove` (priority 9): every other move is a `cant`; the
+    // `truant` volatile marks the turn to skip. PS data/abilities.ts truant.
+    if state.side(side).team_member(idx).ability == Abilities::TRUANT {
+        let a = state.side_mut(side).active_slot_mut(slot);
+        if a.truant {
+            a.truant = false;
+            return;
+        }
+        a.truant = true;
+    }
+
     // Flinched by a previous move's secondary: cannot act. No draw.
     // PS data/abilities.ts steadfast `onFlinch`: +1 Speed to the holder.
     if state.side(side).active()[slot].flinched {
@@ -4230,6 +4242,15 @@ fn execute_move_body(
             modified.move_type = PokemonType::FIRE;
         } else if sp.contains("combat") {
             modified.move_type = PokemonType::FIGHTING;
+        }
+    }
+    // Natural Gift `onModifyType`: the held berry's type (not while ignored).
+    if modified.move_id == Choices::NATURALGIFT {
+        let p = state.side(side).team_member(idx);
+        if !ignoring_item(state, p) {
+            if let Some((_, t)) = crate::doubles::item_data::natural_gift(p.item) {
+                modified.move_type = t;
+            }
         }
     }
     // Aura Wheel `onModifyType` (PS data/moves.ts aurawheel): Dark while the user
@@ -5016,6 +5037,21 @@ fn execute_move_body(
         state.fling_pending.push((side, idx));
         // `source.addVolatile('fling')`.
         try_add_volatile_ties(state, rng, side, slot);
+    }
+
+    // Natural Gift `onPrepareHit`: fails with an ignored item or one with no
+    // `naturalGift`; else the berry's power, and the berry is used up
+    // (`setItem('')`, AfterUseItem). PS data/moves.ts naturalgift.
+    if choice.move_id == Choices::NATURALGIFT {
+        let p = state.side(side).team_member(idx);
+        let it = p.item;
+        if ignoring_item(state, p) || crate::doubles::item_data::natural_gift(it).is_none() {
+            state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
+            push_order(move_order);
+            return;
+        }
+        state.side_mut(side).slot_scratch_mut(slot).fling_item = it;
+        use_item(state, rng, side, slot, idx, false);
     }
 
     // Payback `basePowerCallback`: doubled unless the target is newly switched
@@ -6096,6 +6132,10 @@ fn execute_move_body(
                 if lock_on_hits(st, side, slot, ts, tsl) {
                     return true;
                 }
+                // Telekinesis `onAccuracy` (not for OHKO moves).
+                if st.side(ts).active()[tsl].telekinesis > 0 && !choice.ohko {
+                    return true;
+                }
                 // Minimize `onAccuracy`: minimize-flagged moves always hit it.
                 if crate::engine::mechanics::minimize_move(choice.move_id) && st.side(ts).active()[tsl].minimize {
                     return true;
@@ -6136,6 +6176,8 @@ fn execute_move_body(
         && !toxic_hits
         && !lock_on_hits(state, side, slot, target_side, target_slot)
         && !state.side(target_side).active()[target_slot].glaive_rush
+        // Telekinesis `onAccuracy`: every non-OHKO move hits the target.
+        && state.side(target_side).active()[target_slot].telekinesis == 0
         && !(crate::engine::mechanics::minimize_move(choice.move_id)
             && state.side(target_side).active()[target_slot].minimize)
         && !weather_guaranteed
@@ -6775,6 +6817,19 @@ fn execute_move_body(
         if is_attack && !is_self && !is_field && has_target && !pollen_ally {
             if pre_damage.get(ti).is_none() {
                 try_gem(state, rng, side, slot, idx, choice, target_side, target_slot);
+            }
+            // Fury Cutter `basePowerCallback`: `addVolatile('furycutter')` (a new
+            // one runs the TryAddVolatile ties; `onRestart` doubles the
+            // multiplier up to 4 and resets the duration). PS data/moves.ts.
+            if choice.move_id == Choices::FURYCUTTER && pre_damage.get(ti).is_none() {
+                let cur = state.side(side).active()[slot].fury_cutter;
+                if cur.is_none() {
+                    try_add_volatile_ties(state, rng, side, slot);
+                }
+                state.side_mut(side).active_slot_mut(slot).fury_cutter = Some(match cur {
+                    None => (1, 2),
+                    Some((m, _)) => (if m < 4 { m * 2 } else { m }, 2),
+                });
             }
             let (damage, was_crit) = pre_damage
                 .get(ti)
@@ -7753,6 +7808,7 @@ fn execute_move_body(
                             if applies {
                                 let sd = state.side_mut(ts);
                                 sd.active_slot_mut(tslot).magnet_rise = 0;
+                                sd.active_slot_mut(tslot).telekinesis = 0;
                                 sd.active_slot_mut(tslot).smackdown = true;
                             }
                         }
@@ -7769,6 +7825,23 @@ fn execute_move_body(
                     } else {
                         try_add_volatile_ties(state, rng, ts, tslot);
                         state.side_mut(ts).active_slot_mut(tslot).magnet_rise = 5;
+                    }
+                }
+                // Telekinesis (PS data/moves.ts telekinesis): fails under Gravity
+                // (`onTry`), on Diglett / Dugtrio / Sandygast / Palossand / Gengar-Mega
+                // (immune) and with Smack Down / Ingrain (`onStart` false), and
+                // while already up (no `onRestart`).
+                PokemonVolatileStatus::TELEKINESIS => {
+                    use crate::pokemon::PokemonName as N;
+                    let a = &state.side(ts).active()[tslot];
+                    let immune = state.side(ts).slot_pokemon(tslot).is_some_and(|p| {
+                        matches!(p.id, N::DIGLETT | N::DIGLETTALOLA | N::DUGTRIO | N::DUGTRIOALOLA | N::SANDYGAST | N::PALOSSAND | N::GENGARMEGA)
+                    });
+                    if state.gravity.active || a.telekinesis > 0 || immune || a.ingrain || a.smackdown {
+                        move_failed = true;
+                    } else {
+                        try_add_volatile_ties(state, rng, ts, tslot);
+                        state.side_mut(ts).active_slot_mut(tslot).telekinesis = 3;
                     }
                 }
                 PokemonVolatileStatus::CONFUSION => {
@@ -7983,6 +8056,14 @@ fn execute_move_body(
                         a.trapped = true;
                         a.trapper = Some((side, idx));
                     }
+                }
+                // Laser Focus (duration 2, `onRestart` resets it; no Restart
+                // runs the TryAddVolatile ties). PS data/moves.ts laserfocus.
+                PokemonVolatileStatus::LASERFOCUS => {
+                    if state.side(ts).active()[tslot].laser_focus == 0 {
+                        try_add_volatile_ties(state, rng, ts, tslot);
+                    }
+                    state.side_mut(ts).active_slot_mut(tslot).laser_focus = 2;
                 }
                 PokemonVolatileStatus::OCTOLOCK => {
                     // PS `addVolatile`: returns false while present (no
@@ -9593,9 +9674,10 @@ fn execute_move_body(
                             a.charging = None;
                             state.queue_cancel.push((gs, gsl));
                         }
-                        // `removeVolatile('magnetrise')`.
+                        // `removeVolatile('magnetrise')` / `('telekinesis')`.
                         let a = state.side_mut(gs).active_slot_mut(gsl);
                         a.magnet_rise = 0;
+                        a.telekinesis = 0;
                     }
                 }
             }
@@ -9640,16 +9722,19 @@ fn execute_move_body(
         // Shield Dust `onModifySecondaries` (PS data/abilities.ts shielddust,
         // breakable): the target's non-`self` secondaries are filtered out, so
         // they make no rolls.
+        // Covert Cloak `onModifySecondaries` filters them the same way (not
+        // breakable; an ignored item does nothing). PS data/items.ts covertcloak.
         let shield_dust = (side, slot) != (target_side, target_slot)
             && hit_target_pi
                 .map(|ti| state.side(target_side).team_member(ti))
                 .map(|p| {
-                    p.ability == Abilities::SHIELDDUST
+                    (p.ability == Abilities::SHIELDDUST
                         && !crate::engine::abilities::ignores_target_ability(
                             state.side(side).team_member(idx),
                             choice,
                             &p.ability,
-                        )
+                        ))
+                        || (p.item == Items::COVERTCLOAK && !ignoring_item(state, p))
                 })
                 .unwrap_or(false);
         let custom_secondary = if sheer_force || shield_dust { true } else { match choice.move_id {
@@ -11022,6 +11107,7 @@ fn slot_base_power_callback(state: &DoublesState, side: Side, slot: usize, att_s
         Choices::BEATUP => att_slot.bp_fixed,
         Choices::SPITUP => 100.0 * att_slot.stockpile as f32,
         Choices::FLING => crate::doubles::item_data::fling_power(att_slot.fling_item) as f32,
+        Choices::NATURALGIFT => crate::doubles::item_data::natural_gift(att_slot.fling_item).map_or(0.0, |(bp, _)| bp as f32),
         Choices::STOREDPOWER | Choices::POWERTRIP => {
             let b = state.side(side).slot_boosts(slot).cloned().unwrap_or_default();
             crate::engine::mechanics::stored_power([b.atk, b.def, b.spa, b.spd, b.spe, b.acc, b.eva])
@@ -11309,6 +11395,13 @@ fn fractional_priority_roll(state: &DoublesState, rng: &mut Gen5Rng, a: &mut Act
     }
 }
 
+/// Some active pokemon (with HP) has `ability`.
+fn any_active_ability(state: &DoublesState, ability: Abilities) -> bool {
+    [Side::One, Side::Two]
+        .iter()
+        .any(|&sd| (0..2).any(|sl| state.side(sd).slot_pokemon(sl).is_some_and(|p| p.hp > 0 && p.ability == ability)))
+}
+
 /// A foe's Follow Me / Rage Powder takes this user's move (`onFoeRedirectTarget`
 /// answers: Rage Powder skips a powder-immune user).
 fn center_of_attention_redirects(state: &DoublesState, side: Side, slot: usize, idx: PokemonIndex) -> bool {
@@ -11343,6 +11436,7 @@ fn slot_grounded(p: &crate::state::Pokemon, a: &ActiveSlot, gravity: bool, magic
         || a.smackdown
         || (p.item == Items::IRONBALL && !item_ignored)
         || (a.magnet_rise == 0
+            && a.telekinesis == 0
             && (base_grounded
                 || (balloon_ignored
                     && !p.has_type(&PokemonType::FLYING)
@@ -12111,6 +12205,15 @@ fn compute_hit_damage(
     ate_boosted: bool,
     spread: bool,
 ) -> (i16, bool) {
+    // Fury Cutter: `clampIntRange(40 * multiplier, 1, 160)`.
+    let fury_choice;
+    let choice = match state.side(side).active()[slot].fury_cutter {
+        Some((m, _)) if choice.move_id == Choices::FURYCUTTER => {
+            fury_choice = Choice { base_power: (choice.base_power * m as f32).min(160.0), ..choice.clone() };
+            &fury_choice
+        }
+        _ => choice,
+    };
     // Only Electro Ball / Gyro Ball read the speeds (`dynamic_base_power`).
     // Their `basePowerCallback` `getStat('spe')` calls run `ModifyBoost` (Gyro
     // Ball: target first; Electro Ball: user first), before the crit roll.
@@ -12369,6 +12472,7 @@ fn compute_hit_damage(
                 Abilities::FILTER | Abilities::SOLIDROCK | Abilities::PRISMARMOR
             ) && !crate::engine::abilities::ignores_target_ability(attacker, choice, &defender.ability),
             sniper: attacker.ability == Abilities::SNIPER,
+            tinted_lens: attacker.ability == Abilities::TINTEDLENS,
             no_crit: matches!(defender.ability, Abilities::SHELLARMOR | Abilities::BATTLEARMOR)
                 && !crate::engine::abilities::ignores_target_ability(attacker, choice, &defender.ability),
             guts: attacker.ability == Abilities::GUTS,
@@ -12420,6 +12524,17 @@ fn compute_hit_damage(
             } else {
                 m
             };
+            // Tablets / Vessel of Ruin `onAnyModifyAtk` / `SpA`: x0.75 unless the
+            // attacker has it too (one holder counts). PS data/abilities.ts.
+            let ruin = if choice.category == MoveCategory::Physical { Abilities::TABLETSOFRUIN } else { Abilities::VESSELOFRUIN };
+            let m = if choice.category != MoveCategory::Status
+                && attacker.ability != ruin
+                && any_active_ability(state, ruin)
+            {
+                (m * 3072 + 2048) >> 12
+            } else {
+                m
+            };
             // Stakeout `onModifyAtk` / `onModifySpA`: x2 against a target that
             // switched in this turn (`!defender.activeTurns`).
             if attacker.ability == Abilities::STAKEOUT
@@ -12446,7 +12561,9 @@ fn compute_hit_damage(
             })
             .sum(),
         // PS focusenergy +2; Super Luck `onModifyCritRatio` +1 (data/abilities.ts).
-        crit_bonus: (if att_slot.focus_energy { 2 } else { 0 })
+        // Laser Focus `onModifyCritRatio`: 5 (a sure crit).
+        crit_bonus: (if att_slot.laser_focus > 0 { 5 } else { 0 })
+            + (if att_slot.focus_energy { 2 } else { 0 })
             + (match att_slot.dragon_cheer {
                 Some(true) => 2,
                 Some(false) => 1,
@@ -12500,6 +12617,12 @@ fn compute_hit_damage(
             if eff_weather == Weather::SNOW && names_def && has(PokemonType::ICE) {
                 m = (m * 6144 + 2048) >> 12;
             }
+            // Sword / Beads of Ruin `onAnyModifyDef` / `SpD`: x0.75 unless the
+            // defender has it too. PS data/abilities.ts.
+            let ruin = if names_def { Abilities::SWORDOFRUIN } else { Abilities::BEADSOFRUIN };
+            if defender.ability != ruin && any_active_ability(state, ruin) {
+                m = (m * 3072 + 2048) >> 12;
+            }
             m
         },
             // Dynamic base power (Reversal / Flail) and Helping Hand
@@ -12514,6 +12637,15 @@ fn compute_hit_damage(
                     // The `gem` volatile (Normal Gem used): x1.3 (priority 14).
                     if att_slot.gem {
                         m.push((14, 5325));
+                    }
+                    // Battery (special moves) / Power Spot `onAllyBasePower`
+                    // (priority 22): x1.3 for the ally's moves.
+                    if let Some(al) = state.side(side).slot_pokemon(1 - slot).filter(|a| a.hp > 0) {
+                        if al.ability == Abilities::POWERSPOT
+                            || (al.ability == Abilities::BATTERY && choice.category == MoveCategory::Special)
+                        {
+                            m.push((22, 5325));
+                        }
                     }
                     // charge.onBasePower (priority 9): x2 for Electric moves.
                     if att_slot.charge && choice.move_type == PokemonType::ELECTRIC {
@@ -14092,6 +14224,26 @@ fn apply_on_switch_abilities(
             None => return false,
         }
     };
+    // Download `onStart`: +1 SpA when the foes' total Def (boosted) is at
+    // least their total SpD, else +1 Atk (no foe: nothing). PS data/abilities.ts download.
+    if ability == Abilities::DOWNLOAD {
+        let foe = side.other();
+        let (mut def, mut spd) = (0i32, 0i32);
+        for sl in 0..2 {
+            let Some(p) = state.side(foe).slot_pokemon(sl).filter(|p| p.hp > 0) else { continue };
+            let b = state.side(foe).slot_boosts(sl).cloned().unwrap_or_default();
+            def += crate::engine::mechanics::boost_stat(b.def, p.defense) as i32;
+            spd += crate::engine::mechanics::boost_stat(b.spd, p.special_defense) as i32;
+        }
+        if let Some(idx) = slot_index_or_unresolved(state, side, slot) {
+            if def > 0 && def >= spd {
+                apply_boosts(state, rng, side, idx, &StatBoosts { special_attack: 1, ..Default::default() }, false);
+            } else if spd > 0 {
+                apply_boosts(state, rng, side, idx, &StatBoosts { attack: 1, ..Default::default() }, false);
+            }
+        }
+        return false;
+    }
     // Frisk / Anticipation `onStart` only log (`-item`, `-ability`): no state
     // change, no draw. Gluttony's `abilityState.gluttony` only moves the pinch
     // berries' threshold (Petaya, Salac, Custap, ...), which champions makes
@@ -14610,6 +14762,18 @@ fn damaging_hit_items(
             state.side_mut(ts).team_member_mut(tidx).item = Items::NONE;
             after_use_item(state, ts, tslot, tidx);
         }
+        // Sticky Barb `onHit`: a contact attacker with no item takes it.
+        Items::STICKYBARB
+            if choice.flags.contact
+                && (side, slot) != (ts, tslot)
+                && state.side(side).team_member(idx).ability != Abilities::LONGREACH
+                && state.side(side).team_member(idx).item == Items::NONE =>
+        {
+            state.side_mut(ts).team_member_mut(tidx).item = Items::NONE;
+            item_lost(state, ts, tslot, tidx);
+            state.side_mut(side).team_member_mut(idx).item = Items::STICKYBARB;
+            item_gained_basic(state, side, slot, idx);
+        }
         Items::ROCKYHELMET
             if choice.flags.contact
                 && (side, slot) != (ts, tslot)
@@ -14672,7 +14836,9 @@ fn after_hit_item_moves(
             };
             // A secondary without `chance` still draws its roll, KO'd target or not
             // (unless Shield Dust filtered it out).
-            let shield_dust_ko = state.side(ts).team_member(tidx).ability == Abilities::SHIELDDUST && !mold;
+            let tp = state.side(ts).team_member(tidx);
+            let shield_dust_ko = (tp.ability == Abilities::SHIELDDUST && !mold)
+                || (tp.item == Items::COVERTCLOAK && !ignoring_item(state, tp));
             if (status != PokemonStatus::NONE || it == Items::KINGSROCK) && state.side(ts).team_member(tidx).hp <= 0 {
                 if !shield_dust_ko {
                     let _ = rng.label("secondary").random(100);
@@ -14695,7 +14861,9 @@ fn after_hit_item_moves(
                 return;
             }
             // Shield Dust `onModifySecondaries` filters the pushed secondary.
-            let shield_dust = state.side(ts).team_member(tidx).ability == Abilities::SHIELDDUST && !mold;
+            let tp = state.side(ts).team_member(tidx);
+            let shield_dust = (tp.ability == Abilities::SHIELDDUST && !mold)
+                || (tp.item == Items::COVERTCLOAK && !ignoring_item(state, tp));
             if (status != PokemonStatus::NONE || it == Items::KINGSROCK) && !shield_dust {
                 let _ = rng.label("secondary").random(100);
                 if status != PokemonStatus::NONE {
@@ -16003,6 +16171,7 @@ enum ResidualKind {
     Taunt(Side, usize),
     /// `magnetrise` duration countdown (order 18, PS data/moves.ts magnetrise).
     MagnetRise(Side, usize),
+    Telekinesis(Side, usize),
     /// Healer / Shed Skin / Hydration `onResidual` (order 5, subOrder 3).
     CureStatus(Side, usize),
     /// Moody `onResidual` (order 28, subOrder 2).
@@ -16016,6 +16185,10 @@ enum ResidualKind {
     Pickup(Side, usize),
     /// White Herb `onResidual` (order 29).
     WhiteHerb(Side, usize),
+    /// Sticky Barb `onResidual` (order 28, subOrder 3): 1/8 max HP damage.
+    StickyBarb(Side, usize),
+    /// Black Sludge `onResidual` (order 5, subOrder 4): heal 1/16 (Poison) or 1/8 damage.
+    BlackSludge(Side, usize),
     /// Harvest `onResidual` (order 28, subOrder 2): the roll only.
     Harvest(Side, usize),
     /// Hunger Switch `onResidual` (order 29): Morpeko changes forme.
@@ -16243,7 +16416,8 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
                 }
                 // Held items (subOrder 8 unless set), as for an active holder.
                 match p.item {
-                    Items::LEFTOVERS => push(5, speed, 4, ResidualKind::FaintedMarker),
+                    Items::LEFTOVERS | Items::BLACKSLUDGE => push(5, speed, 4, ResidualKind::FaintedMarker),
+                    Items::STICKYBARB => push(28, speed, 3, ResidualKind::FaintedMarker),
                     Items::WHITEHERB => push(29, speed, 8, ResidualKind::FaintedMarker),
                     _ => {}
                 }
@@ -16291,6 +16465,12 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             if a.helping_hand_mult > 1.0 {
                 vols.push(("helpinghand", NO_ORDER, 2, ResidualKind::VolatileEnd(side, slot, 3)));
             }
+            if a.laser_focus > 0 {
+                vols.push(("laserfocus", NO_ORDER, 2, ResidualKind::VolatileEnd(side, slot, 8)));
+            }
+            if a.fury_cutter.is_some() {
+                vols.push(("furycutter", NO_ORDER, 2, ResidualKind::VolatileEnd(side, slot, 9)));
+            }
             if a.focus_punch {
                 vols.push(("focuspunch", NO_ORDER, 2, ResidualKind::Marker)); // focuspunch (duration 1)
             }
@@ -16324,6 +16504,9 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             }
             if a.magnet_rise > 0 {
                 vols.push(("magnetrise", 18, 2, ResidualKind::MagnetRise(side, slot)));
+            }
+            if a.telekinesis > 0 {
+                vols.push(("telekinesis", 19, 2, ResidualKind::Telekinesis(side, slot)));
             }
             if a.cursed {
                 vols.push(("curse", 12, 2, ResidualKind::Curse(side, slot)));
@@ -16395,6 +16578,8 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             // Held items (subOrder 8 unless set).
             match p.item {
                 Items::LEFTOVERS => push(5, speed, 4, ResidualKind::Leftovers(side, slot)),
+                Items::BLACKSLUDGE => push(5, speed, 4, ResidualKind::BlackSludge(side, slot)),
+                Items::STICKYBARB => push(28, speed, 3, ResidualKind::StickyBarb(side, slot)),
                 Items::WHITEHERB => push(29, speed, 8, ResidualKind::WhiteHerb(side, slot)),
                 _ => {}
             }
@@ -17337,6 +17522,11 @@ fn end_of_turn(
                 prev_end = a.taunt == 1;
                 a.taunt = a.taunt.saturating_sub(1);
             }
+            ResidualKind::Telekinesis(side, slot) => {
+                let a = state.side_mut(side).active_slot_mut(slot);
+                prev_end = a.telekinesis == 1;
+                a.telekinesis = a.telekinesis.saturating_sub(1);
+            }
             ResidualKind::MagnetRise(side, slot) => {
                 let a = state.side_mut(side).active_slot_mut(slot);
                 prev_end = a.magnet_rise == 1;
@@ -17435,6 +17625,19 @@ fn end_of_turn(
                     }
                 }
             }
+            ResidualKind::VolatileEnd(side, slot, 9) => {
+                let a = state.side_mut(side).active_slot_mut(slot);
+                if let Some((m, d)) = a.fury_cutter {
+                    a.fury_cutter = if d <= 1 { None } else { Some((m, d - 1)) };
+                    prev_end = d <= 1;
+                }
+            }
+            ResidualKind::VolatileEnd(side, slot, 8) => {
+                let a = state.side_mut(side).active_slot_mut(slot);
+                a.laser_focus = a.laser_focus.saturating_sub(1);
+                // The duration ran out: an `end` call, no `resolveFaints`.
+                prev_end = a.laser_focus == 0;
+            }
             ResidualKind::VolatileEnd(side, slot, 7) => {
                 state.side_mut(side).active_slot_mut(slot).follow_me = 0;
                 // The duration ran out: an `end` call, no `resolveFaints`.
@@ -17520,6 +17723,31 @@ fn end_of_turn(
             }
             ResidualKind::WhiteHerb(side, slot) => {
                 white_herb(state, rng, side, slot);
+            }
+            ResidualKind::StickyBarb(side, slot) => {
+                let Some(p) = state.side(side).slot_pokemon(slot) else { continue };
+                if p.hp > 0 && !ignoring_item(state, p) && p.ability != Abilities::MAGICGUARD {
+                    let d = (p.maxhp / 8).max(1);
+                    apply_indirect_damage(state, rng, side, slot, d);
+                }
+            }
+            ResidualKind::BlackSludge(side, slot) => {
+                let Some(idx) = state.side(side).active()[slot].pokemon_index else { continue };
+                let p = state.side(side).team_member(idx);
+                if p.hp <= 0 || ignoring_item(state, p) {
+                    continue;
+                }
+                let poison = p.has_type(&PokemonType::POISON) || state.side(side).active()[slot].added_type == PokemonType::POISON;
+                if poison {
+                    if p.hp < p.maxhp && state.side(side).active()[slot].heal_block == 0 {
+                        let heal = (p.maxhp / 16).max(1);
+                        let m = state.side_mut(side).team_member_mut(idx);
+                        m.hp = (m.hp + heal).min(m.maxhp);
+                    }
+                } else if p.ability != Abilities::MAGICGUARD {
+                    let d = (p.maxhp / 8).max(1);
+                    apply_indirect_damage(state, rng, side, slot, d);
+                }
             }
             ResidualKind::Moody(side, slot) => {
                 // PS moody.onResidual: +2 to a random stat below +6, -1 to a
@@ -18519,6 +18747,7 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
                     solid_rock: false,
                     no_crit: false,
                     sniper: false,
+                    tinted_lens: false,
                     guts: attacker.ability == Abilities::GUTS,
                     attack_mod: crate::engine::mechanics::attacker_stat_modifier(attacker, &action.choice),
                     crit_bonus: 0,

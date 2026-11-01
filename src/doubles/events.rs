@@ -64,7 +64,7 @@ pub fn pokemon_effects(state: &DoublesState, side: Side, slot: usize) -> Vec<(St
 
 /// The volatile and slot conditions `visit_pokemon_effects` reports, in
 /// report order (`cond_mask`).
-const CONDS: [(&str, HandlerKind); 67] = [
+const CONDS: [(&str, HandlerKind); 71] = [
     ("confusion", HandlerKind::Volatile),
     ("flinch", HandlerKind::Volatile),
     ("mustrecharge", HandlerKind::Volatile),
@@ -130,6 +130,10 @@ const CONDS: [(&str, HandlerKind); 67] = [
     ("electrify", HandlerKind::Volatile),
     ("powertrick", HandlerKind::Volatile),
     ("choicelock", HandlerKind::Volatile),
+    ("truant", HandlerKind::Volatile),
+    ("laserfocus", HandlerKind::Volatile),
+    ("furycutter", HandlerKind::Volatile),
+    ("telekinesis", HandlerKind::Volatile),
     ("futuremove", HandlerKind::Slot),
     ("wish", HandlerKind::Slot),
 ];
@@ -191,6 +195,18 @@ pub(crate) fn vol_mask(a: &crate::doubles::state::ActiveSlot) -> u128 {
     let mut m = 0u128;
     if a.choice_lock.is_some() {
         m |= 1 << 64;
+    }
+    if a.truant {
+        m |= 1 << 65;
+    }
+    if a.laser_focus > 0 {
+        m |= 1 << 66;
+    }
+    if a.fury_cutter.is_some() {
+        m |= 1 << 67;
+    }
+    if a.telekinesis > 0 {
+        m |= 1 << 68;
     }
     if a.confusion > 0 {
         m |= 1 << 0;

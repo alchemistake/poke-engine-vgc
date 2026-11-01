@@ -4584,7 +4584,7 @@ fn build_moves() -> HashMap<Choices, Choice> {
         Choices::DRAGONHAMMER,
         Choice {
             move_id: Choices::DRAGONHAMMER,
-            base_power: 90.0,
+            base_power: 100.0,
             category: MoveCategory::Physical,
             move_type: PokemonType::DRAGON,
             flags: Flags {
@@ -18509,7 +18509,7 @@ fn build_moves() -> HashMap<Choices, Choice> {
                 protect: true,
                 ..Default::default()
             },
-            recoil: Some(0.33),
+            recoil: Some(0.25),
             pp: 20,
             ..Default::default()
         },
@@ -22446,7 +22446,7 @@ fn apply_champions_modifiers(moves: &mut HashMap<Choices, Choice>) {
     moves.get_mut(&Choices::DOUBLESHOCK).unwrap().flags.punch = true;
     moves.get_mut(&Choices::DRAGONCHEER).unwrap().flags.sound = true;
     moves.get_mut(&Choices::HOWL).unwrap().flags.sound = true;
-    moves.get_mut(&Choices::DRAGONHAMMER).unwrap().base_power = 90.0;
+    moves.get_mut(&Choices::DRAGONHAMMER).unwrap().base_power = 100.0;
     moves.get_mut(&Choices::FIRELASH).unwrap().base_power = 90.0;
     moves.get_mut(&Choices::FIRSTIMPRESSION).unwrap().base_power = 100.0;
     moves.get_mut(&Choices::FISHIOUSREND).unwrap().base_power = 80.0;

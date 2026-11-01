@@ -551,6 +551,24 @@ pub fn attacker_stat_modifier(attacker: &Pokemon, choice: &Choice) -> i64 {
     if attacker.ability == Abilities::WATERBUBBLE && choice.move_type == PokemonType::WATER {
         return 8192;
     }
+    // Type `onModifyAtk` / `onModifySpA` (priority 5, both categories):
+    // Steelworker / Dragon's Maw / Rocky Payload x1.5, Transistor x1.3 (gen 9).
+    // Defeatist x0.5 at half HP or less; Gorilla Tactics x1.5 Atk (priority 1).
+    // PS data/abilities.ts.
+    if choice.category != MoveCategory::Status {
+        let m = match attacker.ability {
+            Abilities::STEELWORKER if choice.move_type == PokemonType::STEEL => 6144,
+            Abilities::DRAGONSMAW if choice.move_type == PokemonType::DRAGON => 6144,
+            Abilities::ROCKYPAYLOAD if choice.move_type == PokemonType::ROCK => 6144,
+            Abilities::TRANSISTOR if choice.move_type == PokemonType::ELECTRIC => 5325,
+            Abilities::DEFEATIST if (attacker.hp as i32) * 2 <= attacker.maxhp as i32 => 2048,
+            Abilities::GORILLATACTICS if choice.category == MoveCategory::Physical => 6144,
+            _ => 4096,
+        };
+        if m != 4096 {
+            return m;
+        }
+    }
     let pinch = (attacker.hp as i32) * 3 <= attacker.maxhp as i32;
     let boosted = match attacker.ability {
         Abilities::OVERGROW => choice.move_type == PokemonType::GRASS,

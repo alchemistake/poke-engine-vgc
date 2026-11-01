@@ -41,6 +41,8 @@ enum SubCommand {
     DoublesBattle(DoublesBattleArgs),
     DoublesReplay(DoublesReplayArgs),
     DoublesFuzzBattle(DoublesFuzzBattleArgs),
+    /// Print the engine's move data as JSON (fuzz/move_data_audit.js).
+    DumpMoves,
 }
 
 #[derive(Parser)]
@@ -446,6 +448,28 @@ pub fn main() {
                 } else {
                     println!("{}", out_json);
                 }
+            }
+            SubCommand::DumpMoves => {
+                let mut out = serde_json::Map::new();
+                for (id, c) in crate::choices::MOVES.iter() {
+                    out.insert(
+                        format!("{:?}", id).to_lowercase(),
+                        serde_json::json!({
+                            "bp": c.base_power,
+                            "acc": c.accuracy,
+                            "always": c.always_hit,
+                            "priority": c.priority,
+                            "category": format!("{:?}", c.category),
+                            "type": format!("{:?}", c.move_type),
+                            "recoil": c.recoil.unwrap_or(0.0),
+                            "drain": c.drain.unwrap_or(0.0),
+                            "crash": c.crash.unwrap_or(0.0),
+                            "pp": c.pp,
+                            "multihit": c.multihit,
+                        }),
+                    );
+                }
+                println!("{}", serde_json::Value::Object(out));
             }
             SubCommand::DoublesFuzzBattle(args) => {
                 let json = std::fs::read_to_string(&args.input)

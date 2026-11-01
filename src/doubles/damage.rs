@@ -279,6 +279,8 @@ pub struct DamageCtx {
     pub no_crit: bool,
     /// Attacker has Sniper (`onModifyDamage`: x1.5 on a critical hit).
     pub sniper: bool,
+    /// Tinted Lens `onModifyDamage`: x2 on a not-very-effective hit.
+    pub tinted_lens: bool,
     /// Effective base power after multiplier effects (Helping Hand);
     /// 0.0 = use `choice.base_power`.
     pub base_power_override: f32,
@@ -522,6 +524,9 @@ pub fn calculate_damage_with(
     }
     if ctx.sniper && crit {
         chain_in(6144);
+    }
+    if ctx.tinted_lens && tm < 0 {
+        chain_in(8192);
     }
     // PS `runEvent('ModifyDamage')` -> `speedSort` over the handlers, drawn by
     // the caller's hook. Fallback (no hook): Friend Guard holders (subOrder 7,

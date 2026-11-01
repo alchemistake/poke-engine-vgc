@@ -170,6 +170,8 @@ pub struct ActiveSlot {
     /// `magnetrise` volatile: remaining duration (0 = none). Makes the holder
     /// ungrounded (PS `isGrounded`) until it ends (PS data/moves.ts magnetrise).
     pub magnet_rise: u8,
+    /// `telekinesis` volatile duration (3): floats; non-OHKO moves always hit.
+    pub telekinesis: u8,
     /// `smackdown` volatile (no duration): the holder is grounded (PS
     /// `isGrounded`) until it switches out (PS data/moves.ts smackdown).
     pub smackdown: bool,
@@ -213,6 +215,12 @@ pub struct ActiveSlot {
     /// The `trapped` volatile No Retreat's `onStart` added itself (none when the
     /// user was already trapped: that link's `trapped` stays, and goes with it).
     pub no_retreat_trap: bool,
+    /// Truant's `truant` volatile: the next move is skipped (`cant`).
+    pub truant: bool,
+    /// `laserfocus` volatile duration (2 when used; the next move crits).
+    pub laser_focus: u8,
+    /// `furycutter` volatile: (multiplier, duration).
+    pub fury_cutter: Option<(u8, u8)>,
     /// `focusenergy` volatile: +2 critical-hit stages.
     pub focus_energy: bool,
     /// `attract` volatile: the infatuating pokemon (side, team index).
@@ -408,6 +416,7 @@ impl ActiveSlot {
             fallen: 0,
             taunt: 0,
             magnet_rise: 0,
+            telekinesis: 0,
             smackdown: false,
             active_turns: 0,
             active_move_actions: 0,
@@ -425,6 +434,9 @@ impl ActiveSlot {
             charge: false,
             no_retreat: false,
             no_retreat_trap: false,
+            truant: false,
+            laser_focus: 0,
+            fury_cutter: None,
             focus_energy: false,
             attract: None,
             leech_seed: None,

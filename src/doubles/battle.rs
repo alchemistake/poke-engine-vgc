@@ -57,6 +57,9 @@ struct Action {
     /// PS `action.originalTarget` (`resolveAction`: `getAtLoc(targetLoc)` when
     /// the action is queued), as (side, team index). Read by `tracksTarget`.
     orig_target: Option<(Side, PokemonIndex)>,
+    /// A Curse queued while its user was not Ghost: champions `resolveAction`
+    /// set its `move.target` to 'self', which the action keeps.
+    curse_self: bool,
 }
 
 /// PS sim/battle-queue.ts resolveAction: `originalTarget = pokemon.getAtLoc(targetLoc)`.
@@ -979,6 +982,7 @@ fn plan_queue_change(
         no_pp: false,
         recharge: false,
         orig_target: None,
+        curse_self: false,
     };
     // `resolveAction`: no target location -> `getRandomTarget` (a draw), then
     // `getActionSpeed` -> `getTarget`. The new action is a real `move` (not the
@@ -1124,6 +1128,7 @@ fn instruct_action(
         no_pp: false,
         recharge: false,
         orig_target: orig_target_at(state, side, loc),
+        curse_self: false,
     })
 }
 
@@ -1465,6 +1470,9 @@ pub fn run_fuzz_turn(
                                 } else {
                                     ability_priority_boost(p, &mv) + grassy_glide_boost(state, p, &mv)
                                 },
+                                curse_self: mv.move_id == Choices::CURSE
+                                    && !p.has_type(&PokemonType::GHOST)
+                                    && s.active()[slot].added_type != PokemonType::GHOST,
                                 choice: mv,
                                 priority: prio,
                                 speed: effective_speed(state, side, slot).unwrap_or(0),
@@ -2592,6 +2600,7 @@ fn ps_get_target_inner(
     // then fails or applies to the user. PS data/moves.ts curse.onModifyMove.
     if !action.recharge
         && action.choice.move_id == Choices::CURSE
+        && action.curse_self
         && action.target_loc == -(slot as i8 + 1)
     {
         return Some((side, slot));
@@ -2659,6 +2668,11 @@ fn ps_get_target_inner(
     }
     let self_loc = -(slot as i8 + 1);
     if matches!(ty, Tgt::AdjacentAlly | Tgt::Any | Tgt::Normal) && loc == self_loc && a.charging.is_none() {
+        // `return move.flags['futuremove'] ? pokemon : null` (Future Sight
+        // queued on the user's own slot never hits). PS sim/battle.ts getTarget.
+        if !action.recharge && crate::engine::mechanics::is_future_move(action.choice.move_id) {
+            return Some((side, slot));
+        }
         return None;
     }
     let is_self = loc == self_loc;
@@ -4368,8 +4382,12 @@ fn execute_move_body(
         // PS data/mods/champions/moves.ts curse, sim/battle-actions.ts useMoveInner.
         // (Keyed on the chosen location: the reroll happens in `onModifyMove`,
         // before a Follow Me / Rage Powder redirect in `getMoveTargets`.)
+        // A Ghost-queued Curse aimed at the user's own location (Ally Switch
+        // moved it there): `getTarget` returns null, `!target` makes it
+        // `randomNormal` too.
         let curse_at_ally = (target_side == side && target_slot != slot)
-            || (action.target_loc < 0 && action.target_loc != -(slot as i8 + 1));
+            || (action.target_loc < 0 && action.target_loc != -(slot as i8 + 1))
+            || (action.target_loc == -(slot as i8 + 1) && !action.curse_self);
         if choice.move_id == Choices::CURSE
             && curse_at_ally
             && (state.side(side).team_member(idx).has_type(&PokemonType::GHOST)
@@ -12094,6 +12112,15 @@ fn compute_hit_damage(
     spread: bool,
 ) -> (i16, bool) {
     // Only Electro Ball / Gyro Ball read the speeds (`dynamic_base_power`).
+    // Their `basePowerCallback` `getStat('spe')` calls run `ModifyBoost` (Gyro
+    // Ball: target first; Electro Ball: user first), before the crit roll.
+    if choice.move_id == Choices::GYROBALL {
+        modify_boost_ties(state, rng, target_side, target_slot);
+        modify_boost_ties(state, rng, side, slot);
+    } else if choice.move_id == Choices::ELECTROBALL {
+        modify_boost_ties(state, rng, side, slot);
+        modify_boost_ties(state, rng, target_side, target_slot);
+    }
     let speeds = if matches!(choice.move_id, Choices::ELECTROBALL | Choices::GYROBALL) {
         (stat_speed(state, side, slot), stat_speed(state, target_side, target_slot))
     } else {
@@ -14065,6 +14092,13 @@ fn apply_on_switch_abilities(
             None => return false,
         }
     };
+    // Frisk / Anticipation `onStart` only log (`-item`, `-ability`): no state
+    // change, no draw. Gluttony's `abilityState.gluttony` only moves the pinch
+    // berries' threshold (Petaya, Salac, Custap, ...), which champions makes
+    // nonstandard. PS data/abilities.ts frisk / anticipation / gluttony.
+    if matches!(ability, Abilities::FRISK | Abilities::ANTICIPATION | Abilities::GLUTTONY) {
+        return false;
+    }
     // Imposter `onSwitchIn`: transform into the foe across.
     if ability == Abilities::IMPOSTER {
         let foe = side.other();
@@ -18364,6 +18398,7 @@ pub fn run_battle(state: &mut DoublesState, rng: &mut Gen5Rng) -> BattleResult {
                             no_pp: false,
                             recharge: s.active()[slot].recharging,
                             orig_target: None,
+                            curse_self: false,
                         });
                     }
                 }

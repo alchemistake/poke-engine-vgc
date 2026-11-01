@@ -456,6 +456,7 @@ fn faint_pokemon(state: &mut DoublesState, side: Side, slot: usize) {
             match p.id {
                 N::CASTFORMSUNNY | N::CASTFORMRAINY | N::CASTFORMSNOWY => p.id = N::CASTFORM,
                 N::MORPEKOHANGRY => p.id = N::MORPEKO,
+                N::CHERRIMSUNSHINE => p.id = N::CHERRIM,
                 N::AEGISLASHBLADE => p.id = N::AEGISLASH,
                 _ => {}
             }
@@ -4783,7 +4784,9 @@ fn execute_move_body(
         && resolved.is_some()
     {
         try_add_volatile_ties(state, rng, side, slot);
-        state.side_mut(side).active_slot_mut(slot).rollout = Some((0, 0, 1, 1));
+        let a = state.side_mut(side).active_slot_mut(slot);
+        a.rollout = Some((0, 0, 1, 1));
+        a.rollout_ice = modified.move_id == Choices::ICEBALL;
     }
     // Choice item `onModifyMove`: `addVolatile('choicelock')` (kept if up).
     {
@@ -12731,6 +12734,38 @@ fn wonder_guard_blocks(state: &DoublesState, side: Side, slot: usize, idx: Pokem
 }
 
 /// Some active pokemon (with HP) has `ability`.
+/// Flower Gift `onAllyModifyAtk` / `onAllyModifySpD` for the pokemon in
+/// (`side`, `slot`): an unfainted Flower Gift Cherrim on its side (itself
+/// included) and its `effectiveWeather()` sun (Utility Umbrella hides it).
+/// Breakable: a Mold Breaker user's move ignores a holder other than itself
+/// (`suppressingAbility`). PS data/abilities.ts flowergift.
+fn flower_gift_boosts(
+    state: &DoublesState,
+    side: Side,
+    slot: usize,
+    attacker: &crate::state::Pokemon,
+    choice: &Choice,
+    user: (Side, usize),
+) -> bool {
+    use crate::pokemon::PokemonName as N;
+    let Some(p) = state.side(side).slot_pokemon(slot) else { return false };
+    let sun = if p.ability == Abilities::MEGASOL && user == (side, slot) {
+        true
+    } else {
+        matches!(effective_weather(state), Weather::SUN | Weather::HARSHSUN)
+            && !(p.item == Items::UTILITYUMBRELLA && !ignoring_item(state, p))
+    };
+    sun && [slot, 1 - slot].iter().any(|&sl| {
+        state.side(side).slot_pokemon(sl).is_some_and(|h| {
+            h.hp > 0
+                && h.ability == Abilities::FLOWERGIFT
+                && matches!(h.id, N::CHERRIM | N::CHERRIMSUNSHINE)
+                && ((side, sl) == user
+                    || !crate::engine::abilities::ignores_target_ability(attacker, choice, &Abilities::FLOWERGIFT))
+        })
+    })
+}
+
 fn any_active_ability(state: &DoublesState, ability: Abilities) -> bool {
     [Side::One, Side::Two]
         .iter()
@@ -14367,6 +14402,14 @@ fn compute_hit_damage(
             } else {
                 m
             };
+            // Flower Gift `onAllyModifyAtk` (priority 3): x1.5.
+            let m = if choice.category == MoveCategory::Physical
+                && flower_gift_boosts(state, side, slot, attacker, choice, (side, slot))
+            {
+                (m * 6144 + 2048) >> 12
+            } else {
+                m
+            };
             // Choice Band `onModifyAtk` / Choice Specs `onModifySpA` (priority 1): x1.5.
             let m = if (att_item == Items::CHOICEBAND && choice.category == MoveCategory::Physical)
                 || (att_item == Items::CHOICESPECS && choice.category == MoveCategory::Special)
@@ -14493,6 +14536,10 @@ fn compute_hit_damage(
                 && !crate::engine::abilities::ignores_target_ability(attacker, choice, &defender.ability)
             {
                 m = (m * 5325 + 2048) >> 12;
+            }
+            // Flower Gift `onAllyModifySpD` (priority 4): x1.5.
+            if !names_def && flower_gift_boosts(state, target_side, target_slot, attacker, choice, (side, slot)) {
+                m = (m * 6144 + 2048) >> 12;
             }
             // Eviolite `onModifyDef` / `SpD` (priority 2): x1.5 while it can still
             // evolve; Assault Vest `onModifySpD` (priority 1): x1.5.
@@ -16854,6 +16901,31 @@ fn update_forecast(state: &mut DoublesState) {
                 // PS `onWeatherChange` only runs on a weather change (or the
                 // holder's switch-in): the type is not re-set while the weather
                 // is unchanged, so a Soak / Magic Powder type sticks.
+                // Flower Gift `onWeatherChange`: an active, unfainted, untransformed
+                // Cherrim is Sunshine while its `effectiveWeather()` is sun (Utility
+                // Umbrella hides it), Cherrim otherwise. Both formes share base
+                // stats and types; `setSpecies` resets the cached speed.
+                // PS data/abilities.ts flowergift.
+                {
+                    use crate::pokemon::PokemonName as N;
+                    let p = state.side(sd).team_member(idx);
+                    if p.ability == Abilities::FLOWERGIFT
+                        && p.hp > 0
+                        && matches!(p.id, N::CHERRIM | N::CHERRIMSUNSHINE)
+                        && state.side(sd).transform_save[idx as usize].is_none()
+                    {
+                        let sun = matches!(weather, Weather::SUN | Weather::HARSHSUN)
+                            && !(p.item == Items::UTILITYUMBRELLA && !ignoring_item(state, p));
+                        let forme = if sun { N::CHERRIMSUNSHINE } else { N::CHERRIM };
+                        if p.id != forme {
+                            let s = state.side_mut(sd);
+                            s.team_member_mut(idx).id = forme;
+                            restore_stored_stats(s, idx);
+                            let raw = s.team_member(idx).speed;
+                            s.set_speed_cache(idx as usize, raw as _);
+                        }
+                    }
+                }
                 if state.side(sd).active()[sl].forecast_weather == Some(weather) {
                     continue;
                 }
@@ -18476,6 +18548,10 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
         if p.id == crate::pokemon::PokemonName::MORPEKOHANGRY {
             p.id = crate::pokemon::PokemonName::MORPEKO;
         }
+        // Cherrim-Sunshine (Flower Gift's `formeChange`) is not permanent either.
+        if p.id == crate::pokemon::PokemonName::CHERRIMSUNSHINE {
+            p.id = crate::pokemon::PokemonName::CHERRIM;
+        }
         // Aegislash-Blade is `battleOnly`: back to Shield forme (and its stats)
         // as it leaves. PS sim/pokemon.ts clearVolatile -> setSpecies(baseSpecies).
         if p.id == crate::pokemon::PokemonName::AEGISLASHBLADE {
@@ -19195,7 +19271,7 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
                 vols.push(("furycutter", NO_ORDER, 2, ResidualKind::VolatileEnd(side, slot, 9)));
             }
             if a.rollout.is_some() {
-                vols.push(("rollout", NO_ORDER, 2, ResidualKind::VolatileEnd(side, slot, 10)));
+                vols.push((if a.rollout_ice { "iceball" } else { "rollout" }, NO_ORDER, 2, ResidualKind::VolatileEnd(side, slot, 10)));
             }
             if a.bide.is_some() {
                 vols.push(("bide", NO_ORDER, 2, ResidualKind::VolatileEnd(side, slot, 11)));

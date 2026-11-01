@@ -500,6 +500,9 @@ pub fn ate_type_change(ability: Abilities, choice: &Choice) -> Option<PokemonTyp
         Abilities::REFRIGERATE => from_normal(PokemonType::ICE),
         Abilities::GALVANIZE => from_normal(PokemonType::ELECTRIC),
         Abilities::DRAGONIZE => from_normal(PokemonType::DRAGON),
+        // Normalize's own `noModifyType` also skips Hidden Power and Struggle
+        // (no type change, no x1.2). PS data/abilities.ts normalize.
+        Abilities::NORMALIZE if matches!(choice.move_id, Choices::HIDDENPOWER | Choices::STRUGGLE) => None,
         Abilities::NORMALIZE => Some(PokemonType::NORMAL),
         _ => None,
     }

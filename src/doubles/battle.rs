@@ -2831,6 +2831,15 @@ fn multi_attack_type(state: &DoublesState, user: &crate::state::Pokemon) -> Opti
     crate::doubles::item_data::memory_type(user.item)
 }
 
+/// Judgment `onModifyType`: the held Plate's type (none while the item is
+/// ignored). PS data/moves.ts judgment.
+fn judgment_type(state: &DoublesState, user: &crate::state::Pokemon) -> Option<PokemonType> {
+    if ignoring_item(state, user) {
+        return None;
+    }
+    crate::doubles::state::plate_type(user.item)
+}
+
 /// Techno Blast `onModifyType`: the held Drive's type (none while the item is
 /// ignored). PS data/moves.ts technoblast.
 fn techno_blast_type(state: &DoublesState, user: &crate::state::Pokemon) -> Option<PokemonType> {
@@ -2879,6 +2888,11 @@ fn redirect_move_type(state: &DoublesState, action: &Action) -> PokemonType {
         }
         Choices::TECHNOBLAST => {
             if let Some(t) = techno_blast_type(state, user) {
+                c.move_type = t;
+            }
+        }
+        Choices::JUDGMENT => {
+            if let Some(t) = judgment_type(state, user) {
                 c.move_type = t;
             }
         }
@@ -4851,7 +4865,13 @@ fn execute_move_body(
                                     }
                                 }
                             }
+                            // `spreadDamage` -> `runEvent('Damage')`: Focus Band /
+                            // Focus Sash `onDamage` on the move's damage.
+                            let dmg = focus_item_on_move_damage(state, rng, ts, tsl, dmg);
                             apply_damage(state, ts, tsl, dmg);
+                            // The release is a contact hit (`moveHit` ->
+                            // DamagingHit): Rough Skin, Iron Barbs, ...
+                            contact_abilities(state, rng, side, slot, idx, ts, tsl, &action.choice);
                         }
                     }
                     // `tryMoveHit` then `removeVolatile('bide')`, before `MoveAborted`.
@@ -5001,6 +5021,11 @@ fn execute_move_body(
         }
         Choices::TECHNOBLAST => {
             if let Some(t) = techno_blast_type(state, state.side(side).team_member(idx)) {
+                modified.move_type = t;
+            }
+        }
+        Choices::JUDGMENT => {
+            if let Some(t) = judgment_type(state, state.side(side).team_member(idx)) {
                 modified.move_type = t;
             }
         }
@@ -8166,6 +8191,15 @@ fn execute_move_body(
                         }
                     }
                 }
+                // Flame Burst `onAfterSubDamage`: the splash still hits the
+                // target's adjacent ally. PS data/moves.ts flameburst.
+                if choice.move_id == Choices::FLAMEBURST {
+                    let al = 1 - target_slot;
+                    if let Some(p) = state.side(target_side).slot_pokemon(al).filter(|p| p.hp > 0) {
+                        let d = (p.maxhp / 16).max(1);
+                        apply_indirect_damage(state, rng, target_side, al, d);
+                    }
+                }
                 // Glaive Rush `self.volatileStatus` applies on a Substitute hit too
                 // (the target is `null`, not `false`, in PS selfDrops).
                 if choice.move_id == Choices::GLAIVERUSH && ti == 0 && state.side(side).team_member(idx).hp > 0 {
@@ -10645,8 +10679,10 @@ fn execute_move_body(
             if let Some(tidx) = state.side(target_side).active()[target_slot].pokemon_index {
                 let cur = state.side(target_side).team_member(tidx).types;
                 // `getTypes()` includes an `addedType`: Water + Ghost is not "Water".
-                if cur == (new_type, PokemonType::TYPELESS)
-                    && state.side(target_side).active()[target_slot].added_type == PokemonType::TYPELESS
+                // `setType` refuses Arceus / Silvally (PS sim/pokemon.ts setType).
+                if set_type_blocked(state, target_side, tidx)
+                    || (cur == (new_type, PokemonType::TYPELESS)
+                        && state.side(target_side).active()[target_slot].added_type == PokemonType::TYPELESS)
                 {
                     move_failed = true;
                 } else {
@@ -11371,6 +11407,12 @@ fn execute_move_body(
             } else {
                 crate::state::StateTrickRoom { active: true, turns_remaining: 5 }
             };
+            // Room Service `onAnyPseudoWeatherChange`.
+            for sd in [Side::One, Side::Two] {
+                for sl in 0..2 {
+                    room_service(state, rng, sd, sl);
+                }
+            }
         }
         if choice.move_id == Choices::GRAVITY {
             // No `onFieldRestart`: using it again fails.
@@ -12380,6 +12422,30 @@ fn execute_move_body(
                     && !set_type_blocked(state, ts, ti)
                 {
                     move_set_type(state, ts, tsl, ti, (mt, PokemonType::TYPELESS));
+                }
+            }
+            // Kee (physical, +1 Def) / Maranga (special, +1 SpD) Berry
+            // `onAfterMoveSecondary`: eaten once, after every hit (Beat Up).
+            // PS data/items.ts keeberry / marangaberry.
+            {
+                let t = state.side(ts).team_member(ti);
+                let it = t.item;
+                if t.hp > 0
+                    && matches!(it, Items::KEEBERRY | Items::MARANGABERRY)
+                    && !ignoring_item(state, t)
+                    && choice.category == if it == Items::KEEBERRY { MoveCategory::Physical } else { MoveCategory::Special }
+                    && !(choice.move_id == Choices::PRESENT && choice.heal.is_some())
+                    && !unnerved(state, ts)
+                {
+                    let n = if t.ability == Abilities::RIPEN { 2 } else { 1 };
+                    use_item(state, rng, ts, tsl, ti, true);
+                    let b = if it == Items::KEEBERRY {
+                        StatBoosts { defense: n, ..Default::default() }
+                    } else {
+                        StatBoosts { special_defense: n, ..Default::default() }
+                    };
+                    apply_boosts(state, rng, ts, ti, &b, false);
+                    cheek_pouch(state, ts, tsl, ti);
                 }
             }
             let t = state.side(ts).team_member(ti);
@@ -14874,6 +14940,13 @@ fn blunder_policy(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot:
     apply_boosts(state, rng, side, idx, &b, false);
 }
 
+/// The attacker holds Protective Pads (not ignored): its moves make no contact
+/// for the target's contact effects.
+fn attacker_has_pads(state: &DoublesState, side: Side, idx: PokemonIndex) -> bool {
+    let p = state.side(side).team_member(idx);
+    p.item == Items::PROTECTIVEPADS && !ignoring_item(state, p)
+}
+
 /// A `miss` event: the user's move missed the pokemon in `ts` / `tsl`.
 fn miss_event(state: &mut DoublesState, side: Side, idx: PokemonIndex, ts: Side, tsl: usize, m: Choices) {
     emit(state, |st| {
@@ -15638,7 +15711,7 @@ fn compute_hit_damage(
 /// The defender's contact abilities (shared table
 /// `mechanics::contact_ability`). The defender may already be at 0 HP: PS
 /// runs DamagingHit before faints are resolved.
-// TODO(PS parity): Protective Pads, Long Reach.
+// TODO(PS parity): Long Reach.
 #[allow(clippy::too_many_arguments)]
 fn contact_abilities(
     state: &mut DoublesState,
@@ -15657,6 +15730,11 @@ fn contact_abilities(
     // Long Reach: the attacker's contact moves are non-contact (PS
     // `onModifyMove` deletes the `contact` flag).
     if state.side(side).team_member(idx).ability == Abilities::LONGREACH {
+        return;
+    }
+    // Protective Pads: `checkMoveMakesContact` is false for the holder's moves
+    // (PS sim/battle.ts checkMoveMakesContact).
+    if attacker_has_pads(state, side, idx) {
         return;
     }
     let def_idx = state.side(target_side).active()[target_slot].pokemon_index.or_else(|| {
@@ -17732,8 +17810,10 @@ fn apply_on_switch_abilities(
     if ability == Abilities::NEUTRALIZINGGAS {
         for sd in [Side::One, Side::Two] {
             for sl in 0..2 {
-                let Some(p) = state.side(sd).slot_pokemon(sl) else { continue };
-                if p.ability == Abilities::ILLUSION && p.item != Items::ABILITYSHIELD {
+                let Some(pi) = state.side(sd).active()[sl].pokemon_index else { continue };
+                let p = state.side(sd).team_member(pi);
+                // `gas_sync` may already have blanked it: read the real ability.
+                if real_ability(state, sd, pi) == Abilities::ILLUSION && p.item != Items::ABILITYSHIELD {
                     state.side_mut(sd).slot_scratch_mut(sl).illusion_broken = true;
                 }
             }
@@ -17828,6 +17908,11 @@ fn apply_on_switch_abilities(
                 refresh_mimicry_slot(state, side, slot);
             }
         }
+    }
+    // A traced Slow Start starts its counter too (its `onStart`).
+    if ability == Abilities::SLOWSTART {
+        state.side_mut(side).active_slot_mut(slot).slow_start = 5;
+        return false;
     }
     // Supreme Overlord `onStart` (also when Traced): `fallen = min(side.totalFainted, 5)`.
     if ability == Abilities::SUPREMEOVERLORD {
@@ -18150,11 +18235,15 @@ fn update_forecast(state: &mut DoublesState) {
                 // Eiscue-Noice re-forms Eiscue when the weather becomes hail or snow
                 // (or it switches in under it). Shares the per-slot weather cache with
                 // Forecast so it only fires on a change. PS data/abilities.ts iceface.
+                // The cache holds the raw weather: Cloud Nine / Air Lock ending
+                // (`sourceEffect.suppressWeather`) changes only the effective one
+                // and does not re-form it.
                 if state.side(sd).team_member(idx).ability == Abilities::ICEFACE {
-                    if state.side(sd).active()[sl].forecast_weather == Some(weather) {
+                    let raw = state.weather.weather_type;
+                    if state.side(sd).active()[sl].forecast_weather == Some(raw) {
                         continue;
                     }
-                    state.side_mut(sd).slot_scratch_mut(sl).forecast_weather = Some(weather);
+                    state.side_mut(sd).slot_scratch_mut(sl).forecast_weather = Some(raw);
                     let p = state.side(sd).team_member(idx);
                     if matches!(weather, Weather::HAIL | Weather::SNOW)
                         && p.hp > 0
@@ -18488,24 +18577,6 @@ fn damaging_hit_items(
                 apply_indirect_damage(state, rng, side, slot, d);
             }
         }
-        // Kee (physical, +1 Def) / Maranga (special, +1 SpD) Berry.
-        Items::KEEBERRY | Items::MARANGABERRY
-            if (side, slot) != (ts, tslot)
-                && (choice.category == if t.item == Items::KEEBERRY { MoveCategory::Physical } else { MoveCategory::Special })
-                && !unnerved(state, ts)
-                && state.side(ts).team_member(tidx).hp > 0 =>
-        {
-            let it = state.side(ts).team_member(tidx).item;
-            let n = if state.side(ts).team_member(tidx).ability == Abilities::RIPEN { 2 } else { 1 };
-            use_item(state, rng, ts, tslot, tidx, true);
-            let b = if it == Items::KEEBERRY {
-                StatBoosts { defense: n, ..Default::default() }
-            } else {
-                StatBoosts { special_defense: n, ..Default::default() }
-            };
-            apply_boosts(state, rng, ts, tidx, &b, false);
-            cheek_pouch(state, ts, tslot, tidx);
-        }
         // Enigma Berry `onHit`: a super-effective hit, TryHeal, heal 1/4.
         Items::ENIGMABERRY
             if (side, slot) != (ts, tslot)
@@ -18538,7 +18609,8 @@ fn damaging_hit_items(
         Items::ROCKYHELMET
             if choice.flags.contact
                 && (side, slot) != (ts, tslot)
-                && state.side(side).team_member(idx).ability != Abilities::LONGREACH =>
+                && state.side(side).team_member(idx).ability != Abilities::LONGREACH
+                && !attacker_has_pads(state, side, idx) =>
         {
             let a = state.side(side).team_member(idx);
             if a.hp > 0
@@ -19110,8 +19182,25 @@ fn try_gem(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize,
 
 /// Electric / Grassy / Misty / Psychic Seed (`onStart` / `onTerrainChange`):
 /// used on its terrain for +1 Def (Electric, Grassy) or +1 SpD (Misty, Psychic).
+/// Room Service `onStart` / `onAnyPseudoWeatherChange`: under Trick Room the
+/// holder uses it for -1 Spe. PS data/items.ts roomservice.
+fn room_service(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize) {
+    if !state.trick_room.active {
+        return;
+    }
+    let Some(idx) = state.side(side).active()[slot].pokemon_index else { return };
+    let p = state.side(side).team_member(idx);
+    if p.hp <= 0 || p.item != Items::ROOMSERVICE || ignoring_item(state, p) {
+        return;
+    }
+    use_item(state, rng, side, slot, idx, false);
+    apply_boosts(state, rng, side, idx, &StatBoosts { speed: -1, ..Default::default() }, false);
+}
+
 fn terrain_seed(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize) {
     use crate::engine::state::Terrain;
+    // Room Service `onStart` runs at the same switch-in point.
+    room_service(state, rng, side, slot);
     let Some(idx) = state.side(side).active()[slot].pokemon_index else { return };
     // Only the item's `onStart` and `onTerrainChange` check: a seed that sat out
     // a terrain under Magic Room does not fire when the room ends.

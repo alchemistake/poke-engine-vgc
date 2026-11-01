@@ -1626,7 +1626,7 @@ fn build_pokemon(m: &TeamMember) -> Pokemon {
 }
 
 /// Plates' `onPlate` (the type Multitype gives Arceus). PS data/items.ts.
-fn plate_type(item: Items) -> Option<PokemonType> {
+pub(crate) fn plate_type(item: Items) -> Option<PokemonType> {
     Some(match item {
         Items::DRACOPLATE => PokemonType::DRAGON,
         Items::DREADPLATE => PokemonType::DARK,

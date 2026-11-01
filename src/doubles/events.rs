@@ -64,7 +64,7 @@ pub fn pokemon_effects(state: &DoublesState, side: Side, slot: usize) -> Vec<(St
 
 /// The volatile and slot conditions `visit_pokemon_effects` reports, in
 /// report order (`cond_mask`).
-const CONDS: [(&str, HandlerKind); 66] = [
+const CONDS: [(&str, HandlerKind); 67] = [
     ("confusion", HandlerKind::Volatile),
     ("flinch", HandlerKind::Volatile),
     ("mustrecharge", HandlerKind::Volatile),
@@ -129,9 +129,14 @@ const CONDS: [(&str, HandlerKind); 66] = [
     ("disable", HandlerKind::Volatile),
     ("electrify", HandlerKind::Volatile),
     ("powertrick", HandlerKind::Volatile),
+    ("choicelock", HandlerKind::Volatile),
     ("futuremove", HandlerKind::Slot),
     ("wish", HandlerKind::Slot),
 ];
+
+/// `CONDS` bits of the slot conditions (after every volatile).
+const FUTURE_BIT: u32 = CONDS.len() as u32 - 2;
+const WISH_BIT: u32 = CONDS.len() as u32 - 1;
 
 
 /// The move a slot is charging (a two-turn move not aborted).
@@ -141,12 +146,12 @@ fn charging(a: &crate::doubles::state::ActiveSlot) -> Option<Choices> {
 
 /// The conditions of `CONDS` that are up, as bits (bit i = `CONDS[i]`).
 fn cond_mask(s: &crate::doubles::state::DoublesSide, slot: usize) -> u128 {
-    let mut m = s.cached_conds(slot, vol_mask) as u128;
+    let mut m = s.cached_conds(slot, vol_mask);
     if s.future_move[slot].is_some() {
-        m |= 1 << 64;
+        m |= 1 << FUTURE_BIT;
     }
     if s.wish[slot].is_some() {
-        m |= 1 << 65;
+        m |= 1 << WISH_BIT;
     }
     m
 }
@@ -171,12 +176,16 @@ pub(crate) fn volatile_ids(a: &crate::doubles::state::ActiveSlot) -> Vec<String>
     v
 }
 
-/// The volatile conditions of `CONDS` (bits 0-63) that are up in a slot.
-pub(crate) fn vol_mask(a: &crate::doubles::state::ActiveSlot) -> u64 {
+/// The volatile conditions of `CONDS` (every bit below `FUTURE_BIT`) that are
+/// up in a slot.
+pub(crate) fn vol_mask(a: &crate::doubles::state::ActiveSlot) -> u128 {
     if a.pokemon_index.is_none() {
         return 0;
     }
-    let mut m = 0u64;
+    let mut m = 0u128;
+    if a.choice_lock.is_some() {
+        m |= 1 << 64;
+    }
     if a.confusion > 0 {
         m |= 1 << 0;
     }

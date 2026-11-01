@@ -62,6 +62,10 @@ pub struct ActiveSlot {
     /// Metronome (item) volatile: the last move and its consecutive uses.
     pub metronome_last: Option<Choices>,
     pub metronome_count: u8,
+    /// The Metronome item's `metronome` volatile is up (item `onStart`).
+    pub metronome_vol: bool,
+    /// Choice item `choicelock` volatile: the locked move.
+    pub choice_lock: Option<Choices>,
     /// PS `moveThisTurnResult = null` (a NOT_FAIL hit: Protect), this / last turn.
     pub move_result_null: bool,
     pub move_null_last_turn: bool,
@@ -185,7 +189,7 @@ pub struct ActiveSlot {
     pub vol_order: Vec<&'static str>,
     /// The volatile conditions (`events::vol_mask`) `vol_order` was last
     /// synced with (`sync_vol_order`); `u64::MAX` forces a sync.
-    pub vol_synced: u64,
+    pub vol_synced: u128,
     /// `flashfire` volatile: Fire moves x1.5 (ModifyAtk / ModifySpA).
     pub flash_fire: bool,
     /// `charge` volatile: the next Electric move has doubled power.
@@ -344,6 +348,8 @@ impl ActiveSlot {
             parental_bond: false,
             metronome_last: None,
             metronome_count: 0,
+            metronome_vol: false,
+            choice_lock: None,
             move_result_null: false,
             move_null_last_turn: false,
             fling_item: Items::NONE,
@@ -496,7 +502,7 @@ pub struct DoublesSide {
     slots: [ActiveSlot; 2],
     /// Per slot: the volatile conditions (`events::vol_mask`) as of the last
     /// read; cleared by `active_mut` / `active_slot_mut`.
-    cond_cache: [std::cell::Cell<Option<u64>>; 2],
+    cond_cache: [std::cell::Cell<Option<u128>>; 2],
     /// Per slot: the event-handler effect bits of the occupant
     /// (`events::slot_fx`), valid while the key fields still match. Cleared
     /// with `cond_cache`.
@@ -627,7 +633,7 @@ impl DoublesSide {
 
     /// `compute(slot)`, cached until the slot is next borrowed mutably.
     #[inline]
-    pub fn cached_conds(&self, slot: usize, compute: impl Fn(&ActiveSlot) -> u64) -> u64 {
+    pub fn cached_conds(&self, slot: usize, compute: impl Fn(&ActiveSlot) -> u128) -> u128 {
         if let Some(v) = self.cond_cache[slot].get() {
             debug_assert_eq!(v, compute(&self.slots[slot]), "stale cond_cache");
             return v;
@@ -1833,7 +1839,13 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
                     active_slot,
                     boosts,
                     item: ITEM_NAMES[p.item as usize],
-                    ability: ABILITY_NAMES[p.ability as usize],
+                    // Gastro Acid keeps the ability id (the engine stores NONE).
+                    ability: match active_slot {
+                        Some(sl) if s.active()[sl].gastro_acid && p.ability == Abilities::NONE => {
+                            ABILITY_NAMES[s.active()[sl].gastro_ability as usize]
+                        }
+                        _ => ABILITY_NAMES[p.ability as usize],
+                    },
                     pp: [&p.moves.m0, &p.moves.m1, &p.moves.m2, &p.moves.m3]
                         .iter()
                         .filter(|m| m.id != Choices::NONE)
@@ -1859,11 +1871,11 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
                             if a.twoturn_fired && a.charging.is_none() && !v.iter().any(|x| x == "twoturnmove") {
                                 v.push("twoturnmove".to_string());
                             }
-                            if p.item == Items::METRONOME {
-                                v.push("metronome".to_string());
+                            if a.gem {
+                                v.push("gem".to_string());
                             }
-                            if p.item == Items::CHOICESCARF && a.last_move.is_some() {
-                                v.push("choicelock".to_string());
+                            if a.metronome_vol {
+                                v.push("metronome".to_string());
                             }
                             v.sort();
                             v

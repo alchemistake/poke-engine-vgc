@@ -160,4 +160,5 @@ console.error = () => {};
 // --verbose: no fast path, so the battle is played (and traced) once.
 process.argv = [process.argv[0], 'fuzz.js', '--seed', String(SEED), '--count', '1', '--verbose', '--workdir',
   path.join(__dirname, "work", "trace")];
-require('./fuzz.js');
+// Loaded as a module, fuzz.js does not run its CLI: call it.
+require('./fuzz.js').main();

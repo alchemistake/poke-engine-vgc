@@ -1704,6 +1704,7 @@ function main() {
 if (require.main === module && !PARALLEL_PARENT) main();
 
 module.exports = {
+  main,
   ps,
   makeTest,
   stepPSBattle,

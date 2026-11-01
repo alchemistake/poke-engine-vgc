@@ -20,7 +20,7 @@ use std::cmp;
 use super::state::PokemonVolatileStatus;
 
 define_enum_with_from_str! {
-    #[repr(u8)]
+    #[repr(u16)]
     #[derive(Debug, PartialEq, Clone, Copy)]
     Items {
         NONE,
@@ -279,6 +279,28 @@ define_enum_with_from_str! {
         TATSUGIRINITE,
         ZERAORITE,
         ZYGARDITE,
+        BIGROOT,
+        BINDINGBAND,
+        BRIGHTPOWDER,
+        DAMPROCK,
+        EJECTBUTTON,
+        FOCUSBAND,
+        HEATROCK,
+        ICYROCK,
+        KINGSROCK,
+        LEEK,
+        LEPPABERRY,
+        LIGHTCLAY,
+        MENTALHERB,
+        METRONOME,
+        ORANBERRY,
+        PERSIMBERRY,
+        QUICKCLAW,
+        REDCARD,
+        SCOPELENS,
+        SMOOTHROCK,
+        TERRAINEXTENDER,
+        ZOOMLENS,
     },
     default = UNKNOWNITEM
 }

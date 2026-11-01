@@ -743,6 +743,8 @@ struct EventTable {
 struct Tables {
     /// Bit of each ability (indexed by `Abilities as usize`), or `NO_BIT`.
     ability_bit: Vec<u16>,
+    /// Bit of each held item (indexed by `Items as usize`), or `NO_BIT`.
+    item_bit: Vec<u16>,
     /// Effect bit of each `CONDS` entry, or `NO_BIT`.
     cond_fx: [u16; CONDS.len()],
     /// Effect bit of each `STATUS_IDS` entry, or `NO_BIT`.
@@ -773,6 +775,7 @@ fn build_tables() -> Tables {
     // event table. Effects without one never join a sort.
     let mut fx: std::collections::HashMap<(u8, &'static str), u16> = std::collections::HashMap::new();
     let mut ability_bit: Vec<u16> = Vec::new();
+    let mut item_bit: Vec<u16> = Vec::new();
     let mut events: Vec<EventTable> = Vec::new();
     for ev in Event::ALL {
         let name = ev.name();
@@ -798,6 +801,15 @@ fn build_tables() -> Tables {
                             ability_bit.resize(i + 1, NO_BIT);
                         }
                         ability_bit[i] = bit;
+                    }
+                }
+                if h.kind == HandlerKind::Item {
+                    if let Ok(it) = crate::engine::items::Items::from_str(h.id) {
+                        let i = it as usize;
+                        if item_bit.len() <= i {
+                            item_bit.resize(i + 1, NO_BIT);
+                        }
+                        item_bit[i] = bit;
                     }
                 }
                 poke_mask[pi] |= FxMask::bit(bit);
@@ -902,7 +914,7 @@ fn build_tables() -> Tables {
             }
         }
     }
-    Tables { ability_bit, cond_fx, status_fx, events }
+    Tables { ability_bit, item_bit, cond_fx, status_fx, events }
 }
 
 /// The effects of the pokemon in a slot that have a handler somewhere, as
@@ -932,6 +944,7 @@ fn slot_effects(t: &Tables, state: &DoublesState, side: Side, slot: usize, conds
         add(t.status_fx[i]);
     }
     add(t.ability_bit.get(real_ability(state, side, idx) as usize).copied().unwrap_or(NO_BIT));
+    add(t.item_bit.get(s.team_member(idx).item as usize).copied().unwrap_or(NO_BIT));
     if conds != 0 {
         let mut m = cond_mask(s, slot) & conds;
         while m != 0 {
@@ -1020,21 +1033,23 @@ fn slot_fx(t: &Tables, state: &DoublesState, side: Side, slot: usize) -> FxMask 
     let Some(idx) = s.active()[slot].pokemon_index else { return FxMask::ZERO };
     let status = s.team_member(idx).status;
     let ability = real_ability(state, side, idx);
+    let item = s.team_member(idx).item;
     let extra = s.future_move[slot].is_some() as u8 | (s.wish[slot].is_some() as u8) << 1;
     if let Some(c) = s.fx_cache[slot].get() {
-        if c.status == status && c.ability == ability && c.extra == extra {
+        if c.status == status && c.ability == ability && c.item == item && c.extra == extra {
             return c.fx;
         }
     }
     let bit = |b: u16| if b == NO_BIT { FxMask::ZERO } else { FxMask::bit(b) };
     let mut fx = status_index(status).map_or(FxMask::ZERO, |i| bit(t.status_fx[i]));
     fx |= bit(t.ability_bit.get(ability as usize).copied().unwrap_or(NO_BIT));
+    fx |= bit(t.item_bit.get(item as usize).copied().unwrap_or(NO_BIT));
     let mut m = cond_mask(s, slot);
     while m != 0 {
         fx |= bit(t.cond_fx[m.trailing_zeros() as usize]);
         m &= m - 1;
     }
-    s.fx_cache[slot].set(Some(crate::doubles::state::FxCache { status, ability, extra, fx }));
+    s.fx_cache[slot].set(Some(crate::doubles::state::FxCache { status, ability, item, extra, fx }));
     fx
 }
 

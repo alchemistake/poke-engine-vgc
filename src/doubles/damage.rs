@@ -199,6 +199,8 @@ pub fn type_mod(attacking_type: &PokemonType, defender: &Pokemon) -> Option<i32>
 pub struct DamageOutcome {
     pub damage: i16,
     pub crit: bool,
+    /// The defender ate its resist berry (`onSourceModifyDamage`).
+    pub berry: bool,
 }
 
 /// Context for a single damage calculation: effective (boosted) stats and the
@@ -264,6 +266,13 @@ pub struct DamageCtx {
     /// Effective base power after multiplier effects (Helping Hand);
     /// 0.0 = use `choice.base_power`.
     pub base_power_override: f32,
+    /// Attacker's Life Orb (`onModifyDamage` x5324/4096).
+    pub life_orb: bool,
+    /// Attacker's Expert Belt (`onModifyDamage` x4915/4096 when super effective).
+    pub expert_belt: bool,
+    /// Defender's resist berry type (Chilan: Normal at any effectiveness), and
+    /// whether Ripen doubles it. `None` when it cannot be eaten (Substitute).
+    pub resist_berry: Option<(PokemonType, bool)>,
 }
 
 /// Compute the damage a single-target (or one hit of a spread) move deals to
@@ -309,7 +318,7 @@ pub fn calculate_damage_with(
     on_event: &mut dyn FnMut(DamageEvent, &mut Gen5Rng) -> bool,
 ) -> Option<DamageOutcome> {
     if choice.category == MoveCategory::Status || choice.category == MoveCategory::Switch {
-        return Some(DamageOutcome { damage: 0, crit: false });
+        return Some(DamageOutcome { damage: 0, crit: false, berry: false });
     }
     let base_power = if ctx.base_power_override > 0.0 {
         ctx.base_power_override
@@ -317,7 +326,7 @@ pub fn calculate_damage_with(
         choice.base_power
     };
     if base_power == 0.0 {
-        return Some(DamageOutcome { damage: 0, crit: false });
+        return Some(DamageOutcome { damage: 0, crit: false, berry: false });
     }
 
     // Type immunity is checked in getDamage BEFORE any draws.
@@ -505,6 +514,21 @@ pub fn calculate_damage_with(
     if ctx.friend_guard {
         chain_in(3072);
     }
+    // Held items (PS data/items.ts, subOrder 8: after the abilities).
+    if ctx.life_orb {
+        chain_in(5324);
+    }
+    if ctx.expert_belt && tm > 0 {
+        chain_in(4915);
+    }
+    // Resist berries `onSourceModifyDamage`: eaten, x0.5 (x0.25 with Ripen).
+    let mut berry = false;
+    if let Some((t, ripen)) = ctx.resist_berry {
+        if choice.move_type == t && (t == PokemonType::NORMAL || tm > 0) {
+            berry = true;
+            chain_in(if ripen { 1024 } else { 2048 });
+        }
+    }
     if chain != 4096 {
         base = (base * chain + 2047) / 4096;
     }
@@ -526,6 +550,7 @@ pub fn calculate_damage_with(
     Some(DamageOutcome {
         damage: result as i16,
         crit,
+        berry,
     })
 }
 

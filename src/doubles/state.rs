@@ -41,6 +41,8 @@ pub struct ActiveSlot {
     pub last_used_move: LastUsedMove,
     pub damage_dealt: DamageDealt,
     pub force_switch: bool,
+    /// Switching out from Eject Button (PS `switchFlag === true`).
+    pub eject_switch: bool,
     pub force_trapped: bool,
     pub slow_uturn_move: bool,
     pub baton_passing: bool,
@@ -51,6 +53,8 @@ pub struct ActiveSlot {
     /// PS `move.hit` (1-based) of the current hit of a multi-hit move.
     pub hit_number: u8,
     pub shed_tailing: bool,
+    /// Unburden's volatile: the holder lost its item (Speed x2).
+    pub unburden: bool,
     /// Revival Blessing hit: the slot's switch answer revives a fainted
     /// party member instead of switching (PS `revivalblessing` slot condition).
     pub reviving: bool,
@@ -63,9 +67,9 @@ pub struct ActiveSlot {
     /// charged and how many charge turns remain before it fires. Mirrors
     /// pokemon-showdown's `twoturnmove` / per-move volatile pair.
     pub charging: Option<(crate::choices::Choices, u8)>,
-    /// Foe slot chosen on the charge turn; the locked follow-up turn keeps it
+    /// Signed PS target location chosen on the charge turn; the locked follow-up turn keeps it
     /// (PS `twoturnmove.onStart` stores `targetLoc` on the move volatile).
-    pub charge_target: usize,
+    pub charge_target_loc: i8,
     /// Salt Cure volatile: residual damage each turn (champions: 1/16 max
     /// HP, 1/8 for Water / Steel).
     pub salt_cure: bool,
@@ -315,6 +319,7 @@ impl ActiveSlot {
             last_used_move: LastUsedMove::None,
             damage_dealt: DamageDealt::default(),
             force_switch: false,
+            eject_switch: false,
             force_trapped: false,
             slow_uturn_move: false,
             baton_passing: false,
@@ -322,11 +327,12 @@ impl ActiveSlot {
             power_trick: false,
             hit_number: 1,
             shed_tailing: false,
+            unburden: false,
             reviving: false,
             flinched: false,
             recharging: false,
             charging: None,
-            charge_target: 0,
+            charge_target_loc: 0,
             salt_cure: false,
             stockpile: 0,
             confusion: 0,
@@ -447,6 +453,7 @@ pub struct TeamBoosts {
 pub(crate) struct FxCache {
     pub status: crate::state::PokemonStatus,
     pub ability: crate::engine::abilities::Abilities,
+    pub item: crate::engine::items::Items,
     pub extra: u8,
     pub fx: crate::doubles::events::FxMask,
 }
@@ -502,6 +509,12 @@ pub struct DoublesSide {
     /// Supersweet Syrup already triggered (PS `syrupTriggered`, once per
     /// battle per pokemon).
     pub syrup_triggered: [bool; 6],
+    /// A Mega Evolution was used (PS: `canMegaEvo = false` for the whole side).
+    pub mega_used: bool,
+    /// PS `pokemon.lastItem` per team member (Recycle, Harvest).
+    pub last_item: [Items; 6],
+    /// PS `pokemon.ateBerry` per team member (Belch).
+    pub ate_berry: [bool; 6],
     /// Healing Wish / Lunar Dance slot conditions per active slot (PS
     /// `slotCondition: 'healingwish' | 'lunardance'`): they wait for the next
     /// pokemon switched into that slot.
@@ -686,6 +699,9 @@ pub struct MoveScratch {
     /// computes its damage (set only then): the last target of the previous
     /// per-target loop, not the substitute holder. Unaware reads it.
     pub sub_active_target: std::cell::Cell<Option<(Side, usize)>>,
+    /// The target that ate its resist berry in the last damage calculation
+    /// (PS `onSourceModifyDamage` -> `eatItem`); consumed by the caller.
+    pub berry_eaten: std::cell::Cell<Option<(Side, usize)>>,
     /// The running move stopped in its BeforeMove handlers (PS runMove
     /// `!willTryMove`), so `runEvent('MoveAborted')` follows.
     pub before_move_aborted: std::cell::Cell<bool>,
@@ -956,6 +972,9 @@ pub enum FuzzAction {
         target: i8,
         #[serde(default)]
         struggle: bool,
+        /// Mega Evolve before moving (PS `move N mega`).
+        #[serde(default)]
+        mega: bool,
     },
     /// Do nothing (empty active slot with no replacement available).
     Pass,
@@ -1100,7 +1119,7 @@ static NATURE_IDS: std::sync::LazyLock<FxMap<&'static str, PokemonNature>> =
 static ABILITY_IDS: std::sync::LazyLock<FxMap<&'static str, Abilities>> =
     std::sync::LazyLock::new(|| enum_ids(i16::MAX as usize, |i| Abilities::from(i as i16)));
 static ITEM_IDS: std::sync::LazyLock<FxMap<&'static str, Items>> =
-    std::sync::LazyLock::new(|| enum_ids(256, |i| Items::from(i as u8)));
+    std::sync::LazyLock::new(|| enum_ids(1024, |i| Items::from(i as u16)));
 
 /// Lowercase id of each enum value, indexed by discriminant ("" for NONE):
 /// the fuzz snapshot's species / item / ability ids, without allocating.
@@ -1121,7 +1140,7 @@ static SPECIES_NAMES: std::sync::LazyLock<Vec<&'static str>> =
 static ABILITY_NAMES: std::sync::LazyLock<Vec<&'static str>> =
     std::sync::LazyLock::new(|| enum_names(i16::MAX as usize, |i| Abilities::from(i as i16)));
 static ITEM_NAMES: std::sync::LazyLock<Vec<&'static str>> =
-    std::sync::LazyLock::new(|| enum_names(256, |i| Items::from(i as u8)));
+    std::sync::LazyLock::new(|| enum_names(1024, |i| Items::from(i as u16)));
 
 fn parse_nature(s: &str) -> PokemonNature {
     lookup_id(&NATURE_IDS, s).unwrap_or(PokemonNature::SERIOUS)
@@ -1386,6 +1405,9 @@ impl DoublesState {
             future_move: [None, None],
             sc_order: Vec::new(),
             syrup_triggered: [false; 6],
+            mega_used: false,
+            last_item: [Items::NONE; 6],
+            ate_berry: [false; 6],
             healing_wish_slot: [false; 2],
             moves_used: [[false; 4]; 6],
             damaged_by: std::array::from_fn(|_| Vec::new()),
@@ -1411,6 +1433,9 @@ impl DoublesState {
             future_move: [None, None],
             sc_order: Vec::new(),
             syrup_triggered: [false; 6],
+            mega_used: false,
+            last_item: [Items::NONE; 6],
+            ate_berry: [false; 6],
             healing_wish_slot: [false; 2],
             moves_used: [[false; 4]; 6],
             damaged_by: std::array::from_fn(|_| Vec::new()),
@@ -1769,7 +1794,22 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
                         .map(|m| m.pp)
                         .collect(),
                     volatiles: active_slot
-                        .map(|sl| crate::doubles::events::volatile_ids(&s.active()[sl]))
+                        .map(|sl| {
+                            let a = &s.active()[sl];
+                            let mut v = crate::doubles::events::volatile_ids(a);
+                            // Volatiles kept outside `CONDS`.
+                            if a.unburden {
+                                v.push("unburden".to_string());
+                            }
+                            if p.item == Items::METRONOME {
+                                v.push("metronome".to_string());
+                            }
+                            if p.item == Items::CHOICESCARF && a.last_move.is_some() {
+                                v.push("choicelock".to_string());
+                            }
+                            v.sort();
+                            v
+                        })
                         .unwrap_or_default(),
                 }
             })

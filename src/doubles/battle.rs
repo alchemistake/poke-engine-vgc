@@ -8038,6 +8038,16 @@ fn execute_move_body(
                 if choice.move_id == Choices::GLAIVERUSH && ti == 0 && state.side(side).team_member(idx).hp > 0 {
                     state.side_mut(side).active_slot_mut(slot).glaive_rush = true;
                 }
+                // Rage `self.volatileStatus` applies on a Substitute hit too
+                // (PS spreadMoveHit `selfDrops`). PS data/moves.ts rage.
+                if choice.move_id == Choices::RAGE
+                    && ti == 0
+                    && state.side(side).team_member(idx).hp > 0
+                    && !state.side(side).active()[slot].rage
+                {
+                    try_add_volatile_ties(state, rng, side, slot);
+                    state.side_mut(side).active_slot_mut(slot).rage = true;
+                }
                 for k in 0..rolls {
                     let r = rng.label("secondary").random(100) as f32;
                     // A secondary with `self` (Flame Charge's +1 Speed) still

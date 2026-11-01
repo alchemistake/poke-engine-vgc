@@ -1884,12 +1884,10 @@ pub fn run_fuzz_turn(
         // each is an action of its own and ends with `eachEvent('Update')`.
         for a in actions.iter() {
             // A recharging pokemon's action is `recharge` (no `beforeTurnMove`).
-            if matches!(a.choice.move_id, Choices::COUNTER | Choices::MIRRORCOAT | Choices::PURSUIT)
+            if matches!(a.choice.move_id, Choices::COUNTER | Choices::MIRRORCOAT)
                 && !state.side(a.side).active()[a.slot].recharging
             {
-                // `beforeTurnCallback` -> `addVolatile('counter' / 'mirrorcoat' / 'pursuit')`.
-                // Pursuit's volatile is not stored: its `onFoeBeforeSwitchOut` needs
-                // the queued Pursuit action anyway (`queue.cancelMove(source)`).
+                // `beforeTurnCallback` -> `addVolatile('counter' / 'mirrorcoat')`.
                 try_add_volatile_ties(state, rng, a.side, a.slot);
                 each_event_update(state, rng);
             }
@@ -1901,7 +1899,10 @@ pub fn run_fuzz_turn(
                 let up = state.side(a.side).active()[a.slot].pokemon_index == Some(a.pokemon_index)
                     && state.side(a.side).team_member(a.pokemon_index).hp > 0;
                 if up && ps_get_target(state, rng, a).is_some() {
+                    // The volatile only matters for its Residual handler (duration 1):
+                    // `onFoeBeforeSwitchOut` reads the queued Pursuit action instead.
                     try_add_volatile_ties(state, rng, a.side, a.slot);
+                    state.side_mut(a.side).active_slot_mut(a.slot).pursuit_vol = true;
                     each_event_update(state, rng);
                 }
             }
@@ -2870,6 +2871,13 @@ fn redirect_target(state: &DoublesState, action: &Action, target: (Side, usize))
     let mut order = [0usize, 1];
     if cached_speed(state, foe, 1) > cached_speed(state, foe, 0) {
         order = [1, 0];
+    }
+    // Spotlight `onFoeRedirectTarget` (priority 2): runs before Follow Me /
+    // Rage Powder; `validTarget` only. PS data/moves.ts spotlight.
+    for sl in order {
+        if state.side(foe).active()[sl].spotlight && state.side(foe).slot_pokemon(sl).is_some_and(|p| p.hp > 0) {
+            return (foe, sl);
+        }
     }
     for sl in order {
         let a = &state.side(foe).active()[sl];
@@ -8864,6 +8872,16 @@ fn execute_move_body(
                     }
                     state.side_mut(ts).active_slot_mut(tslot).follow_me =
                         if v.volatile_status == PokemonVolatileStatus::RAGEPOWDER { 2 } else { 1 };
+                }
+                PokemonVolatileStatus::SPOTLIGHT => {
+                    // `addVolatile('spotlight')` (no `onRestart`: fails if present).
+                    // PS data/moves.ts spotlight.
+                    if state.side(ts).active()[tslot].spotlight {
+                        move_failed = true;
+                    } else {
+                        try_add_volatile_ties(state, rng, ts, tslot);
+                        state.side_mut(ts).active_slot_mut(tslot).spotlight = true;
+                    }
                 }
                 PokemonVolatileStatus::ENDURE => {
                     // `addVolatile(endure)` -> `TryAddVolatile`: Insomnia and a Flower
@@ -19248,10 +19266,14 @@ fn entry_hazards(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: 
         }
         dmg_events.sort_by_key(|e| e.0);
         let hz_hp0 = s.team_member(idx).hp;
-        let mut apply_dmg = |s: &mut DoublesSide, rng: &mut Gen5Rng, d: i16| {
-            if s.team_member(idx).hp <= 0 {
+        let apply_dmg = |state: &mut DoublesState, rng: &mut Gen5Rng, d: i16| {
+            if state.side(side).team_member(idx).hp <= 0 {
                 return;
             }
+            // PS `damage` -> `spreadDamage` -> `runEvent('Damage')`: its handlers
+            // (Damp's `onAnyDamage`, Focus Band, ...) are sorted first; ties draw.
+            crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::Damage, (side, slot), None);
+            let s = state.side_mut(side);
             if band {
                 let _ = rng.label("other: onDamage").random_chance(1, 10);
             }
@@ -19263,8 +19285,9 @@ fn entry_hazards(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: 
             s.slot_scratch_mut(slot).hurt_hp = left;
         };
         for &(_, d) in dmg_events.iter().filter(|e| e.0 < ts_pos) {
-            apply_dmg(s, rng, d);
+            apply_dmg(state, rng, d);
         }
+        let s = state.side_mut(side);
         // Apply toxic spikes status. A pokemon KO'd by Stealth Rock / Spikes
         // has fainted before the Toxic Spikes handler runs (PS `fieldEvent`
         // calls `resolveFaints` after each handler and skips fainted holders).
@@ -19294,8 +19317,9 @@ fn entry_hazards(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: 
             s.side_conditions.toxic_spikes = 0;
         }
         for &(_, d) in dmg_events.iter().filter(|e| e.0 > ts_pos) {
-            apply_dmg(s, rng, d);
+            apply_dmg(state, rng, d);
         }
+        let s = state.side_mut(side);
         let ko = s.team_member(idx).hp <= 0;
         if ko {
             s.team_member_mut(idx).hp = 0;
@@ -19803,6 +19827,13 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             }
             if a.mirror_coat_vol.is_some() {
                 vols.push(("mirrorcoat", NO_ORDER, 2, ResidualKind::VolatileEnd(side, slot, 6))); // mirrorcoat (duration 1)
+            }
+            // PS data/moves.ts pursuit.condition / spotlight.condition: duration 1.
+            if a.pursuit_vol {
+                vols.push(("pursuit", NO_ORDER, 2, ResidualKind::VolatileEnd(side, slot, 14)));
+            }
+            if a.spotlight {
+                vols.push(("spotlight", NO_ORDER, 2, ResidualKind::VolatileEnd(side, slot, 15)));
             }
             if a.ally_switch.is_some() {
                 vols.push(("allyswitch", NO_ORDER, 2, ResidualKind::AllySwitch(side, slot)));
@@ -21004,6 +21035,15 @@ fn end_of_turn(
             ResidualKind::VolatileEnd(side, slot, 6) => {
                 state.side_mut(side).active_slot_mut(slot).mirror_coat_vol = None;
             }
+            ResidualKind::VolatileEnd(side, slot, 14) => {
+                state.side_mut(side).active_slot_mut(slot).pursuit_vol = false;
+                // The duration ran out: an `end` call, no `resolveFaints`.
+                prev_end = true;
+            }
+            ResidualKind::VolatileEnd(side, slot, 15) => {
+                state.side_mut(side).active_slot_mut(slot).spotlight = false;
+                prev_end = true;
+            }
             ResidualKind::VolatileEnd(side, slot, 3) => {
                 state.side_mut(side).active_slot_mut(slot).helping_hand_mult = 1.0;
             }
@@ -21972,6 +22012,8 @@ fn end_of_turn(
         for a in s.active_mut().iter_mut() {
             a.counter_vol = None;
             a.mirror_coat_vol = None;
+            a.pursuit_vol = false;
+            a.spotlight = false;
             a.active_turns = a.active_turns.saturating_add(1);
             a.move_result_last_turn = a.move_result_this_turn;
             a.move_result_this_turn = None;

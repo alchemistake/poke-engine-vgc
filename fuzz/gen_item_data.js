@@ -16,11 +16,19 @@ const fling = [];
 const berries = [];
 const gift = [];
 const typeBoost = [];
+const takeLock = [];
 for (const v of variants) {
   const it = d.items.get(v.toLowerCase());
   if (!it.exists) continue;
   if (it.fling && it.fling.basePower) fling.push(`        Items::${v} => ${it.fling.basePower},`);
   if (it.isBerry) berries.push(v);
+  // `onTakeItem` locked to a species (plates, memories, drives, orbs, masks).
+  if (it.onTakeItem) {
+    const src = it.onTakeItem.toString();
+    const n = src.match(/baseSpecies\.num === (\d+)/);
+    if (n) takeLock.push(`        Items::${v} => Some(${n[1]}),`);
+    else if (/Ogerpon/.test(src)) takeLock.push(`        Items::${v} => Some(1017),`);
+  }
   // `onBasePower`: `move.type === X` -> chainModify([4915, 4096]), no species check.
   if (it.onBasePower) {
     const src = it.onBasePower.toString();
@@ -44,6 +52,14 @@ const out = [
   '    match item {',
   ...fling,
   '        _ => 0,',
+  '    }',
+  '}',
+  '',
+  '/// `onTakeItem` refuses when the holder or taker is this species (dex number).',
+  'pub fn take_lock_num(item: Items) -> Option<u16> {',
+  '    match item {',
+  ...takeLock,
+  '        _ => None,',
   '    }',
   '}',
   '',

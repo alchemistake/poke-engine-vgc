@@ -180,6 +180,22 @@ pub struct ActiveSlot {
     /// Mimic replaced move slot `k` (Mimic's id and PP saved, restored when the
     /// pokemon leaves: PS `moveSlots` vs `baseMoveSlots`).
     pub mimic: Option<(u8, crate::choices::Choices, i8)>,
+    /// Lifted by a Sky Drop user (its side and team index): can't act, and is
+    /// semi-invulnerable like the user.
+    pub sky_lifted_by: Option<(Side, crate::state::PokemonIndex)>,
+    /// Rage's `rage` volatile: +1 Atk when hit by a damaging move.
+    pub rage: bool,
+    /// Magic Coat's single-turn volatile (reflects like Magic Bounce).
+    pub magic_coat: bool,
+    /// Grudge's volatile: fainting to a move zeroes that move's PP.
+    pub grudge: bool,
+    /// Micle Berry's `micleberry` volatile duration (next accuracy x1.2).
+    pub micle: u8,
+    /// Protosynthesis / Quark Drive volatile: (best stat 0..4 = Atk, Def, SpA,
+    /// SpD, Spe; from Booster Energy).
+    pub paradox: Option<(u8, bool)>,
+    /// The paradox volatile is Quark Drive's (else Protosynthesis's).
+    pub paradox_quark: bool,
     /// `bide` volatile: (duration, total move damage taken, last damaging pokemon).
     pub bide: Option<(u8, i16, Option<(Side, crate::state::PokemonIndex)>)>,
     /// `smackdown` volatile (no duration): the holder is grounded (PS
@@ -430,6 +446,13 @@ impl ActiveSlot {
             rollout: None,
             defense_curl: false,
             mimic: None,
+            sky_lifted_by: None,
+            rage: false,
+            magic_coat: false,
+            grudge: false,
+            micle: 0,
+            paradox: None,
+            paradox_quark: false,
             bide: None,
             smackdown: false,
             active_turns: 0,
@@ -1312,7 +1335,8 @@ pub fn compute_stats(
         stat_points_to_effective_ev(evs.spd),
         stat_points_to_effective_ev(evs.spe),
     );
-    let mut hp = (common_stat_calc(base.0 as u16, e.0, lvl) + lvl + 10) as i16;
+    // Shedinja (base HP 1) always has 1 HP (PS sim/dex-data.ts `statModify`).
+    let mut hp = if base.0 == 1 { 1 } else { (common_stat_calc(base.0 as u16, e.0, lvl) + lvl + 10) as i16 };
     let mut atk = (common_stat_calc(base.1 as u16, e.1, lvl) + 5) as i16;
     let mut def = (common_stat_calc(base.2 as u16, e.2, lvl) + 5) as i16;
     let mut spa = (common_stat_calc(base.3 as u16, e.3, lvl) + 5) as i16;

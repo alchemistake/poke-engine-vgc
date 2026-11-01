@@ -499,6 +499,59 @@ pub fn fling_power(item: Items) -> u8 {
     }
 }
 
+/// `onTakeItem` refuses when the holder or taker is this species (dex number).
+pub fn take_lock_num(item: Items) -> Option<u16> {
+    match item {
+        Items::ADAMANTCRYSTAL => Some(483),
+        Items::DREADPLATE => Some(493),
+        Items::EARTHPLATE => Some(493),
+        Items::FISTPLATE => Some(493),
+        Items::LUSTROUSGLOBE => Some(484),
+        Items::SKYPLATE => Some(493),
+        Items::GRISEOUSCORE => Some(487),
+        Items::TOXICPLATE => Some(493),
+        Items::STONEPLATE => Some(493),
+        Items::INSECTPLATE => Some(493),
+        Items::SPOOKYPLATE => Some(493),
+        Items::IRONPLATE => Some(493),
+        Items::FLAMEPLATE => Some(493),
+        Items::SPLASHPLATE => Some(493),
+        Items::MEADOWPLATE => Some(493),
+        Items::ZAPPLATE => Some(493),
+        Items::MINDPLATE => Some(493),
+        Items::ICICLEPLATE => Some(493),
+        Items::DRACOPLATE => Some(493),
+        Items::PIXIEPLATE => Some(493),
+        Items::BUGMEMORY => Some(773),
+        Items::FIGHTINGMEMORY => Some(773),
+        Items::GHOSTMEMORY => Some(773),
+        Items::PSYCHICMEMORY => Some(773),
+        Items::FLYINGMEMORY => Some(773),
+        Items::STEELMEMORY => Some(773),
+        Items::ICEMEMORY => Some(773),
+        Items::POISONMEMORY => Some(773),
+        Items::FIREMEMORY => Some(773),
+        Items::DRAGONMEMORY => Some(773),
+        Items::GROUNDMEMORY => Some(773),
+        Items::WATERMEMORY => Some(773),
+        Items::DARKMEMORY => Some(773),
+        Items::ROCKMEMORY => Some(773),
+        Items::GRASSMEMORY => Some(773),
+        Items::FAIRYMEMORY => Some(773),
+        Items::ELECTRICMEMORY => Some(773),
+        Items::WELLSPRINGMASK => Some(1017),
+        Items::HEARTHFLAMEMASK => Some(1017),
+        Items::CORNERSTONEMASK => Some(1017),
+        Items::RUSTEDSWORD => Some(888),
+        Items::RUSTEDSHIELD => Some(889),
+        Items::BURNDRIVE => Some(649),
+        Items::CHILLDRIVE => Some(649),
+        Items::DOUSEDRIVE => Some(649),
+        Items::SHOCKDRIVE => Some(649),
+        _ => None,
+    }
+}
+
 /// Type-boosting held items (`onBasePower` x4915/4096 for one move type).
 pub fn type_boost_item(item: Items) -> Option<PokemonType> {
     match item {

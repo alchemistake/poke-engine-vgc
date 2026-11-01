@@ -1036,6 +1036,7 @@ define_enum_with_from_str! {
         RIBOMBEE,
         RIBOMBEETOTEM,
         ROCKRUFF,
+        ROCKRUFFDUSK,
         LYCANROC,
         LYCANROCMIDNIGHT,
         LYCANROCDUSK,

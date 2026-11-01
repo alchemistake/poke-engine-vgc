@@ -64,7 +64,7 @@ pub fn pokemon_effects(state: &DoublesState, side: Side, slot: usize) -> Vec<(St
 
 /// The volatile and slot conditions `visit_pokemon_effects` reports, in
 /// report order (`cond_mask`).
-const CONDS: [(&str, HandlerKind); 74] = [
+const CONDS: [(&str, HandlerKind); 80] = [
     ("confusion", HandlerKind::Volatile),
     ("flinch", HandlerKind::Volatile),
     ("mustrecharge", HandlerKind::Volatile),
@@ -137,6 +137,12 @@ const CONDS: [(&str, HandlerKind); 74] = [
     ("rollout", HandlerKind::Volatile),
     ("defensecurl", HandlerKind::Volatile),
     ("bide", HandlerKind::Volatile),
+    ("rage", HandlerKind::Volatile),
+    ("protosynthesis", HandlerKind::Volatile),
+    ("quarkdrive", HandlerKind::Volatile),
+    ("magiccoat", HandlerKind::Volatile),
+    ("grudge", HandlerKind::Volatile),
+    ("micleberry", HandlerKind::Volatile),
     ("futuremove", HandlerKind::Slot),
     ("wish", HandlerKind::Slot),
 ];
@@ -219,6 +225,22 @@ pub(crate) fn vol_mask(a: &crate::doubles::state::ActiveSlot) -> u128 {
     }
     if a.bide.is_some() {
         m |= 1 << 71;
+    }
+    if a.rage {
+        m |= 1 << 72;
+    }
+    if a.paradox.is_some() {
+        // The holder's ability names the volatile (Booster Energy keeps it).
+        m |= if a.paradox_quark { 1 << 74 } else { 1 << 73 };
+    }
+    if a.magic_coat {
+        m |= 1 << 75;
+    }
+    if a.grudge {
+        m |= 1 << 76;
+    }
+    if a.micle > 0 {
+        m |= 1 << 77;
     }
     if a.confusion > 0 {
         m |= 1 << 0;

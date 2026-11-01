@@ -1089,6 +1089,7 @@ pub fn species_data(id: &str) -> Option<SpeciesData> {
         "roaringmoon" => (105, 139, 71, 55, 101, 119, 14, 15),
         "rockruff" => (45, 65, 40, 30, 40, 60, 12, 19),
         "rockruffdusk" => (45, 65, 40, 30, 40, 60, 12, 19),
+        "rockruffdusk" => (45, 65, 40, 30, 40, 60, 12, 19),
         "roggenrola" => (55, 75, 85, 25, 25, 15, 12, 19),
         "rolycoly" => (30, 40, 50, 40, 50, 30, 12, 19),
         "rookidee" => (38, 47, 35, 33, 35, 57, 9, 19),

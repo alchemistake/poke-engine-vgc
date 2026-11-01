@@ -1084,6 +1084,7 @@ pub fn species_weight_kg(id: &str) -> Option<f32> {
         "roaringmoon" => 380.0,
         "rockruff" => 9.2,
         "rockruffdusk" => 9.2,
+        "rockruffdusk" => 9.2,
         "roggenrola" => 18.0,
         "rolycoly" => 12.0,
         "rookidee" => 1.8,

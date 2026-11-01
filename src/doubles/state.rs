@@ -241,6 +241,9 @@ pub struct ActiveSlot {
     pub mirror_herb_boosts: [i8; 7],
     /// Me First's `mefirst` volatile: the called move has x1.5 power.
     pub me_first: bool,
+    /// The `mefirst` volatile itself (duration 1, ended at the residual):
+    /// reported while the turn lasts. PS data/moves.ts mefirst.condition.
+    pub me_first_vol: bool,
     /// Illusion's disguise, fixed at switch-in (`onBeforeSwitchIn`): the last
     /// unfainted pokemon after the holder then. `Some(None)` = no disguise.
     pub illusion_target: Option<Option<usize>>,
@@ -530,6 +533,7 @@ impl ActiveSlot {
             opportunist_boosts: [0; 7],
             mirror_herb_boosts: [0; 7],
             me_first: false,
+            me_first_vol: false,
             illusion_target: None,
             cursed: false,
             nightmare: false,
@@ -2478,6 +2482,10 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
     .collect();
     if let Some((_, d)) = state.echoed_voice {
         pseudo.push(("echoedvoice", d));
+    }
+    // Ion Deluge (duration 1): only seen when the battle ends mid-turn.
+    if state.ion_deluge {
+        pseudo.push(("iondeluge", 1));
     }
     pseudo.sort();
     let pseudo_weather: Vec<&'static str> = pseudo.iter().map(|(id, _)| *id).collect();

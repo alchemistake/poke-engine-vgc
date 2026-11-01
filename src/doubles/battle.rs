@@ -4270,7 +4270,8 @@ fn run_dancers(
 ) {
     let (us, ui) = (action.side, action.pokemon_index);
     let Some(usl) = (0..2).find(|&sl| state.side(us).active()[sl].pokemon_index == Some(ui)) else { return };
-    if state.side(us).active()[usl].move_result_this_turn != Some(true) {
+    // A NOT_FAIL result (Protect blocked it) is falsy too.
+    if state.side(us).active()[usl].move_result_this_turn != Some(true) || state.side(us).active()[usl].move_result_null {
         return;
     }
     let mut dancers: Vec<(Side, PokemonIndex, i16)> = Vec::new();
@@ -4713,6 +4714,12 @@ fn execute_move_body(
     // names the handler that ran first (order not modelled).
     crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::BeforeMove, (side, slot), resolved);
     state.tl.before_move_aborted.set(true);
+    // Sky Drop `onFoeBeforeMove` (priority 12, before recharge 11 and sleep /
+    // freeze 10, so a sleep turn is not used up): the lifted target can't act
+    // (null: no message). PS data/moves.ts skydrop.condition.
+    if state.side(side).active()[slot].sky_lifted_by.is_some() {
+        return;
+    }
     // A pokemon that must recharge (Hyper Beam / Solar Beam) cannot act.
     // No PRNG draw (PS `mustrecharge.onBeforeMove` returns false).
     // It also drops the `truant` volatile. PS data/conditions.ts mustrecharge.
@@ -4776,11 +4783,6 @@ fn execute_move_body(
         }
     }
 
-    // Sky Drop `onFoeBeforeMove` (priority 12): the lifted target can't act
-    // (null: no message). PS data/moves.ts skydrop.condition.
-    if state.side(side).active()[slot].sky_lifted_by.is_some() {
-        return;
-    }
     // Truant `onBeforeMove` (priority 9): every other move is a `cant`; the
     // `truant` volatile marks the turn to skip. PS data/abilities.ts truant.
     if state.side(side).team_member(idx).ability == Abilities::TRUANT {
@@ -4954,7 +4956,11 @@ fn execute_move_body(
                             // `spreadDamage` -> `runEvent('Damage')`: Focus Band /
                             // Focus Sash `onDamage` on the move's damage.
                             let dmg = focus_item_on_move_damage(state, rng, ts, tsl, dmg);
-                            apply_damage(state, ts, tsl, dmg);
+                            // A KO queues the user's `onSourceAfterFaint` (Beast Boost, Moxie).
+                            if apply_damage(state, ts, tsl, dmg) && (ts, tsl) != (side, slot) {
+                                let ab = state.side(side).team_member(idx).ability;
+                                state.pending_after_faint = Some((side, slot, idx, ab));
+                            }
                             // The release is a contact hit (`moveHit` ->
                             // DamagingHit): Rough Skin, Iron Barbs, ...
                             contact_abilities(state, rng, side, slot, idx, ts, tsl, &action.choice);
@@ -8371,6 +8377,10 @@ fn execute_move_body(
                         }
                     }
                 }
+                // Core Enforcer `onAfterSubDamage`: the same as its `onHit`.
+                if choice.move_id == Choices::COREENFORCER {
+                    core_enforcer(state, rng, target_side, target_slot, queue);
+                }
                 // Flame Burst `onAfterSubDamage`: the splash still hits the
                 // target's adjacent ally. PS data/moves.ts flameburst.
                 if choice.move_id == Choices::FLAMEBURST {
@@ -10477,6 +10487,8 @@ fn execute_move_body(
                     pm.moves[&mi].id = m;
                     pm.moves[&mi].pp = crate::doubles::move_data::raw_pp(m) as i8;
                     state.side_mut(side).active_slot_mut(slot).mimic = Some(saved);
+                    // The copied move is a new move slot (`used: false`): Last Resort.
+                    state.side_mut(side).moves_used[idx as usize][k] = false;
                 }
                 _ => move_failed = true,
             }
@@ -11045,19 +11057,7 @@ fn execute_move_body(
         // unless the target's ability can't be suppressed, it switched in this
         // turn or it still has a queued move. PS data/moves.ts coreenforcer.
         if choice.move_id == Choices::COREENFORCER && !move_failed {
-            if let Some(tidx) = state.side(target_side).active()[target_slot].pokemon_index {
-                let t = &state.side(target_side).active()[target_slot];
-                let will_move = queue.iter().any(|q| q.side == target_side && q.pokemon_index == tidx);
-                if state.side(target_side).team_member(tidx).hp > 0
-                    && !t.gastro_acid
-                    && !t.newly_switched
-                    && !will_move
-                    && !gastro_cant_suppress(real_ability(state, target_side, tidx))
-                {
-                    try_add_volatile_ties(state, rng, target_side, target_slot);
-                    gastro_acid_start(state, rng, target_side, target_slot, tidx);
-                }
-            }
+            core_enforcer(state, rng, target_side, target_slot, queue);
         }
 
         // Smelling Salts / Wake-Up Slap `onHit`: the target's paralysis / sleep
@@ -11328,6 +11328,7 @@ fn execute_move_body(
                 Some(m) => {
                     let loc = if target_side == side { -(target_slot as i8 + 1) } else { target_slot as i8 + 1 };
                     state.side_mut(side).slot_scratch_mut(slot).me_first = true;
+                    state.side_mut(side).slot_scratch_mut(slot).me_first_vol = true;
                     run_copied_move(state, rng, action, m, &mut copy_order, will_act, queue, loc);
                     state.side_mut(side).slot_scratch_mut(slot).me_first = false;
                     try_hit_null = true;
@@ -16490,11 +16491,6 @@ fn try_absorb(state: &mut DoublesState, rng: &mut Gen5Rng, ts: Side, tsl: usize,
     true
 }
 
-/// `futuremove.onEnd`: the delayed Future Sight / Doom Desire hit
-/// (`trySpreadMoveHit([target], source, hitMove, true)`): type immunity, an
-/// accuracy roll, then crit + damage roll. Skipped when the target slot is
-/// empty / fainted or the user is the target.
-// TODO(PS parity): source no longer active, secondaries, Infiltrator / Normalize.
 /// The duration of one of the side conditions a `SideDuration` residual handler
 /// counts down (see `ResidualKind::SideDuration` for the index).
 fn side_condition_duration_mut(state: &mut DoublesState, side: Side, which: u8) -> &mut i8 {
@@ -16513,10 +16509,6 @@ fn side_condition_duration_mut(state: &mut DoublesState, side: Side, which: u8) 
     }
 }
 
-/// PS `hitStepInvulnerabilityEvent` for a semi-invulnerable target: the move
-/// misses (no draw) unless it is one of the moves that still hit that charge
-/// turn (`onInvulnerability` in data/moves.ts), or a No Guard side is involved.
-/// The charge must still be live (an aborted charge lost its `twoturnmove`).
 /// PS `pokemon.effectiveWeather()`: a Utility Umbrella holder sees no rain /
 /// sun (data/items.ts utilityumbrella).
 fn umbrella_weather(state: &DoublesState, p: &crate::state::Pokemon, w: Weather) -> Weather {
@@ -16530,6 +16522,10 @@ fn umbrella_weather(state: &DoublesState, p: &crate::state::Pokemon, w: Weather)
     }
 }
 
+/// PS `hitStepInvulnerabilityEvent` for a semi-invulnerable target: the move
+/// misses (no draw) unless it is one of the moves that still hit that charge
+/// turn (`onInvulnerability` in data/moves.ts), or a No Guard side is involved.
+/// The charge must still be live (an aborted charge lost its `twoturnmove`).
 fn semi_invulnerable_blocks(
     state: &DoublesState,
     src_side: Side,
@@ -16641,6 +16637,11 @@ fn cotton_down(state: &mut DoublesState, rng: &mut Gen5Rng, target_side: Side, t
     }
 }
 
+/// `futuremove.onEnd`: the delayed Future Sight / Doom Desire hit
+/// (`trySpreadMoveHit([target], source, hitMove, true)`): type immunity, an
+/// accuracy roll, then crit + damage roll. Skipped when the target slot is
+/// empty / fainted or the user is the target.
+// TODO(PS parity): source no longer active, secondaries, Infiltrator / Normalize.
 fn resolve_future_move(
     state: &mut DoublesState,
     rng: &mut Gen5Rng,
@@ -16815,6 +16816,10 @@ fn future_move_hit(
             let turn_now = state.turn;
             state.side_mut(ts).team_member_scratch_mut(tidx).attacked_by.push((attacker_key(ss, si as u8), turn_now));
             state.side_mut(ts).damaged_by[tidx as usize].push((ss, sslot, damage, turn_now, si as usize));
+        }
+        // Bide `onDamage`: the delayed hit is a Move effect, its user the source.
+        if let Some((d, total, _)) = state.side(ts).active()[tslot].bide {
+            state.side_mut(ts).active_slot_mut(tslot).bide = Some((d, total.saturating_add(damage), Some((ss, si))));
         }
         if apply_damage(state, ts, tslot, damage) && (ss, sslot) != (ts, tslot) {
             let ab = state.side(ss).team_member(si).ability;
@@ -17055,6 +17060,24 @@ fn tera_shell_mode(state: &DoublesState, side: Side, slot: usize, defender: &cra
         return 0;
     }
     1
+}
+
+/// Core Enforcer `onHit` / `onAfterSubDamage`: `addVolatile('gastroacid')`
+/// unless the target's ability can't be suppressed, it switched in this turn
+/// or it still has a queued move. PS data/moves.ts coreenforcer.
+fn core_enforcer(state: &mut DoublesState, rng: &mut Gen5Rng, ts: Side, tsl: usize, queue: &[Action]) {
+    let Some(tidx) = state.side(ts).active()[tsl].pokemon_index else { return };
+    let t = &state.side(ts).active()[tsl];
+    let will_move = queue.iter().any(|q| q.side == ts && q.pokemon_index == tidx);
+    if state.side(ts).team_member(tidx).hp > 0
+        && !t.gastro_acid
+        && !t.newly_switched
+        && !will_move
+        && !gastro_cant_suppress(real_ability(state, ts, tidx))
+    {
+        try_add_volatile_ties(state, rng, ts, tsl);
+        gastro_acid_start(state, rng, ts, tsl, tidx);
+    }
 }
 
 /// Destiny Knot `onAttract` (priority -100): the infatuated holder's source
@@ -21478,6 +21501,9 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             if a.shell_trap > 0 {
                 vols.push(("shelltrap", NO_ORDER, 2, ResidualKind::Marker));
             }
+            if a.me_first_vol {
+                vols.push(("mefirst", NO_ORDER, 2, ResidualKind::Marker));
+            }
             // PS data/moves.ts snatch.condition: duration 1 (cleared at turn end).
             if a.snatch {
                 vols.push(("snatch", NO_ORDER, 2, ResidualKind::Marker));
@@ -23870,6 +23896,7 @@ fn end_of_turn(
             a.lost_focus = false;
             a.beak_blast = false;
             a.shell_trap = 0;
+            a.me_first_vol = false;
             a.chilly_reception = false;
             a.snatch = false;
             a.stats_raised_this_turn = false;

@@ -208,6 +208,9 @@ pub(crate) fn volatile_ids(a: &crate::doubles::state::ActiveSlot) -> Vec<String>
     if a.shell_trap > 0 {
         v.push("shelltrap".to_string());
     }
+    if a.me_first_vol {
+        v.push("mefirst".to_string());
+    }
     if a.power_shift {
         v.push("powershift".to_string());
     }

@@ -462,6 +462,9 @@ fn faint_pokemon(state: &mut DoublesState, side: Side, slot: usize) {
         }
         minior_core_revert(s, idx);
         wishiwashi_solo_revert(s, idx);
+        if !untransformed {
+            zygarde_complete_faint_revert(s, idx);
+        }
         let roost = s.active_slot_mut(slot).roost_orig.take();
         if !untransformed {
             if let Some(t) = roost {
@@ -12621,6 +12624,92 @@ fn shields_down_check(state: &mut DoublesState, side: Side, slot: usize) {
     state.side_mut(side).set_speed_cache(idx as usize, spe as _);
 }
 
+/// Power Construct `onResidual` (order 29): a Zygarde (not transformed) at or
+/// below half HP becomes Zygarde-Complete permanently. The forme change
+/// recomputes the stats and `updateMaxHp` keeps the HP's distance from the max.
+/// PS data/abilities.ts powerconstruct, sim/pokemon.ts formeChange / updateMaxHp.
+fn power_construct_check(state: &mut DoublesState, side: Side, slot: usize) {
+    use crate::pokemon::PokemonName as N;
+    let Some(idx) = state.side(side).active()[slot].pokemon_index else { return };
+    let p = state.side(side).team_member(idx);
+    if p.ability != Abilities::POWERCONSTRUCT
+        || p.hp <= 0
+        || !matches!(p.id, N::ZYGARDE | N::ZYGARDE10)
+        || state.side(side).transform_save[idx as usize].is_some()
+        || p.hp as i32 * 2 > p.maxhp as i32
+    {
+        return;
+    }
+    let Some(data) = crate::doubles::species_types::species_data("zygardecomplete") else { return };
+    let (e, lvl, nat) = (p.evs, p.level as u8, p.nature.clone());
+    let evs = crate::doubles::state::Evs {
+        hp: e.0 as u16,
+        atk: e.1 as u16,
+        def: e.2 as u16,
+        spa: e.3 as u16,
+        spd: e.4 as u16,
+        spe: e.5 as u16,
+    };
+    let (maxhp, atk, def, spa, spd, spe) = crate::doubles::state::compute_stats(data.base_stats, &evs, lvl, nat);
+    let hp_before = p.hp;
+    restore_stored_stats(state.side_mut(side), idx);
+    let pm = state.side_mut(side).team_member_mut(idx);
+    pm.id = N::ZYGARDECOMPLETE;
+    pm.attack = atk;
+    pm.defense = def;
+    pm.special_attack = spa;
+    pm.special_defense = spd;
+    pm.speed = spe;
+    pm.hp = (maxhp - (pm.maxhp - pm.hp)).max(1);
+    pm.maxhp = maxhp;
+    let types = (PokemonType::from(data.types.0), PokemonType::from(data.types.1));
+    set_species_types(state, side, slot, idx, types);
+    state.side_mut(side).set_speed_cache(idx as usize, spe as _);
+    hp_event(state, side, idx, hp_before, "powerconstruct");
+}
+
+/// Faint with `formeRegression` (set by Power Construct): `baseSpecies` goes
+/// back to the set species, `clearVolatile` -> `setSpecies` recomputes the
+/// stats and `updateMaxHp` restores its max HP. PS sim/battle.ts faintMessages.
+fn zygarde_complete_faint_revert(s: &mut crate::doubles::state::DoublesSide, idx: PokemonIndex) {
+    use crate::pokemon::PokemonName as N;
+    if s.team_member(idx).id != N::ZYGARDECOMPLETE {
+        return;
+    }
+    let key: String = s.species_names[idx as usize]
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_lowercase();
+    let id = match key.as_str() {
+        "zygarde" => N::ZYGARDE,
+        "zygarde10" => N::ZYGARDE10,
+        _ => return,
+    };
+    let Some(data) = crate::doubles::species_types::species_data(&key) else { return };
+    let p = s.team_member(idx);
+    let (e, lvl, nat) = (p.evs, p.level as u8, p.nature.clone());
+    let evs = crate::doubles::state::Evs {
+        hp: e.0 as u16,
+        atk: e.1 as u16,
+        def: e.2 as u16,
+        spa: e.3 as u16,
+        spd: e.4 as u16,
+        spe: e.5 as u16,
+    };
+    let (maxhp, atk, def, spa, spd, spe) = crate::doubles::state::compute_stats(data.base_stats, &evs, lvl, nat);
+    restore_stored_stats(s, idx);
+    let pm = s.team_member_mut(idx);
+    pm.id = id;
+    pm.attack = atk;
+    pm.defense = def;
+    pm.special_attack = spa;
+    pm.special_defense = spd;
+    pm.speed = spe;
+    pm.maxhp = maxhp;
+    pm.types = (PokemonType::from(data.types.0), PokemonType::from(data.types.1));
+}
+
 /// `clearVolatile` -> `setSpecies(baseSpecies)` for Wishiwashi-School: Solo
 /// forme with its stats recomputed.
 fn wishiwashi_solo_revert(s: &mut crate::doubles::state::DoublesSide, idx: PokemonIndex) {
@@ -18189,6 +18278,8 @@ enum ResidualKind {
     /// Hunger Switch `onResidual` (order 29): Morpeko changes forme.
     HungerSwitch(Side, usize),
     ShieldsDown(Side, usize),
+    /// Power Construct `onResidual` (order 29): Zygarde becomes Complete.
+    PowerConstruct(Side, usize),
     /// Schooling `onResidual` (order 29).
     Schooling(Side, usize),
     /// Bad Dreams `onResidual` (order 28, sub 2): 1/8 to each sleeping foe.
@@ -18647,6 +18738,9 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
             }
             if p.ability == Abilities::SHIELDSDOWN {
                 push(29, speed, 7, ResidualKind::ShieldsDown(side, slot));
+            }
+            if p.ability == Abilities::POWERCONSTRUCT {
+                push(29, speed, 7, ResidualKind::PowerConstruct(side, slot));
             }
             if p.ability == Abilities::SCHOOLING {
                 push(29, speed, 7, ResidualKind::Schooling(side, slot));
@@ -19655,6 +19749,9 @@ fn end_of_turn(
             }
             ResidualKind::ShieldsDown(side, slot) => {
                 shields_down_check(state, side, slot);
+            }
+            ResidualKind::PowerConstruct(side, slot) => {
+                power_construct_check(state, side, slot);
             }
             ResidualKind::HungerSwitch(side, slot) => {
                 // PS hungerswitch.onResidual: `formeChange` Morpeko <-> Morpeko-Hangry.

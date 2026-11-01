@@ -200,6 +200,11 @@ pub(crate) fn volatile_ids(a: &crate::doubles::state::ActiveSlot) -> Vec<String>
     if a.snatch {
         v.push("snatch".to_string());
     }
+    // Pursuit's single-turn volatile (duration 1; ended at Residual, so it
+    // only shows when the battle ends before then). PS data/moves.ts pursuit.condition.
+    if a.pursuit_vol {
+        v.push("pursuit".to_string());
+    }
     v.sort();
     v
 }

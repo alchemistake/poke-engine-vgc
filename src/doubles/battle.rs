@@ -3892,12 +3892,14 @@ fn execute_action_body(
     state.tl.sub_drain_done.set(false);
     state.db_faint_pos = None;
     state.tl.no_target_fail.set(false);
+    state.tl.acc_step.set(false);
     state.tl.before_move_aborted.set(false);
     let order_len_outer = move_order.len();
     execute_action_inner(state, rng, action, move_order, will_act, queue);
     // Micle Berry's volatile ends at the user's next accuracy check (a move at
-    // another target, not OHKO).
-    if move_order.len() > order_len_outer && !action.choice.ohko && !action.recharge {
+    // another target, not OHKO, that got past its TryHit / onTry steps).
+    // PS data/items.ts micleberry.condition.onSourceAccuracy.
+    if move_order.len() > order_len_outer && state.tl.acc_step.get() && !action.choice.ohko && !action.recharge {
         let t = move_target(action.choice.move_id);
         if !matches!(t, Tgt::SelfTarget | Tgt::All | Tgt::AllySide | Tgt::AllyTeam | Tgt::FoeSide) {
             if let Some(sl) = (0..2).find(|&sl| state.side(action.side).active()[sl].pokemon_index == Some(action.pokemon_index)) {
@@ -4543,8 +4545,10 @@ fn execute_move_body(
     state.tl.before_move_aborted.set(true);
     // A pokemon that must recharge (Hyper Beam / Solar Beam) cannot act.
     // No PRNG draw (PS `mustrecharge.onBeforeMove` returns false).
+    // It also drops the `truant` volatile. PS data/conditions.ts mustrecharge.
     if state.side(side).active()[slot].recharging {
         state.side_mut(side).active_slot_mut(slot).recharging = false;
+        state.side_mut(side).active_slot_mut(slot).truant = false;
         // PS logs `|cant|`, not `|move|`: not in the move order.
         return;
     }
@@ -7031,6 +7035,7 @@ fn execute_move_body(
     }
 
     // Accuracy roll (drawn even at 100%; skipped for always-hit / 0.0).
+    state.tl.acc_step.set(true);
     if crate::doubles::debug::flags().dmg {
         eprintln!("REACHED_ACC {} {} target_slot={} has_target={}", name, choice.move_id, target_slot, has_target);
     }

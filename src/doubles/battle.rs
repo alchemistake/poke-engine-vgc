@@ -2955,6 +2955,15 @@ fn ps_get_target_inner(
             return Some((ts, tsl));
         }
     }
+    // `useMove(move, pokemon, { target })` (Mirror Move, Me First, Nature
+    // Power): the target is given, so a called spread move draws no
+    // `getRandomTarget`. PS sim/battle-actions.ts useMoveInner.
+    if a.external_call && !valid {
+        let (ts, tsl) = if is_foe { (foe, (loc - 1) as usize) } else { (side, (-loc - 1) as usize) };
+        if tsl < 2 {
+            return Some((ts, tsl));
+        }
+    }
     random_target(rng)
 }
 

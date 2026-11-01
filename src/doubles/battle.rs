@@ -14279,6 +14279,28 @@ fn compute_hit_damage(
             // Solar Power `onModifySpA` (priority 5, exclusive with Plus / Minus).
             let sun = matches!(effective_weather(state), Weather::SUN | Weather::HARSHSUN);
             let m = (m * crate::engine::mechanics::solar_power_spa_modifier(attacker, choice, sun) + 2048) >> 12;
+            // Orichalcum Pulse `onModifyAtk` (priority 5): x5461/4096 while the holder's
+            // `effectiveWeather()` is sun (Utility Umbrella hides it). Body Press runs
+            // `ModifyAtk` too (PS getDamage resets `attackStat`). PS data/abilities.ts orichalcumpulse.
+            let m = if attacker.ability == Abilities::ORICHALCUMPULSE
+                && choice.category == MoveCategory::Physical
+                && sun
+                && att_item != Items::UTILITYUMBRELLA
+            {
+                (m * 5461 + 2048) >> 12
+            } else {
+                m
+            };
+            // Hadron Engine `onModifySpA` (priority 5): x5461/4096 on Electric Terrain.
+            // PS data/abilities.ts hadronengine.
+            let m = if attacker.ability == Abilities::HADRONENGINE
+                && choice.category == MoveCategory::Special
+                && state.terrain.terrain_type == crate::engine::state::Terrain::ELECTRICTERRAIN
+            {
+                (m * 5461 + 2048) >> 12
+            } else {
+                m
+            };
             // Fire Mane `onModifyAtk` / `onModifySpA` (priority 5): x1.5 Fire moves.
             let m = if attacker.ability == Abilities::FIREMANE && choice.move_type == PokemonType::FIRE {
                 (m * 6144 + 2048) >> 12

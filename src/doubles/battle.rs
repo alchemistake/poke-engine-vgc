@@ -4756,6 +4756,26 @@ fn execute_move_body(
                 modified.base_power *= 2.0;
             }
         }
+        // Secret Power `onModifyMove`: under a terrain the 30% secondary is
+        // Electric -> par, Grassy -> slp, Misty -> SpA -1, Psychic -> Spe -1
+        // (none otherwise). PS data/moves.ts secretpower.
+        Choices::SECRETPOWER => {
+            use crate::choices::{Effect, Secondary, StatBoosts};
+            use crate::engine::state::Terrain as T;
+            let boost = |special_attack: i8, speed: i8| {
+                Effect::Boost(StatBoosts { attack: 0, defense: 0, special_attack, special_defense: 0, speed, accuracy: 0, evasion: 0 })
+            };
+            let effect = match state.terrain.terrain_type {
+                T::NONE => None,
+                T::ELECTRICTERRAIN => Some(Effect::Status(PokemonStatus::PARALYZE)),
+                T::GRASSYTERRAIN => Some(Effect::Status(PokemonStatus::SLEEP)),
+                T::MISTYTERRAIN => Some(boost(-1, 0)),
+                T::PSYCHICTERRAIN => Some(boost(0, -1)),
+            };
+            if let Some(effect) = effect {
+                modified.secondaries = Some(vec![Secondary { chance: 30.0, target: MoveTarget::Opponent, effect }].into());
+            }
+        }
         Choices::MULTIATTACK => {
             if let Some(t) = multi_attack_type(state, state.side(side).team_member(idx)) {
                 modified.move_type = t;
@@ -15756,7 +15776,13 @@ fn ice_face_active(state: &DoublesState, side: Side, slot: usize) -> bool {
 /// Ice Face `onUpdate`: `formeChange('Eiscue-Noice', .., true)`, stats recomputed.
 fn ice_face_bust(state: &mut DoublesState, side: Side, slot: usize) {
     let Some(idx) = state.side(side).active()[slot].pokemon_index else { return };
-    let Some(data) = crate::doubles::species_types::species_data("eiscuenoice") else { return };
+    ice_face_set_forme(state, side, idx, crate::pokemon::PokemonName::EISCUENOICE, "eiscuenoice");
+}
+
+/// Ice Face forme change (`formeChange(.., true)`): the id and the stored
+/// stats of the new forme; the cached speed becomes the raw stat.
+fn ice_face_set_forme(state: &mut DoublesState, side: Side, idx: PokemonIndex, forme: crate::pokemon::PokemonName, species: &str) {
+    let Some(data) = crate::doubles::species_types::species_data(species) else { return };
     let p = state.side(side).team_member(idx);
     let (e, lvl, nat) = (p.evs, p.level as u8, p.nature.clone());
     let evs = crate::doubles::state::Evs {
@@ -15770,7 +15796,7 @@ fn ice_face_bust(state: &mut DoublesState, side: Side, slot: usize) {
     let (_, atk, def, spa, spd, spe) = crate::doubles::state::compute_stats(data.base_stats, &evs, lvl, nat);
     restore_stored_stats(state.side_mut(side), idx);
     let pm = state.side_mut(side).team_member_mut(idx);
-    pm.id = crate::pokemon::PokemonName::EISCUENOICE;
+    pm.id = forme;
     pm.attack = atk;
     pm.defense = def;
     pm.special_attack = spa;
@@ -17238,6 +17264,25 @@ fn update_forecast(state: &mut DoublesState) {
                             s.set_speed_cache(idx as usize, raw as _);
                         }
                     }
+                }
+                // Ice Face `onStart` / `onWeatherChange`: an unfainted, untransformed
+                // Eiscue-Noice re-forms Eiscue when the weather becomes hail or snow
+                // (or it switches in under it). Shares the per-slot weather cache with
+                // Forecast so it only fires on a change. PS data/abilities.ts iceface.
+                if state.side(sd).team_member(idx).ability == Abilities::ICEFACE {
+                    if state.side(sd).active()[sl].forecast_weather == Some(weather) {
+                        continue;
+                    }
+                    state.side_mut(sd).slot_scratch_mut(sl).forecast_weather = Some(weather);
+                    let p = state.side(sd).team_member(idx);
+                    if matches!(weather, Weather::HAIL | Weather::SNOW)
+                        && p.hp > 0
+                        && p.id == crate::pokemon::PokemonName::EISCUENOICE
+                        && state.side(sd).transform_save[idx as usize].is_none()
+                    {
+                        ice_face_set_forme(state, sd, idx, crate::pokemon::PokemonName::EISCUE, "eiscue");
+                    }
+                    continue;
                 }
                 if state.side(sd).active()[sl].forecast_weather == Some(weather) {
                     continue;

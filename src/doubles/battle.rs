@@ -6211,7 +6211,8 @@ fn execute_move_body(
             && !is_field
             && state.side(target_side).slot_pokemon(target_slot).is_some_and(|d| {
                 choice.category != MoveCategory::Status
-                    && choice.move_id.fixed_damage(state.side(side).team_member(idx), d).is_some()
+                    && (choice.move_id == Choices::PSYWAVE
+                        || choice.move_id.fixed_damage(state.side(side).team_member(idx), d).is_some())
             }))
     {
         1.0
@@ -6339,6 +6340,7 @@ fn execute_move_body(
                     | Choices::NIGHTSHADE
                     | Choices::DRAGONRAGE
                     | Choices::SONICBOOM
+                    | Choices::PSYWAVE
                     | Choices::SUPERFANG
                     | Choices::NATURESMADNESS
                     | Choices::RUINATION
@@ -13628,6 +13630,11 @@ fn compute_hit_damage(
         let a = &att_slot;
         let rec = if choice.move_id == Choices::COUNTER { a.counter_vol } else { a.mirror_coat_vol };
         damage = rec.map(|(_, d)| d).filter(|&d| d > 0).unwrap_or(1);
+    } else if choice.move_id == Choices::PSYWAVE {
+        // Psywave `damageCallback`: `random(50, 151) * level / 100` (one draw, no
+        // crit or damage roll); `spreadDamage` floors it to at least 1. PS data/moves.ts psywave.
+        let r = rng.label("psywave").random_range(50, 151) as i32;
+        damage = ((r * attacker.level as i32) / 100).max(1) as i16;
     } else if let Some(fd) = choice.move_id.fixed_damage(attacker, defender) {
         damage = fd;
     } else {
@@ -16345,7 +16352,7 @@ fn damaging_hit_items(
                 Items::LUMINOUSMOSS | Items::ABSORBBULB => choice.move_type == PokemonType::WATER,
                 Items::CELLBATTERY => choice.move_type == PokemonType::ELECTRIC,
                 _ => {
-                    !matches!(choice.move_id, Choices::SEISMICTOSS | Choices::NIGHTSHADE | Choices::DRAGONRAGE | Choices::SONICBOOM | Choices::SUPERFANG | Choices::NATURESMADNESS | Choices::RUINATION | Choices::FINALGAMBIT | Choices::ENDEAVOR | Choices::COUNTER | Choices::MIRRORCOAT | Choices::METALBURST | Choices::COMEUPPANCE)
+                    !matches!(choice.move_id, Choices::SEISMICTOSS | Choices::NIGHTSHADE | Choices::DRAGONRAGE | Choices::SONICBOOM | Choices::PSYWAVE | Choices::SUPERFANG | Choices::NATURESMADNESS | Choices::RUINATION | Choices::FINALGAMBIT | Choices::ENDEAVOR | Choices::COUNTER | Choices::MIRRORCOAT | Choices::METALBURST | Choices::COMEUPPANCE)
                         && crate::doubles::damage::type_mod(&choice.move_type, t).is_some_and(|m| m > 0)
                 }
             };

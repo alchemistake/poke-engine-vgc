@@ -5933,7 +5933,7 @@ fn execute_move_body(
             // (Magnet Rise, Levitate, ...). No draw.
             if choice.move_type == PokemonType::GROUND
                 && choice.move_id != Choices::THOUSANDARROWS
-                && !slot_grounded(&d, &state.side(ts).active()[tsl], state.gravity.active, state.magic_room.active)
+                && !ground_immunity_grounded(state, ts, tsl)
             {
                 continue;
             }
@@ -6458,7 +6458,7 @@ fn execute_move_body(
             // Thousand Arrows ignores this (`ignoreImmunity`). No draw.
             let ground_immune = choice.move_type == PokemonType::GROUND
                 && choice.move_id != Choices::THOUSANDARROWS
-                && !slot_grounded(def, &state.side(target_side).active()[target_slot], state.gravity.active, state.magic_room.active);
+                && !ground_immunity_grounded(state, target_side, target_slot);
             let added = state.side(target_side).active()[target_slot].added_type;
             if ground_immune
                 || crate::doubles::damage::type_mod_with_added(
@@ -6957,8 +6957,11 @@ fn execute_move_body(
     // Substitute `onTryPrimaryHit` (after the accuracy step): a Status move
     // aimed at another pokemon's substitute fails (getDamage -> undefined)
     // unless it is a sound move or the user has Infiltrator. A spread move
-    // checks each target in the hit loop instead.
+    // checks each target in the hit loop instead. Nature Power's `onTryHit`
+    // (`useMove` of the terrain move, then `return null`) runs before it, so
+    // the Substitute never sees it (PS data/moves.ts naturepower).
     if choice.category == MoveCategory::Status
+        && choice.move_id != Choices::NATUREPOWER
         && !is_self
         && !is_field
         && !is_spread
@@ -13065,6 +13068,20 @@ fn slot_grounded(p: &crate::state::Pokemon, a: &ActiveSlot, gravity: bool, magic
                 || (balloon_ignored
                     && !p.has_type(&PokemonType::FLYING)
                     && !matches!(p.ability, Abilities::LEVITATE | Abilities::EELEVATE))))
+}
+
+/// PS `runImmunity('Ground')`: `isGrounded(negateImmunity)` for the pokemon in
+/// a slot. A held Ring Target (`onNegateImmunity: false`, PS data/items.ts
+/// ringtarget) skips only the Flying check; Levitate, Air Balloon, Magnet Rise
+/// and Telekinesis still lift the holder.
+fn ground_immunity_grounded(state: &DoublesState, side: Side, slot: usize) -> bool {
+    let Some(p) = state.side(side).slot_pokemon(slot) else {
+        return false;
+    };
+    let view = (p.item == Items::RINGTARGET && !ignoring_item(state, p))
+        .then(|| crate::doubles::damage::ring_target_view(&PokemonType::GROUND, p))
+        .flatten();
+    slot_grounded(view.as_ref().unwrap_or(p), &state.side(side).active()[slot], state.gravity.active, state.magic_room.active)
 }
 
 /// `slot_grounded` for the pokemon in a slot (false for an empty slot).

@@ -115,6 +115,16 @@ pub fn smackdown_ground_view<'a>(
 ) -> Cow<'a, Pokemon> {
     use crate::engine::abilities::Abilities;
     use crate::engine::items::Items;
+    // Ring Target `onNegateImmunity: false` (PS data/items.ts ringtarget): the
+    // holder loses its type immunities in `runImmunity` (a Ground move only
+    // skips the Flying check of `isGrounded(true)`; Levitate, Air Balloon and
+    // Magnet Rise still lift it). Its immune chart entries are neutral in
+    // `getEffectiveness`, so the view drops those types.
+    if defender.item == Items::RINGTARGET && !item_ignored {
+        if let Some(d) = ring_target_view(move_type, defender) {
+            return Cow::Owned(smackdown_ground_view(move_type, &d, smackdown, item_ignored).into_owned());
+        }
+    }
     // An ignored Air Balloon (Klutz, Magic Room) does not lift its holder,
     // nor does an ignored Iron Ball ground it.
     let balloon = (defender.item == Items::AIRBALLOON && (item_ignored || smackdown))
@@ -141,6 +151,28 @@ pub fn smackdown_ground_view<'a>(
         d.ability = Abilities::NONE;
     }
     Cow::Owned(d)
+}
+
+/// `defender` with every type immune to `move_type` dropped (TYPELESS), or None
+/// when it has no such type. For a Ring Target holder (`smackdown_ground_view`).
+pub fn ring_target_view(move_type: &PokemonType, defender: &Pokemon) -> Option<Pokemon> {
+    let immune = |t: PokemonType| {
+        let mut single = defender.clone();
+        single.types = (t, PokemonType::TYPELESS);
+        t != PokemonType::TYPELESS && crate::engine::damage_calc::type_effectiveness_modifier(move_type, &single) == 0.0
+    };
+    let (a, b) = (immune(defender.types.0), immune(defender.types.1));
+    if !a && !b {
+        return None;
+    }
+    let mut d = defender.clone();
+    if a {
+        d.types.0 = PokemonType::TYPELESS;
+    }
+    if b {
+        d.types.1 = PokemonType::TYPELESS;
+    }
+    Some(d)
 }
 
 /// `type_mod` for a given attacker: Scrappy / Mind's Eye let Normal and Fighting

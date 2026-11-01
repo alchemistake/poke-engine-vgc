@@ -214,7 +214,8 @@ fn commit_queue_sort(actions: &mut Vec<Action>, pre: &mut Vec<PreAction>, state:
                     }
                 }
             }
-            if live && matches!(a.choice.move_id, Choices::COUNTER | Choices::MIRRORCOAT) {
+            // `beforeTurnCallback` moves (Counter, Mirror Coat, Pursuit).
+            if live && matches!(a.choice.move_id, Choices::COUNTER | Choices::MIRRORCOAT | Choices::PURSUIT) {
                 slots.push(QueueSlot { action: None, pre: None, order: 5, priority: 0, fractional: 0, speed: a.speed as i32 });
             }
             slots.push(QueueSlot {
@@ -468,6 +469,7 @@ fn faint_pokemon(state: &mut DoublesState, side: Side, slot: usize) {
         }
         minior_core_revert(s, idx);
         wishiwashi_solo_revert(s, idx);
+        meloetta_aria_revert(s, idx);
         if !untransformed {
             zygarde_complete_faint_revert(s, idx);
         }
@@ -1597,11 +1599,16 @@ pub fn start_fuzz_battle(state: &mut DoublesState, rng: &mut Gen5Rng) {
     // PS `runSwitch` -> `fieldEvent('SwitchIn')`: the leads' on-switch handlers
     // (`onStart` abilities such as Sand Stream / Snow Warning) run fastest
     // first, so the slower lead's weather is the one that stays.
-    let lead_order = sorted_actives(state, rng, "speed tie (switch-in)");
+    let mut lead_order = sorted_actives(state, rng, "speed tie (switch-in)");
     // Tera Shift `onSwitchInPriority` 2 runs before every lead's Start.
     for &(side, slot) in &lead_order {
         tera_shift(state, side, slot);
     }
+    // `onSwitchInPriority` orders the handlers before speed (stable: the speed
+    // order stays within a priority).
+    lead_order.sort_by_key(|&(sd, sl)| {
+        -state.side(sd).slot_pokemon(sl).map_or(0, |p| switch_in_priority(p.ability))
+    });
     for (side, slot) in lead_order {
         if apply_on_switch_abilities(state, side, slot, rng) {
             // Terrain just set (e.g. Grassy Surge): `eachEvent("TerrainChange")`.
@@ -4041,7 +4048,9 @@ fn execute_action_body(
     let had_db = state.side(action.side).active()[db_slot].destinybond;
     // Any other move already removed it before running (above), so a Destiny
     // Bond called by Sleep Talk / Copycat during that move keeps its volatile.
-    if action.choice.move_id == Choices::DESTINYBOND && move_order.len() == order_len {
+    // `onMoveAborted` (a failed BeforeMove) removes it; a `cant nopp` after
+    // BeforeMove keeps it. PS data/moves.ts destinybond.condition.
+    if action.choice.move_id == Choices::DESTINYBOND && move_order.len() == order_len && before_move_aborted {
         state.side_mut(action.side).active_slot_mut(db_slot).destinybond = false;
     }
     // Destiny Bond itself: `volatileStatus: 'destinybond'` is added when the
@@ -4849,8 +4858,9 @@ fn execute_move_body(
                         try_gem(state, rng, side, slot, idx, &action.choice, ts, tsl);
                     }
                     let ghost = state.side(ts).slot_pokemon(tsl).is_some_and(|p| p.has_type(&PokemonType::GHOST));
-                    let protected = state.side(ts).active()[tsl].protected;
-                    if !ghost && !protected && switched_in_alive(state, ts, tsl) {
+                    // `tryMoveHit` runs no Protect `TryHit`: the release hits a
+                    // protected target. PS data/moves.ts bide.
+                    if !ghost && switched_in_alive(state, ts, tsl) {
                         let dmg = total.saturating_mul(2);
                         let sub = state.side(ts).active()[tsl].substitute_health;
                         if sub > 0 {
@@ -5655,6 +5665,16 @@ fn execute_move_body(
                 if let Some(b) = &charge_boost {
                     apply_boosts(state, rng, side, idx, b, false);
                 }
+                // Power Herb `onChargeMove`: used up, the move fires this turn
+                // (no `twoturnmove`). PS data/items.ts powerherb.
+                let herb = choice.move_id != Choices::SKYDROP && {
+                    let p = state.side(side).team_member(idx);
+                    p.item == Items::POWERHERB && !ignoring_item(state, p)
+                };
+                if herb {
+                    use_item(state, rng, side, slot, idx, false);
+                }
+                if !herb {
                 let turns = match choice.charge_setup {
                     ChargeSetup::Always { turns }
                     | ChargeSetup::NotSun { turns }
@@ -5683,6 +5703,7 @@ fn execute_move_body(
                 };
                 push_order(move_order);
                 return;
+                }
             }
             None => {
                 // Weather skips the charge (Electro Shot in rain): the
@@ -8499,7 +8520,22 @@ fn execute_move_body(
         // Target boosts (Scary Face, Nasty Plot on foe, etc.) — no draw.
         // Upstream also stores PS `self.boosts` drops (Close Combat, ...) in
         // `boost`; those are applied (with their roll) via `self_boosts`.
-        if let Some(b) = choice.boost.as_ref().filter(|_| choice.self_boosts.is_none()) {
+        // Venom Drench `onHit`: only a poisoned target gets the drops; on any
+        // other it fails (a spread use fails when every target did).
+        // PS data/moves.ts venomdrench.
+        let venom_skip = choice.move_id == Choices::VENOMDRENCH
+            && !state
+                .side(target_side)
+                .slot_pokemon(target_slot)
+                .is_some_and(|p| matches!(p.status, PokemonStatus::POISON | PokemonStatus::TOXIC));
+        if venom_skip {
+            if hit_targets.len() > 1 {
+                status_spread_fails += 1;
+            } else {
+                move_failed = true;
+            }
+        }
+        if let Some(b) = choice.boost.as_ref().filter(|_| choice.self_boosts.is_none() && !venom_skip) {
             // The upstream table has no evasion stages: Double Team +1,
             // Minimize +2, Sweet Scent -2 (data/moves.ts `boosts`).
             let mut b = b.clone();
@@ -8651,6 +8687,22 @@ fn execute_move_body(
         // Jungle Healing `onHit` (`target: allies`): heal `modify(maxhp, 0.25)`
         // and cure the status of the user and its ally; fails only when it
         // did neither for anyone. PS data/moves.ts junglehealing.
+        // Take Heart `onHit`: +1 SpA / SpD and `cureStatus`; fails only when
+        // neither did anything. PS data/moves.ts takeheart.
+        if choice.move_id == Choices::TAKEHEART && ti == 0 && !move_failed {
+            let b = StatBoosts { special_attack: 1, special_defense: 1, ..Default::default() };
+            let boosted = apply_boosts_from(state, rng, side, idx, &b, false, false);
+            let pm = state.side_mut(side).team_member_mut(idx);
+            let cured = pm.status != PokemonStatus::NONE;
+            if cured {
+                pm.status = PokemonStatus::NONE;
+                pm.sleep_turns = 0;
+                state.side_mut(side).toxic_stage[idx as usize] = 0;
+            }
+            if !boosted && !cured {
+                move_failed = true;
+            }
+        }
         // Lunar Blessing has the same `onHit` (PS data/moves.ts lunarblessing).
         if matches!(choice.move_id, Choices::JUNGLEHEALING | Choices::LUNARBLESSING) && ti == 0 {
             let mut any = false;
@@ -9664,8 +9716,12 @@ fn execute_move_body(
 
         // Heal Pulse `onHit`: heals the target by ceil(maxhp/2) (x0.75 with
         // Mega Launcher); fails at full HP.
-        if choice.move_id == Choices::HEALPULSE && ti == 0 {
-            let mega = state.side(side).team_member(idx).ability == Abilities::MEGALAUNCHER;
+        // Floral Healing (PS data/moves.ts floralhealing): the same, with
+        // `modify(baseMaxhp, 0.667)` on Grassy Terrain.
+        if matches!(choice.move_id, Choices::HEALPULSE | Choices::FLORALHEALING) && ti == 0 {
+            let mega = choice.move_id == Choices::HEALPULSE && state.side(side).team_member(idx).ability == Abilities::MEGALAUNCHER;
+            let grassy = choice.move_id == Choices::FLORALHEALING
+                && state.terrain.terrain_type == crate::engine::state::Terrain::GRASSYTERRAIN;
             // Heal Block (PS data/moves.ts healblock.onTryHeal) returns
             // false for any heal but Pollen Puff's: `battle.heal` fails
             // (`-fail|heal`) before the target is healed.
@@ -9674,6 +9730,8 @@ fn execute_move_body(
                 let pm = state.side_mut(target_side).team_member_mut(tidx);
                 let amount = if mega {
                     ((pm.maxhp as i64 * 3072 + 2047) / 4096) as i16
+                } else if grassy {
+                    ((pm.maxhp as i64 * 2732 + 2047) / 4096) as i16
                 } else {
                     (pm.maxhp + 1) / 2
                 };
@@ -11508,6 +11566,8 @@ fn execute_move_body(
             Choices::TRIATTACK | Choices::DIRECLAW => {
                 // PS `secondary.onHit`: `this.sample([...])` -> random(3).
                 let chance = if choice.move_id == Choices::TRIATTACK { 20 } else { 30 };
+                // Serene Grace `onModifyMove`: secondary chances x2.
+                let chance = if state.side(side).team_member(idx).ability == Abilities::SERENEGRACE { chance * 2 } else { chance };
                 if rng.label("secondary").random(100) < chance {
                     let pick = rng.label("sample").random(3) as usize;
                     let st = if choice.move_id == Choices::TRIATTACK {
@@ -12427,27 +12487,7 @@ fn execute_move_body(
             // Kee (physical, +1 Def) / Maranga (special, +1 SpD) Berry
             // `onAfterMoveSecondary`: eaten once, after every hit (Beat Up).
             // PS data/items.ts keeberry / marangaberry.
-            {
-                let t = state.side(ts).team_member(ti);
-                let it = t.item;
-                if t.hp > 0
-                    && matches!(it, Items::KEEBERRY | Items::MARANGABERRY)
-                    && !ignoring_item(state, t)
-                    && choice.category == if it == Items::KEEBERRY { MoveCategory::Physical } else { MoveCategory::Special }
-                    && !(choice.move_id == Choices::PRESENT && choice.heal.is_some())
-                    && !unnerved(state, ts)
-                {
-                    let n = if t.ability == Abilities::RIPEN { 2 } else { 1 };
-                    use_item(state, rng, ts, tsl, ti, true);
-                    let b = if it == Items::KEEBERRY {
-                        StatBoosts { defense: n, ..Default::default() }
-                    } else {
-                        StatBoosts { special_defense: n, ..Default::default() }
-                    };
-                    apply_boosts(state, rng, ts, ti, &b, false);
-                    cheek_pouch(state, ts, tsl, ti);
-                }
-            }
+            kee_maranga(state, rng, ts, tsl, ti, choice);
             let t = state.side(ts).team_member(ti);
             // Pickpocket `onAfterMoveSecondary`: an empty-handed holder takes the
             // contact attacker's item. PS data/abilities.ts pickpocket.
@@ -12679,6 +12719,27 @@ fn execute_move_body(
         if p.hp > 0 && p.item == Items::THROATSPRAY && !ignoring_item(state, p) {
             use_item(state, rng, side, slot, idx, false);
             apply_boosts(state, rng, side, idx, &StatBoosts { special_attack: 1, ..Default::default() }, false);
+        }
+    }
+    // Relic Song `onAfterMoveSecondarySelf`: an untransformed Meloetta switches
+    // between Aria and Pirouette. PS data/moves.ts relicsong.
+    if choice.move_id == Choices::RELICSONG
+        && move_ok
+        && !sheer
+        && state.side(side).active()[slot].pokemon_index == Some(idx)
+        && state.side(side).transform_save[idx as usize].is_none()
+    {
+        use crate::pokemon::PokemonName as N;
+        match state.side(side).team_member(idx).id {
+            N::MELOETTA => {
+                ice_face_set_forme(state, side, idx, N::MELOETTAPIROUETTE, "meloettapirouette");
+                set_species_types(state, side, slot, idx, (PokemonType::NORMAL, PokemonType::FIGHTING));
+            }
+            N::MELOETTAPIROUETTE => {
+                ice_face_set_forme(state, side, idx, N::MELOETTA, "meloetta");
+                set_species_types(state, side, slot, idx, (PokemonType::NORMAL, PokemonType::PSYCHIC));
+            }
+            _ => {}
         }
     }
     // useMoveInner: `runEvent('EmergencyExit', pokemon)` after the user's
@@ -13803,6 +13864,36 @@ fn zygarde_complete_faint_revert(s: &mut crate::doubles::state::DoublesSide, idx
     pm.speed = spe;
     pm.maxhp = maxhp;
     pm.types = (PokemonType::from(data.types.0), PokemonType::from(data.types.1));
+}
+
+/// `clearVolatile` -> `setSpecies(baseSpecies)` for Meloetta-Pirouette
+/// (`battleOnly`): Aria forme, stats and types.
+fn meloetta_aria_revert(s: &mut crate::doubles::state::DoublesSide, idx: PokemonIndex) {
+    use crate::pokemon::PokemonName as N;
+    if s.team_member(idx).id != N::MELOETTAPIROUETTE {
+        return;
+    }
+    let Some(data) = crate::doubles::species_types::species_data("meloetta") else { return };
+    let p = s.team_member(idx);
+    let (e, lvl, nat) = (p.evs, p.level as u8, p.nature.clone());
+    let evs = crate::doubles::state::Evs {
+        hp: e.0 as u16,
+        atk: e.1 as u16,
+        def: e.2 as u16,
+        spa: e.3 as u16,
+        spd: e.4 as u16,
+        spe: e.5 as u16,
+    };
+    let (_, atk, def, spa, spd, spe) = crate::doubles::state::compute_stats(data.base_stats, &evs, lvl, nat);
+    let pm = s.team_member_mut(idx);
+    pm.id = N::MELOETTA;
+    pm.attack = atk;
+    pm.defense = def;
+    pm.special_attack = spa;
+    pm.special_defense = spd;
+    pm.speed = spe;
+    pm.types = (PokemonType::NORMAL, PokemonType::PSYCHIC);
+    s.set_speed_cache(idx as usize, spe as _);
 }
 
 /// `clearVolatile` -> `setSpecies(baseSpecies)` for Wishiwashi-School: Solo
@@ -14945,6 +15036,47 @@ fn blunder_policy(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot:
 fn attacker_has_pads(state: &DoublesState, side: Side, idx: PokemonIndex) -> bool {
     let p = state.side(side).team_member(idx);
     p.item == Items::PROTECTIVEPADS && !ignoring_item(state, p)
+}
+
+/// Kee (physical, +1 Def) / Maranga (special, +1 SpD) Berry
+/// `onAfterMoveSecondary`. PS data/items.ts keeberry / marangaberry.
+fn kee_maranga(state: &mut DoublesState, rng: &mut Gen5Rng, ts: Side, tsl: usize, ti: PokemonIndex, choice: &Choice) {
+    let t = state.side(ts).team_member(ti);
+    let it = t.item;
+    if t.hp > 0
+        && matches!(it, Items::KEEBERRY | Items::MARANGABERRY)
+        && !ignoring_item(state, t)
+        && choice.category == if it == Items::KEEBERRY { MoveCategory::Physical } else { MoveCategory::Special }
+        && !(choice.move_id == Choices::PRESENT && choice.heal.is_some())
+        && !unnerved(state, ts)
+    {
+        let n = if t.ability == Abilities::RIPEN { 2 } else { 1 };
+        use_item(state, rng, ts, tsl, ti, true);
+        let b = if it == Items::KEEBERRY {
+            StatBoosts { defense: n, ..Default::default() }
+        } else {
+            StatBoosts { special_defense: n, ..Default::default() }
+        };
+        apply_boosts(state, rng, ts, ti, &b, false);
+        cheek_pouch(state, ts, tsl, ti);
+    }
+}
+
+/// PS `onSwitchInPriority` of an ability (0 when unset).
+fn switch_in_priority(a: Abilities) -> i32 {
+    match a {
+        Abilities::NEUTRALIZINGGAS | Abilities::TERASHIFT => 2,
+        Abilities::ASONEGLASTRIER | Abilities::ASONESPECTRIER | Abilities::KLUTZ | Abilities::UNNERVE => 1,
+        Abilities::MIMICRY | Abilities::SCHOOLING | Abilities::SHIELDSDOWN => -1,
+        Abilities::COSTAR
+        | Abilities::FLOWERGIFT
+        | Abilities::FORECAST
+        | Abilities::HOSPITALITY
+        | Abilities::ICEFACE
+        | Abilities::PROTOSYNTHESIS
+        | Abilities::QUARKDRIVE => -2,
+        _ => 0,
+    }
 }
 
 /// A `miss` event: the user's move missed the pokemon in `ts` / `tsl`.
@@ -16298,6 +16430,7 @@ fn future_move_hit(
         // The target's item `onDamagingHit` (Air Balloon pops).
         if let Some(didx) = hit_pi {
             damaging_hit_items(state, rng, ss, sslot, si, ts, tslot, didx, &choice, false);
+            kee_maranga(state, rng, ts, tslot, didx, &choice);
         }
         // Red Card `onAfterMoveSecondary` (champions hitStepMoveHitLoop runs it
         // for the delayed hit too): an active source is dragged out after the
@@ -18838,15 +18971,32 @@ fn berry_effect_labeled(
         _ => false,
     };
     match item {
-        Items::SITRUSBERRY | Items::ORANBERRY if !heal_blocked => {
+        // Berry / Gold Berry `onEat`: heal 10 / 30 (Fling, Bug Bite, ...).
+        Items::SITRUSBERRY | Items::ORANBERRY | Items::BERRY | Items::GOLDBERRY if !heal_blocked => {
             let maxhp = state.side(side).team_member(idx).maxhp;
-            let amount = if item == Items::SITRUSBERRY { maxhp / 4 } else { 10 } * if ripen { 2 } else { 1 };
+            let base = match item {
+                Items::SITRUSBERRY => maxhp / 4,
+                Items::GOLDBERRY => 30,
+                _ => 10,
+            };
+            let amount = base * if ripen { 2 } else { 1 };
             let m = state.side_mut(side).team_member_mut(idx);
             if m.hp > 0 {
                 let hp0_ev = m.hp;
                 m.hp = (m.hp + amount.max(1)).min(m.maxhp);
                 hp_event(state, side, idx, hp0_ev, "berry");
             }
+        }
+        // Kee / Maranga Berry `onEat` (eaten through Fling, Bug Bite, ...):
+        // +1 Def / SpD (Ripen: +2). PS data/items.ts keeberry / marangaberry.
+        Items::KEEBERRY | Items::MARANGABERRY => {
+            let n = if ripen { 2 } else { 1 };
+            let b = if item == Items::KEEBERRY {
+                StatBoosts { defense: n, ..Default::default() }
+            } else {
+                StatBoosts { special_defense: n, ..Default::default() }
+            };
+            apply_boosts(state, rng, side, idx, &b, false);
         }
         // Stat pinch berries `onEat`: +1 (Ripen: +2). PS data/items.ts.
         Items::LIECHIBERRY | Items::GANLONBERRY | Items::PETAYABERRY | Items::APICOTBERRY | Items::SALACBERRY => {
@@ -20121,6 +20271,7 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
         // Minior-Meteor and Wishiwashi-School are `battleOnly` too.
         minior_core_revert(s, old);
         wishiwashi_solo_revert(s, old);
+        meloetta_aria_revert(s, old);
         // A transformed pokemon's type changes were made to the copied types:
         // `setSpecies(baseSpecies)` brings its own back.
         let roost = s.active_slot_mut(slot).roost_orig.take();

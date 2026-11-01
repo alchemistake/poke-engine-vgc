@@ -6709,7 +6709,7 @@ fn build_moves() -> HashMap<Choices, Choice> {
                 effect: Effect::Status(PokemonStatus::PARALYZE),
             }].into()),
             pp: 8,
-            charge_setup: ChargeSetup::OnlySnow { turns: 1 },
+            charge_setup: ChargeSetup::Always { turns: 1 },
             ..Default::default()
         },
     );
@@ -9205,7 +9205,7 @@ fn build_moves() -> HashMap<Choices, Choice> {
                 effect: Effect::Status(PokemonStatus::BURN),
             }].into()),
             pp: 8,
-            charge_setup: ChargeSetup::OnlySnow { turns: 1 },
+            charge_setup: ChargeSetup::Always { turns: 1 },
             ..Default::default()
         },
     );
@@ -21005,14 +21005,12 @@ pub enum MoveTarget {
 pub enum ChargeSetup {
     /// Not a two-turn move.
     None,
-    /// Always charges (Dig, Fly, Bounce, Dive, Shadow Force, ...).
+    /// Always charges (Dig, Fly, Bounce, Dive, Shadow Force, Ice Burn, ...).
     Always { turns: u8 },
     /// Charges unless the weather is harsh sun (Solar Beam, Solar Blade).
     NotSun { turns: u8 },
     /// Skips the charge in rain (Electro Shot: Rain Dance / Primordial Sea).
     OnlyRain { turns: u8 },
-    /// Charges only in snow (Freeze Shock, Ice Burn).
-    OnlySnow { turns: u8 },
 }
 
 impl Default for ChargeSetup {

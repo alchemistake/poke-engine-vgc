@@ -144,6 +144,13 @@ struct DoublesFuzzBattleArgs {
     /// off, and a battle that panics yields `{"error": "panic: ..."}`.
     #[clap(long, default_value_t = false)]
     batch: bool,
+
+    /// With `--batch`: each entry is `{"input": <battle>, "expect": [<PS turn
+    /// hash>, ...], "winner": "<PS winner>"}` (the fuzzer's PS cache). The
+    /// engine compares every turn itself (`fuzz_canonical_hash`) and
+    /// writes one number per battle: -1 = pass, else the first bad turn.
+    #[clap(long, default_value_t = false)]
+    check: bool,
 }
 
 impl Default for IOData {
@@ -485,7 +492,38 @@ pub fn main() {
             SubCommand::DoublesFuzzBattle(args) => {
                 let json = std::fs::read_to_string(&args.input)
                     .unwrap_or_else(|e| panic!("failed to read {}: {}", args.input, e));
-                let out_json = if args.batch {
+                let out_json = if args.batch && args.check {
+                    #[derive(serde::Deserialize)]
+                    struct CheckEntry {
+                        input: crate::doubles::state::BattleInput,
+                        expect: Vec<String>,
+                        winner: String,
+                    }
+                    let entries: Vec<CheckEntry> =
+                        serde_json::from_str(&json).unwrap_or_else(|e| panic!("bad JSON: {}", e));
+                    let results: Vec<i64> = entries
+                        .iter()
+                        .map(|e| {
+                            let r = match std::panic::catch_unwind(|| run_doubles_fuzz_input_lean(&e.input)) {
+                                Ok(r) => r,
+                                Err(_) => return 0,
+                            };
+                            if r.error.is_some() || r.turns.len() < e.expect.len() {
+                                return 0;
+                            }
+                            for (n, want) in e.expect.iter().enumerate() {
+                                if crate::doubles::state::fuzz_canonical_hash(&r.turns[n]) != *want {
+                                    return n as i64;
+                                }
+                            }
+                            if r.winner != e.winner {
+                                return e.expect.len() as i64;
+                            }
+                            -1
+                        })
+                        .collect();
+                    serde_json::to_string(&results).unwrap_or_else(|e| panic!("serialize: {}", e))
+                } else if args.batch {
                     let inputs: Vec<crate::doubles::state::BattleInput> =
                         serde_json::from_str(&json).unwrap_or_else(|e| panic!("bad JSON: {}", e));
                     let results: Vec<serde_json::Value> = inputs
@@ -884,9 +922,22 @@ fn command_loop(mut io_data: IOData) {
 /// Run one doubles fuzz battle input (`doubles-fuzz-battle`). `trace` turns
 /// on the PRNG draw-purpose log used by fuzzer reports.
 #[cfg(not(any(feature = "gen1", feature = "gen2", feature = "gen3")))]
+/// `run_doubles_fuzz_input` without tracing or the legal-option lists.
+fn run_doubles_fuzz_input_lean(input: &crate::doubles::state::BattleInput) -> crate::doubles::state::FuzzBattleResult {
+    run_doubles_fuzz_input_opts(input, false, false)
+}
+
 fn run_doubles_fuzz_input(
     input: &crate::doubles::state::BattleInput,
     trace: bool,
+) -> crate::doubles::state::FuzzBattleResult {
+    run_doubles_fuzz_input_opts(input, trace, true)
+}
+
+fn run_doubles_fuzz_input_opts(
+    input: &crate::doubles::state::BattleInput,
+    trace: bool,
+    snap_options: bool,
 ) -> crate::doubles::state::FuzzBattleResult {
     let choices = input
         .choices
@@ -902,6 +953,7 @@ fn run_doubles_fuzz_input(
         });
     dstate.send_out_leads(&leads.a, &leads.b);
     dstate.record_events = input.events;
+    dstate.snap_options = snap_options;
     let mut rng = crate::doubles::rng::Gen5Rng::new(input.seed);
     rng.trace = trace;
     crate::doubles::battle::run_battle_fuzz(&mut dstate, &mut rng, &choices, &input.pre_switches, input.stop_after)

@@ -187,5 +187,15 @@ missing.
   (`dist/`); a harness change or PS rebuild starts a new cache (old ones are
   deleted). Cached battles run in engine batches of 128. Failure reports always run PS live.
   `--no-cache` disables it.
+- Engine-side compare: a cache file is one entry of the engine's
+  `doubles-fuzz-battle --batch --check` input, `{input, expect, winner}`,
+  where `expect[n]` is a 64-bit FNV-1a hash of PS's normalized state after
+  turn n (`psCanonical`). The engine replays the battle, hashes its own state
+  the same way (`fuzz_canonical_hash` in `src/doubles/state.rs`, which mirrors
+  `normalizePETurn`) and returns only the first bad turn. Change
+  `normalizePETurn` / `normalizePSState` and `fuzz_canonical` together; a
+  mismatch between them shows as "fast path failed, stepwise re-run passed".
+- Fill the cache ahead of time (all PS battles up to a seed, failures listed):
+  `node fuzz/census.js 0 100000`.
 - Typical (18 cores): 100 battles ~0.6 s cold, ~0.12 s cached; a
   1000-battle sweep that fails at seed 100 ~0.3 s cached.

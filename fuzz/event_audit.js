@@ -80,14 +80,18 @@ function wrapper(argv) {
   const ii = argv.indexOf('--input');
   const oi = argv.indexOf('--output');
   const batch = argv.includes('--batch');
+  // `--batch --check` (fuzz.js fast path): entries are `{input, expect,
+  // winner}`. Audit a plain `--batch` run of the inputs, then hand fuzz.js
+  // the real `--check` result.
+  const check = argv.includes('--check');
   const input = JSON.parse(fs.readFileSync(argv[ii + 1], 'utf8'));
-  const inputs = batch ? input : [input];
+  const inputs = check ? input.map((e) => e.input) : batch ? input : [input];
   for (const x of inputs) x.events = true;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'evaudit-'));
   const inPath = path.join(tmp, 'in.json');
   const outPath = path.join(tmp, 'out.json');
   fs.writeFileSync(inPath, JSON.stringify(batch ? inputs : inputs[0]));
-  const args = argv.map((a, k) => (k === ii + 1 ? inPath : k === oi + 1 ? outPath : a));
+  const args = argv.map((a, k) => (k === ii + 1 ? inPath : k === oi + 1 ? outPath : a)).filter((a) => a !== '--check');
   const r = spawnSync(ENGINE, args, { encoding: 'utf8', maxBuffer: 1 << 28 });
   process.stderr.write(r.stderr || '');
   if (r.status !== 0) {
@@ -103,6 +107,13 @@ function wrapper(argv) {
   if (problems.length) {
     fs.mkdirSync(path.dirname(LOG), { recursive: true });
     fs.appendFileSync(LOG, problems.join('\n') + '\n');
+  }
+  if (check) {
+    const rc = spawnSync(ENGINE, argv, { encoding: 'utf8', maxBuffer: 1 << 28 });
+    process.stderr.write(rc.stderr || '');
+    process.stdout.write(rc.stdout || '');
+    fs.rmSync(tmp, { recursive: true, force: true });
+    process.exit(rc.status === null ? 1 : rc.status);
   }
   results.forEach(strip);
   const text = batch ? JSON.stringify(results) : JSON.stringify(results[0], null, 2);

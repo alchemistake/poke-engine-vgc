@@ -1018,6 +1018,9 @@ pub struct DoublesState {
     /// Record typed battle events into `events` (off by default; the battle
     /// is the same either way).
     pub record_events: bool,
+    /// Compute `a_options` / `b_options` in snapshots (off in the fuzzer's
+    /// `--batch --check` mode, which never reads them).
+    pub snap_options: bool,
     /// The events of the current turn (cleared at turn start) when
     /// `record_events` is on.
     pub events: Vec<BattleEvent>,
@@ -1848,6 +1851,7 @@ impl DoublesState {
             gas_ending: None,
             record: true,
             record_events: false,
+            snap_options: true,
             events: Vec::new(),
             ev_move: None,
             ev_drag: false,
@@ -2513,8 +2517,16 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
         a_side_conditions: sc_entries(&state.side_one.side_conditions, &state.side_one.sc_order),
         b_side_conditions: sc_entries(&state.side_two.side_conditions, &state.side_two.sc_order),
         move_order,
-        a_options: (0..2).map(|sl| crate::doubles::legal::slot_options(state, Side::One, sl)).collect(),
-        b_options: (0..2).map(|sl| crate::doubles::legal::slot_options(state, Side::Two, sl)).collect(),
+        a_options: if state.snap_options {
+            (0..2).map(|sl| crate::doubles::legal::slot_options(state, Side::One, sl)).collect()
+        } else {
+            Vec::new()
+        },
+        b_options: if state.snap_options {
+            (0..2).map(|sl| crate::doubles::legal::slot_options(state, Side::Two, sl)).collect()
+        } else {
+            Vec::new()
+        },
         events: state.events.clone(),
     }
 }
@@ -2597,4 +2609,131 @@ impl DoublesSide {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Fuzzer fast check: the canonical form of a turn snapshot
+// ---------------------------------------------------------------------------
+
+/// PS-side `squash` in fuzz/fuzz.js: lowercase, keep only `[a-z0-9]`.
+fn fuzz_squash(s: &str) -> String {
+    s.to_lowercase().chars().filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit()).collect()
+}
+
+/// `squashOrderEntry` in fuzz/fuzz.js: drop the slot digits after the side
+/// tag, drop the species' forme suffix, squash.
+fn fuzz_squash_order_entry(s: &str) -> String {
+    let b = s.as_bytes();
+    let s = if !b.is_empty() && (b[0] == b'A' || b[0] == b'B') && b.len() > 1 && b[1].is_ascii_digit() {
+        let n = b[1..].iter().take_while(|c| c.is_ascii_digit()).count();
+        format!("{}{}", &s[..1], &s[1 + n..])
+    } else {
+        s.to_string()
+    };
+    let mut parts: Vec<&str> = s.split(':').collect();
+    if parts.len() == 3 {
+        parts[1] = parts[1].split('-').next().unwrap_or("");
+    }
+    fuzz_squash(&parts.join(":"))
+}
+
+fn json_str(s: &str) -> String {
+    serde_json::to_string(s).unwrap()
+}
+
+/// `JSON.stringify` of fuzz/fuzz.js `normalizePETurn(turn)` without `turn` and
+/// `moveOrderRaw`: the string the fuzzer's fast path compares with the same
+/// form of PS's snapshot. Keep it in step with `normalizePETurn`.
+pub fn fuzz_canonical(t: &FuzzTurnState) -> String {
+    use std::fmt::Write;
+    let mut o = String::with_capacity(2048);
+    let side = |o: &mut String, mons: &[FullSlot], sc: &[SideConditionEntry]| {
+        o.push_str("{\"pokemon\":[");
+        for (i, p) in mons.iter().enumerate() {
+            if i > 0 {
+                o.push(',');
+            }
+            let b = &p.boosts;
+            let _ = write!(
+                o,
+                "{{\"species\":{},\"position\":{},\"hp\":{},\"maxhp\":{},\"status\":{},\"fainted\":{},\"activeSlot\":{},\
+\"boosts\":{{\"atk\":{},\"def\":{},\"spa\":{},\"spd\":{},\"spe\":{},\"acc\":{},\"eva\":{}}},\
+\"forme\":{},\"item\":{},\"ability\":{},\"pp\":{},\"volatiles\":{}}}",
+                json_str(&fuzz_squash(p.species.split('-').next().unwrap_or(""))),
+                i,
+                p.hp,
+                p.maxhp,
+                json_str(p.status),
+                p.fainted,
+                p.active_slot.map_or("null".to_string(), |x| x.to_string()),
+                b.atk, b.def, b.spa, b.spd, b.spe, b.acc, b.eva,
+                json_str(&fuzz_squash(p.forme)),
+                json_str(p.item),
+                json_str(p.ability),
+                serde_json::to_string(&p.pp).unwrap(),
+                serde_json::to_string(&p.volatiles).unwrap(),
+            );
+        }
+        o.push_str("],\"sideConditions\":[");
+        for (i, c) in sc.iter().enumerate() {
+            if i > 0 {
+                o.push(',');
+            }
+            match c.duration {
+                Some(d) => {
+                    let _ = write!(o, "{{\"id\":{},\"duration\":{}}}", json_str(c.id), d);
+                }
+                None => {
+                    let _ = write!(o, "{{\"id\":{}}}", json_str(c.id));
+                }
+            }
+        }
+        o.push_str("]}");
+    };
+    // WEATHER_MAP / TERRAIN_MAP in fuzz/fuzz.js, then lowercase.
+    let weather = match t.weather {
+        "sandstorm" => "sand",
+        "primariesun" => "harshsun",
+        "primaryrain" => "heavyrain",
+        w => w,
+    }
+    .to_lowercase();
+    let terrain = match t.terrain {
+        "electric" => "electricterrain",
+        "psyxic" => "psychicterrain",
+        "misty" => "mistyterrain",
+        "grassy" => "grassyterrain",
+        w => w,
+    }
+    .to_lowercase();
+    let mut pseudo: Vec<String> = t.pseudo_weather.iter().map(|s| fuzz_squash(s)).collect();
+    pseudo.sort();
+    let order: Vec<String> = t.move_order.iter().map(|e| fuzz_squash_order_entry(&e.to_string())).collect();
+    o.push_str("{\"a\":");
+    side(&mut o, &t.a, &t.a_side_conditions);
+    o.push_str(",\"b\":");
+    side(&mut o, &t.b, &t.b_side_conditions);
+    let _ = write!(
+        o,
+        ",\"weather\":{},\"terrain\":{},\"trickRoom\":{},\"pseudoWeather\":{},\"weatherTurns\":{},\"terrainTurns\":{},\"pseudoWeatherTurns\":{},\"moveOrder\":{}}}",
+        json_str(&weather),
+        json_str(&terrain),
+        t.trick_room,
+        serde_json::to_string(&pseudo).unwrap(),
+        t.weather_turns,
+        t.terrain_turns,
+        serde_json::to_string(&t.pseudo_weather_turns).unwrap(),
+        serde_json::to_string(&order).unwrap(),
+    );
+    o
+}
+
+/// 64-bit FNV-1a of `fuzz_canonical` as 16 hex digits (`psCanonical` in
+/// fuzz/fuzz.js hashes PS's side the same way).
+pub fn fuzz_canonical_hash(t: &FuzzTurnState) -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in fuzz_canonical(t).bytes() {
+        h = (h ^ b as u64).wrapping_mul(0x100000001b3);
+    }
+    format!("{:016x}", h)
 }

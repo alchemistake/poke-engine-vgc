@@ -1346,18 +1346,36 @@ function psCacheDir() {
   fs.mkdirSync(PS_CACHE_DIR, { recursive: true });
   return PS_CACHE_DIR;
 }
+// A cache file is one ready-made entry of the engine's `--batch --check`
+// input (JSON text, never parsed here): `{input, expect, winner}`, where
+// `expect[n]` is `psCanonical` of PS's state after turn n (0 = initial).
 function psCacheRead(seed) {
   try {
-    return JSON.parse(fs.readFileSync(path.join(psCacheDir(), `${seed}.json`), 'utf8'));
+    return fs.readFileSync(path.join(psCacheDir(), `${seed}.json`), 'utf8');
   } catch (e) {
     return null;
   }
 }
-function psCacheWrite(seed, game) {
+function psCacheWrite(seed, entry) {
   const file = path.join(psCacheDir(), `${seed}.json`);
   const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(game));
+  fs.writeFileSync(tmp, entry);
   fs.renameSync(tmp, file); // atomic: parallel workers never read half a file
+}
+
+// The compared part of a PS snapshot as one string: JSON of
+// `normalizePSState` without `turn` / `moveOrderRaw`. The engine builds the
+// same string from its own state (`fuzz_canonical` in src/doubles/state.rs,
+// which mirrors `normalizePETurn`); equal strings = no `deepDiff` difference.
+// The cache keeps its 64-bit FNV-1a hash (UTF-8 bytes, 16 hex digits), as
+// the engine's `fuzz_canonical_hash`.
+function psCanonical(snap) {
+  const { moveOrderRaw: _a, turn: _t, ...c } = normalizePSState(snap);
+  let h = 0xcbf29ce484222325n;
+  for (const b of Buffer.from(JSON.stringify(c), 'utf8')) {
+    h = ((h ^ BigInt(b)) * 0x100000001b3n) & 0xffffffffffffffffn;
+  }
+  return h.toString(16).padStart(16, '0');
 }
 
 // Tests checked per engine call on the fast path.
@@ -1387,68 +1405,55 @@ function makeTest(testSeed) {
 }
 
 // Fast pass/fail check of several tests: play each whole PS battle (no draw
-// tracing), run the engine ONCE for all of them (`--batch`), and compare
-// every turn's state and the winner. The engine is deterministic, so turn n
+// tracing), run the engine ONCE for all of them (`--batch --check`), which
+// compares every turn and the winner itself. The engine is deterministic, so turn n
 // of a full run equals the stepwise run with `stop_after: n`. Returns the
 // index of the first test that is not a clean pass (PS error, engine error
 // or mismatch), or -1; the caller re-runs that test stepwise for the report.
 function fastCheckBatch(opts, dir, seeds) {
-  const games = [];
+  const entries = [];
   let firstBad = -1;
   TRACE_DRAWS = false;
   for (let k = 0; k < seeds.length; k++) {
-    let game = opts.cache ? psCacheRead(seeds[k]) : null;
-    if (!game) {
+    let entry = opts.cache ? psCacheRead(seeds[k]) : null;
+    if (!entry) {
       const { controller, battleSeed, teamA, teamB } = makeTest(seeds[k]);
-      let initSnap = null;
-      const snaps = [];
+      const expect = [];
       try {
         const meta = stepPSBattle(battleSeed, teamA, teamB, controller,
           (snap) => {
-            initSnap = snap;
+            expect.push(psCanonical(snap));
           },
           (snap) => {
-            snaps.push(snap);
+            expect.push(psCanonical(snap));
           });
         const { turns, leads, battleTeamA, battleTeamB, winner } = meta;
-        // `turns.preSwitches` (an array property) does not survive JSON: keep it in meta.
-        game = { battleSeed, meta: { turns, preSwitches: turns.preSwitches, leads, battleTeamA, battleTeamB, winner }, initSnap, snaps };
+        // `turns.preSwitches` (an array property) does not survive JSON: pass it in meta.
+        const input = engineInput(battleSeed, { preSwitches: turns.preSwitches, leads, battleTeamA, battleTeamB },
+          turns, turns.length);
+        entry = JSON.stringify({ input, expect, winner });
       } catch (e) {
         firstBad = k; // later tests cannot be first (PS errors are not cached)
         break;
       }
-      if (opts.cache) psCacheWrite(seeds[k], game);
+      if (opts.cache) psCacheWrite(seeds[k], entry);
     }
-    games.push(game);
+    entries.push(entry);
   }
   TRACE_DRAWS = true;
-  if (!games.length) return firstBad;
+  if (!entries.length) return firstBad;
 
+  // The engine replays each battle and compares every turn itself.
   const inPath = path.join(dir, 'batch-input.json');
   const outPath = path.join(dir, 'batch-output.json');
-  fs.writeFileSync(inPath, JSON.stringify(games.map((g) =>
-    engineInput(g.battleSeed, g.meta, g.meta.turns, g.meta.turns.length))));
-  const r = spawnSync(opts.engine, ['doubles-fuzz-battle', '--batch', '--input', inPath, '--output', outPath],
+  fs.writeFileSync(inPath, `[${entries.join(',')}]`);
+  const r = spawnSync(opts.engine,
+    ['doubles-fuzz-battle', '--batch', '--check', '--input', inPath, '--output', outPath],
     { encoding: 'utf8' });
   if (r.status !== 0) return 0; // let the stepwise path explain it
   const results = JSON.parse(fs.readFileSync(outPath, 'utf8'));
-
-  const same = (psSnap, peTurn) => {
-    const { moveOrderRaw: _a, turn: _t1, ...psC } = normalizePSState(psSnap);
-    const { moveOrderRaw: _b, turn: _t2, ...peC } = normalizePETurn(peTurn);
-    const diffs = [];
-    deepDiff(psC, peC, '', diffs);
-    return diffs.length === 0;
-  };
-  for (let k = 0; k < games.length; k++) {
-    const g = games[k];
-    const pe = results[k];
-    let ok = pe && !pe.error && g.initSnap && pe.turns.length >= g.snaps.length + 1 &&
-      same(g.initSnap, pe.turns[0]);
-    for (let n = 1; ok && n <= g.snaps.length; n++) ok = same(g.snaps[n - 1], pe.turns[n]);
-    if (!ok || pe.winner !== g.meta.winner) return k;
-  }
-  return firstBad;
+  const k = results.findIndex((x) => x !== -1);
+  return k >= 0 ? k : firstBad;
 }
 
 // Parallel sweep: worker j checks seeds seed+j, seed+j+jobs, ... (each stops

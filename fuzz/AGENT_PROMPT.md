@@ -82,7 +82,8 @@ together, Mega Evolution as one feature), not seed by seed.
 
 **Progress lives in git and the score, not in notes.** To see where the
 work stands, run the sweep (step 1). **Sweep speed (automatic, nothing to configure):** the sweep runs on all
-CPU cores, checks passing battles with one engine call per batch, and
+CPU cores, checks passing battles with one engine call per batch (the
+engine compares each turn with a hash of PS's state, `--batch --check`), and
 caches each battle's pokemon-showdown side in `fuzz/work/ps-cache/` (it never
 depends on the engine, so engine changes and rebuilds keep the cache). Only
 a failing battle is replayed live, turn by turn, for the report. If a result

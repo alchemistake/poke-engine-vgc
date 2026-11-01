@@ -658,7 +658,8 @@ fn ally_faint_copy(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, fain
         if holder.hp <= 0 || !matches!(holder.ability, Abilities::RECEIVER | Abilities::POWEROFALCHEMY) {
             continue;
         }
-        if crate::engine::mechanics::cant_suppress(ability) {
+        // `setAbility` returns null on an Ability Shield holder.
+        if crate::engine::mechanics::cant_suppress(ability) || ability_shielded(state, side, hidx) {
             continue;
         }
         state.side_mut(side).team_member_mut(hidx).ability = ability;
@@ -3474,8 +3475,8 @@ fn status_on_try_hit_fails(
                 || ta == Abilities::TRUANT
                 || crate::engine::mechanics::no_entrain(sa)
         }
-        // (Ability Shield is not in the item pool.)
-        Choices::GASTROACID => cant,
+        // An Ability Shield holder blocks it (returns null).
+        Choices::GASTROACID => cant || ability_shielded(state, ts, ti),
         Choices::LOCKON | Choices::MINDREADER => state.side(side).active()[slot].lock_on.is_some(),
         Choices::SIMPLEBEAM => cant || ta == Abilities::SIMPLE || ta == Abilities::TRUANT,
         Choices::WORRYSEED => cant,
@@ -9183,7 +9184,9 @@ fn execute_move_body(
                         && !crate::engine::mechanics::cant_suppress(tm.ability)
                         && tm.ability != Abilities::TRUANT
                         && !crate::engine::mechanics::no_entrain(src_ability)
-                        && !crate::engine::mechanics::cant_suppress(src_ability) =>
+                        && !crate::engine::mechanics::cant_suppress(src_ability)
+                        // `setAbility` returns null on an Ability Shield holder.
+                        && !ability_shielded(state, ts, ti) =>
                 {
                     // `setAbility`: the old ability's End first (Cloud Nine / Air
                     // Lock `onEnd` -> `eachEvent('WeatherChange')`). PS sim/pokemon.ts setAbility.
@@ -9558,7 +9561,10 @@ fn execute_move_body(
                 _ => false,
             };
             match (user_idx, target_ability) {
-                (Some(u), Some(ta)) if !blocked && state.side(side).team_member(u).ability != ta => {
+                // `source.setAbility` returns null on an Ability Shield holder.
+                (Some(u), Some(ta))
+                    if !blocked && state.side(side).team_member(u).ability != ta && !ability_shielded(state, side, u) =>
+                {
                     copy_ability(state, rng, side, slot, u, ta);
                 }
                 _ => move_failed = true,
@@ -9582,6 +9588,8 @@ fn execute_move_body(
                         || held_ability(state, side, sl, u) == ta
                         || crate::engine::mechanics::cant_suppress(real_ability(state, side, u))
                         || crate::engine::mechanics::cant_suppress(ta)
+                        // `setAbility` returns null on an Ability Shield holder.
+                        || ability_shielded(state, side, u)
                     {
                         continue;
                     }
@@ -10132,7 +10140,7 @@ fn execute_move_body(
         // Gastro Acid: `volatileStatus: 'gastroacid'` suppresses the target's
         // ability until it switches out (modelled as No Ability, which the
         // switch-out reset undoes). Fails on unsuppressable abilities.
-        // PS data/moves.ts gastroacid. TODO(PS parity): Ability Shield.
+        // PS data/moves.ts gastroacid.
         // PS addVolatile fails when the `gastroacid` volatile already exists.
         if choice.move_id == Choices::GASTROACID && ti == 0 && !move_failed
             && state.side(target_side).active()[target_slot].gastro_acid
@@ -10142,7 +10150,8 @@ fn execute_move_body(
         if choice.move_id == Choices::GASTROACID && ti == 0 && !move_failed {
             if let Some(tidx) = state.side(target_side).active()[target_slot].pokemon_index {
                 let a = real_ability(state, target_side, tidx);
-                if gastro_cant_suppress(a) {
+                // `onTryHit`: an Ability Shield holder blocks it (returns null).
+                if gastro_cant_suppress(a) || ability_shielded(state, target_side, tidx) {
                     move_failed = true;
                 } else {
                     gastro_acid_start(state, rng, target_side, target_slot, tidx);
@@ -10317,7 +10326,11 @@ fn execute_move_body(
             if let Some(tidx) = state.side(target_side).active()[target_slot].pokemon_index {
                 let a = held_ability(state, target_side, target_slot, tidx);
                 // `getAbility().flags['cantsuppress']` (Zero to Hero, ...).
-                if a == Abilities::SIMPLE || a == Abilities::TRUANT || crate::engine::mechanics::cant_suppress(a)
+                // `setAbility` returns null on an Ability Shield holder.
+                if a == Abilities::SIMPLE
+                    || a == Abilities::TRUANT
+                    || crate::engine::mechanics::cant_suppress(a)
+                    || ability_shielded(state, target_side, tidx)
                 {
                     move_failed = true;
                 } else {
@@ -10330,7 +10343,8 @@ fn execute_move_body(
             if let Some(tidx) = state.side(target_side).active()[target_slot].pokemon_index {
                 // PS data/moves.ts worryseed.onTryHit: `getAbility().flags['cantsuppress']`.
                 let real = held_ability(state, target_side, target_slot, tidx);
-                if crate::engine::mechanics::cant_suppress(real) {
+                // `setAbility` returns null on an Ability Shield holder.
+                if crate::engine::mechanics::cant_suppress(real) || ability_shielded(state, target_side, tidx) {
                     move_failed = true;
                 } else {
                     set_ability_with_end(state, rng, target_side, tidx, Abilities::INSOMNIA);
@@ -15165,7 +15179,8 @@ fn contact_abilities(
         let a = held_ability(state, side, slot, idx);
         // PS `sourceAbility.flags['cantsuppress']` (Zero to Hero included).
         let cantsuppress = crate::engine::mechanics::cant_suppress(a);
-        if !cantsuppress && a != ability {
+        // `setAbility` returns null on an Ability Shield holder.
+        if !cantsuppress && a != ability && !ability_shielded(state, side, idx) {
             // `setAbility`: the old ability's End first (Cloud Nine / Air Lock).
             set_ability_with_end(state, rng, side, idx, ability);
         }
@@ -16451,6 +16466,10 @@ fn skill_swap(
         || fainted_now(state, tgt_side, ti)
         || crate::engine::mechanics::fails_skill_swap(src_ability)
         || crate::engine::mechanics::fails_skill_swap(tgt_ability)
+        // `runEvent('SetAbility')` on the target, then the source: Ability
+        // Shield returns null. PS sim/battle.ts skillSwap, data/items.ts abilityshield.
+        || ability_shielded(state, tgt_side, ti)
+        || ability_shielded(state, src_side, si)
     {
         return false;
     }
@@ -17127,9 +17146,11 @@ fn apply_on_switch_abilities(
         // `singleEvent('Update')` runs `onUpdate` once. A Trace with no valid
         // foe keeps seeking: `each_event_update` retries on every Update.
         let foe = side.other();
+        // An Ability Shield holder stops it too (PS data/abilities.ts trace).
         let blocked = foe_active_indices(state, foe)
             .iter()
-            .any(|&fidx| state.side(foe).team_member(fidx).ability == Abilities::NOABILITY);
+            .any(|&fidx| state.side(foe).team_member(fidx).ability == Abilities::NOABILITY)
+            || state.side(side).active()[slot].pokemon_index.is_some_and(|i| ability_shielded(state, side, i));
         state.side_mut(side).slot_scratch_mut(slot).trace_seek = !blocked;
         if !blocked {
             if let Some(copied) = trace_copy(state, side, slot, rng) {
@@ -18560,6 +18581,15 @@ fn big_root(state: &DoublesState, side: Side, idx: PokemonIndex, heal: i16) -> i
 fn held_item(state: &DoublesState, side: Side, idx: PokemonIndex) -> Items {
     let p = state.side(side).team_member(idx);
     if ignoring_item(state, p) { Items::NONE } else { p.item }
+}
+
+/// Ability Shield `onSetAbility` (returns null) / `hasItem('Ability Shield')`:
+/// the holder's ability can't be changed or suppressed. The item has
+/// `ignoreKlutz`, so only Embargo / Magic Room switch it off.
+/// PS data/items.ts abilityshield, sim/pokemon.ts ignoringItem.
+fn ability_shielded(state: &DoublesState, side: Side, idx: PokemonIndex) -> bool {
+    let p = state.side(side).team_member(idx);
+    p.item == Items::ABILITYSHIELD && !state.magic_room.active && !embargoed(state, p)
 }
 
 /// PS `pokemon.ignoringItem()`: Klutz, Embargo, Magic Room.

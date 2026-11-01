@@ -12368,7 +12368,7 @@ fn base_power_with_modifiers(
 /// target's.
 /// PS `resolveAction`: `runEvent('FractionalPriority')` (Quick Draw, then Quick
 /// Claw) for a move action; sets `a.fractional`.
-fn fractional_priority_roll(state: &DoublesState, rng: &mut Gen5Rng, a: &mut Action) {
+fn fractional_priority_roll(state: &mut DoublesState, rng: &mut Gen5Rng, a: &mut Action) {
     let ability = state.side(a.side).team_member(a.pokemon_index).ability;
     // PS `recharge` pseudo-move (`moveid: 'recharge'`, no `category`):
     // not Status, so Quick Draw rolls for it (sim/side.ts chooseMove).
@@ -12401,6 +12401,26 @@ fn fractional_priority_roll(state: &DoublesState, rng: &mut Gen5Rng, a: &mut Act
             && !(category == MoveCategory::Status && ability == Abilities::MYCELIUMMIGHT)
             && rng.label("fractional priority").random_chance(1, 5)
         {
+            a.fractional = 1;
+        }
+    }
+    // Custap Berry `onFractionalPriority` (priority -2): at <= 1/4 HP (1/2 with
+    // Gluttony) and a fraction still <= 0, eat it and move first in the
+    // bracket. PS data/items.ts custapberry, sim/pokemon.ts eatItem.
+    {
+        let p = state.side(a.side).team_member(a.pokemon_index);
+        let pinch = p.hp * 4 <= p.maxhp || (p.ability == Abilities::GLUTTONY && p.hp * 2 <= p.maxhp);
+        if p.item == Items::CUSTAPBERRY
+            && p.hp > 0
+            && !ignoring_item(state, p)
+            && a.fractional <= 0
+            && pinch
+            && !(category == MoveCategory::Status && ability == Abilities::MYCELIUMMIGHT)
+            && state.side(a.side).active()[a.slot].pokemon_index == Some(a.pokemon_index)
+            && !unnerved(state, a.side)
+        {
+            use_item(state, rng, a.side, a.slot, a.pokemon_index, true);
+            cheek_pouch(state, a.side, a.slot, a.pokemon_index);
             a.fractional = 1;
         }
     }

@@ -4346,6 +4346,12 @@ fn execute_move_body(
                     }
                 });
                 if let Some((ts, tsl)) = tgt {
+                    // The release goes through `tryMoveHit` -> `moveHit`, whose
+                    // `TryPrimaryHit` runs a Normal Gem's `onSourceTryPrimaryHit`
+                    // (before any damage). PS data/items.ts normalgem.
+                    if switched_in_alive(state, ts, tsl) {
+                        try_gem(state, rng, side, slot, idx, &action.choice, ts, tsl);
+                    }
                     let ghost = state.side(ts).slot_pokemon(tsl).is_some_and(|p| p.has_type(&PokemonType::GHOST));
                     let protected = state.side(ts).active()[tsl].protected;
                     if !ghost && !protected && switched_in_alive(state, ts, tsl) {

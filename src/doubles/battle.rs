@@ -1678,7 +1678,12 @@ pub fn run_fuzz_turn(
                             let prio = if uproar_lock { 0 } else { prio };
                             // `lockedmove` (Petal Dance, Outrage, ...): PS `getLockedMove`
                             // replaces the chosen move with the locked one; no PP is used.
-                            let locked_id = s.active()[slot].locked_move.and(s.active()[slot].locked_move_id);
+                            // Rollout / Ice Ball `onLockMove`: the `rollout` volatile
+                            // forces the rolling move (a Copycat-called Rollout too).
+                            let rollout_id = s.active()[slot].rollout.map(|_| {
+                                if s.active()[slot].rollout_ice { Choices::ICEBALL } else { Choices::ROLLOUT }
+                            });
+                            let locked_id = s.active()[slot].locked_move.and(s.active()[slot].locked_move_id).or(rollout_id);
                             let (mv, no_pp) = match s.active()[slot].charging {
                                 _ if !uproar_lock && !*struggle && locked_id.is_some_and(|m| m != mv.move_id) => {
                                     match MOVES.get(&locked_id.unwrap()).cloned() {
@@ -4783,7 +4788,18 @@ fn execute_move_body(
         && resolved.is_some()
     {
         try_add_volatile_ties(state, rng, side, slot);
-        state.side_mut(side).active_slot_mut(slot).rollout = Some((0, 0, 1, 1));
+        let ice = modified.move_id == Choices::ICEBALL;
+        let external = state.side(side).active()[slot].external_call;
+        let a = state.side_mut(side).active_slot_mut(slot);
+        a.rollout = Some((0, 0, 1, 1));
+        a.rollout_ice = ice;
+        // `if (move.sourceEffect) pokemon.lastMoveTargetLoc = getLocOf(target)`:
+        // a called Rollout (Copycat) locks onto its random target.
+        if external {
+            if let Some((ts, tsl)) = resolved {
+                a.last_target_loc = if ts == side { -(tsl as i8 + 1) } else { tsl as i8 + 1 };
+            }
+        }
     }
     // Choice item `onModifyMove`: `addVolatile('choicelock')` (kept if up).
     {
@@ -11673,20 +11689,27 @@ fn execute_move_body(
         each_event_update(state, rng);
     }
 
-    // Berserk `onAfterMoveSecondary` (after the loop's `resolveFaints`, recoil
+    // Berserk / Anger Shell `onAfterMoveSecondary` (after the loop's `resolveFaints`, recoil
     // and closing eachEvent): +1 SpA when the move took the holder from above
     // to at/below 50%. A boost after the last foe fainted fails (`boost`'s
     // `foePokemonLeft`). PS champions scripts.ts hitStepMoveHitLoop.
     state.tl.berserk_pending.set(0);
     for &(bs, bl, before) in &berserk_before {
         if let Some(d) = state.side(bs).slot_pokemon(bl) {
-            if d.ability == Abilities::BERSERK
+            if matches!(d.ability, Abilities::BERSERK | Abilities::ANGERSHELL)
                 && d.hp > 0
                 && (d.hp as i32) * 2 <= d.maxhp as i32
                 && (before as i32) * 2 > d.maxhp as i32
             {
                 let bidx = state.side(bs).active()[bl].pokemon_index.unwrap();
-                apply_boosts(state, rng, bs, bidx, &StatBoosts { special_attack: 1, ..Default::default() }, false);
+                // Anger Shell `onAfterMoveSecondary`: +1 Atk / SpA / Spe, -1 Def / SpD
+                // on the same crossing. PS data/abilities.ts angershell.
+                let boosts = if d.ability == Abilities::ANGERSHELL {
+                    StatBoosts { attack: 1, special_attack: 1, speed: 1, defense: -1, special_defense: -1, ..Default::default() }
+                } else {
+                    StatBoosts { special_attack: 1, ..Default::default() }
+                };
+                apply_boosts(state, rng, bs, bidx, &boosts, false);
             }
         }
     }
@@ -15168,7 +15191,7 @@ fn future_move_hit(
     let berserk_before = state
         .side(ts)
         .slot_pokemon(tslot)
-        .filter(|d| damage > 0 && d.ability == Abilities::BERSERK)
+        .filter(|d| damage > 0 && matches!(d.ability, Abilities::BERSERK | Abilities::ANGERSHELL))
         .map(|d| d.hp);
     // The hit's holder (a KO empties the slot; Sand Spit still acts).
     let hit_pi = state.side(ts).active()[tslot].pokemon_index;
@@ -15255,7 +15278,13 @@ fn future_move_hit(
         if let Some(d) = state.side(ts).slot_pokemon(tslot) {
             if d.hp > 0 && (d.hp as i32) * 2 <= d.maxhp as i32 && (before as i32) * 2 > d.maxhp as i32 {
                 let bidx = state.side(ts).active()[tslot].pokemon_index.unwrap();
-                apply_boosts(state, rng, ts, bidx, &StatBoosts { special_attack: 1, ..Default::default() }, false);
+                // Anger Shell: +1 Atk / SpA / Spe, -1 Def / SpD. PS data/abilities.ts angershell.
+                let boosts = if d.ability == Abilities::ANGERSHELL {
+                    StatBoosts { attack: 1, special_attack: 1, speed: 1, defense: -1, special_defense: -1, ..Default::default() }
+                } else {
+                    StatBoosts { special_attack: 1, ..Default::default() }
+                };
+                apply_boosts(state, rng, ts, bidx, &boosts, false);
             }
         }
     }

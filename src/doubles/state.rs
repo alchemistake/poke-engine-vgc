@@ -184,6 +184,8 @@ pub struct ActiveSlot {
     /// `rollout` volatile (Rollout / Ice Ball lock): (hitCount, contactHitCount,
     /// duration, the base-power multiplier of the current hit).
     pub rollout: Option<(u8, u8, u8, u8)>,
+    /// The `rollout` volatile is Ice Ball's (`onLockMove: 'iceball'`), not Rollout's.
+    pub rollout_ice: bool,
     /// `defensecurl` volatile (doubles Rollout / Ice Ball).
     pub defense_curl: bool,
     /// Mimic replaced move slot `k` (Mimic's id and PP saved, restored when the
@@ -472,6 +474,7 @@ impl ActiveSlot {
             magnet_rise: 0,
             telekinesis: 0,
             rollout: None,
+            rollout_ice: false,
             defense_curl: false,
             mimic: None,
             sky_lifted_by: None,

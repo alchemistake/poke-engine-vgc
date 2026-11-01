@@ -1522,6 +1522,19 @@ fn build_pokemon(m: &TeamMember) -> Pokemon {
     );
     let nature = parse_nature(&m.nature);
     let ability = parse_ability(&m.ability);
+    let item = parse_item(&m.item);
+    // Arceus / Silvally species `onType` (every forme): with Multitype / RKS
+    // System the single type is the held Plate / Memory's, else Normal.
+    // PS data/conditions.ts arceus, silvally.
+    let base_species = m.species.split('-').next().unwrap_or(&m.species);
+    let types = match (base_species, ability) {
+        ("Arceus", Abilities::MULTITYPE) => (plate_type(item).unwrap_or(PokemonType::NORMAL), PokemonType::TYPELESS),
+        ("Silvally", Abilities::RKSSYSTEM) => (
+            crate::doubles::item_data::memory_type(item).unwrap_or(PokemonType::NORMAL),
+            PokemonType::TYPELESS,
+        ),
+        _ => types,
+    };
     let (hp, atk, def, spa, spd, spe) =
         compute_stats(base, &m.evs, m.level, nature.clone());
     let mut moves: [MoveSlot; 4] = Default::default();
@@ -1541,7 +1554,7 @@ fn build_pokemon(m: &TeamMember) -> Pokemon {
         maxhp: hp,
         ability: ability,
         base_ability: ability,
-        item: parse_item(&m.item),
+        item,
         nature,
         evs: (
             m.evs.hp as u8,
@@ -1566,6 +1579,30 @@ fn build_pokemon(m: &TeamMember) -> Pokemon {
         attacked_by: Vec::new(),
         moves: crate::state::PokemonMoves { m0, m1, m2, m3 },
     }
+}
+
+/// Plates' `onPlate` (the type Multitype gives Arceus). PS data/items.ts.
+fn plate_type(item: Items) -> Option<PokemonType> {
+    Some(match item {
+        Items::DRACOPLATE => PokemonType::DRAGON,
+        Items::DREADPLATE => PokemonType::DARK,
+        Items::EARTHPLATE => PokemonType::GROUND,
+        Items::FISTPLATE => PokemonType::FIGHTING,
+        Items::FLAMEPLATE => PokemonType::FIRE,
+        Items::ICICLEPLATE => PokemonType::ICE,
+        Items::INSECTPLATE => PokemonType::BUG,
+        Items::IRONPLATE => PokemonType::STEEL,
+        Items::MEADOWPLATE => PokemonType::GRASS,
+        Items::MINDPLATE => PokemonType::PSYCHIC,
+        Items::PIXIEPLATE => PokemonType::FAIRY,
+        Items::SKYPLATE => PokemonType::FLYING,
+        Items::SPLASHPLATE => PokemonType::WATER,
+        Items::SPOOKYPLATE => PokemonType::GHOST,
+        Items::STONEPLATE => PokemonType::ROCK,
+        Items::TOXICPLATE => PokemonType::POISON,
+        Items::ZAPPLATE => PokemonType::ELECTRIC,
+        _ => return None,
+    })
 }
 
 #[derive(Debug, Clone)]

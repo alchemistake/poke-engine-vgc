@@ -1452,7 +1452,7 @@ fn accuracy_ability_mods(
     {
         post = chain(post, 4915);
     }
-    // Held items (priority -2): Bright Powder on the target, Wide / Zoom Lens
+    // Held items (priority -2): Bright Powder / Lax Incense on the target, Wide / Zoom Lens
     // on the user (Zoom Lens: the target has no move left this turn).
     if !ignoring_item(state, attacker) {
         match attacker.item {
@@ -1464,7 +1464,7 @@ fn accuracy_ability_mods(
         }
     }
     if let Some(t) = state.side(tside).slot_pokemon(tslot) {
-        if t.item == Items::BRIGHTPOWDER && !ignoring_item(state, t) {
+        if matches!(t.item, Items::BRIGHTPOWDER | Items::LAXINCENSE) && !ignoring_item(state, t) {
             post = chain(post, 3686);
         }
     }
@@ -2741,6 +2741,16 @@ fn multi_attack_type(state: &DoublesState, user: &crate::state::Pokemon) -> Opti
     crate::doubles::item_data::memory_type(user.item)
 }
 
+/// Revelation Dance `onModifyType`: the user's first current type ("???" falls
+/// through to the second type). PS data/moves.ts revelationdance.
+fn revelation_dance_type(types: (PokemonType, PokemonType)) -> PokemonType {
+    if types.0 == PokemonType::TYPELESS && types.1 != PokemonType::TYPELESS {
+        types.1
+    } else {
+        types.0
+    }
+}
+
 fn redirect_move_type(state: &DoublesState, action: &Action) -> PokemonType {
     if action.choice.move_id == Choices::AURAWHEEL {
         return if state.side(action.side).team_member(action.pokemon_index).id == crate::pokemon::PokemonName::MORPEKOHANGRY {
@@ -2768,6 +2778,7 @@ fn redirect_move_type(state: &DoublesState, action: &Action) -> PokemonType {
                 c.move_type = t;
             }
         }
+        Choices::REVELATIONDANCE => c.move_type = revelation_dance_type(user.types),
         Choices::WEATHERBALL => {
             let mega_sol = user.ability == Abilities::MEGASOL;
             if let Some(t) = crate::engine::mechanics::weather_ball_type(effective_weather(state), mega_sol) {
@@ -4643,6 +4654,9 @@ fn execute_move_body(
                 modified.move_type = t;
             }
         }
+        Choices::REVELATIONDANCE => {
+            modified.move_type = revelation_dance_type(state.side(side).team_member(idx).types);
+        }
         Choices::WEATHERBALL => {
             // PS data/moves.ts weatherball `onModifyType` / `onModifyMove` read
             // `pokemon.effectiveWeather()`, which is empty while Cloud Nine /
@@ -5126,6 +5140,29 @@ fn execute_move_body(
                 c
             };
             &shell_side_arm_choice
+        } else {
+            choice
+        }
+    } else {
+        choice
+    };
+
+    // Photon Geyser `onModifyMove`: Physical when the user's Atk is higher
+    // than its SpA (boosts in, no ability / item modifiers). PS data/moves.ts
+    // photongeyser.
+    let photon_geyser_choice;
+    let choice = if choice.move_id == Choices::PHOTONGEYSER && choice.category != MoveCategory::Physical {
+        let a = state.side(side).team_member(idx);
+        let ab = &state.side(side).team_boosts[idx as usize];
+        let atk = crate::engine::mechanics::boost_stat(ab.atk, a.attack);
+        let spa = crate::engine::mechanics::boost_stat(ab.spa, a.special_attack);
+        if atk > spa {
+            photon_geyser_choice = {
+                let mut c = choice.clone();
+                c.category = MoveCategory::Physical;
+                c
+            };
+            &photon_geyser_choice
         } else {
             choice
         }
@@ -10426,6 +10463,16 @@ fn execute_move_body(
                 let tb = &mut state.side_mut(target_side).team_boosts[tidx as usize];
                 tb.atk = a1;
                 tb.spa = s1;
+            }
+        }
+
+        // Heart Swap `onHit`: swap every stat stage with the target.
+        // PS data/moves.ts heartswap.
+        if choice.move_id == Choices::HEARTSWAP && ti == 0 {
+            if let Some(tidx) = state.side(target_side).active()[target_slot].pokemon_index {
+                let mine = state.side(side).team_boosts[idx as usize].clone();
+                let theirs = std::mem::replace(&mut state.side_mut(target_side).team_boosts[tidx as usize], mine);
+                state.side_mut(side).team_boosts[idx as usize] = theirs;
             }
         }
 

@@ -4559,6 +4559,20 @@ fn execute_move_body(
                 _ => 150.0,
             };
         }
+        // Present `onModifyMove`: `random(10)` picks a heal of 1/4 of the
+        // target's max HP (0-1, `move.heal = [1, 4]`, `infiltrates`) or power
+        // 40 (2-5) / 80 (6-8) / 120 (9). PS data/moves.ts present.
+        Choices::PRESENT => {
+            match rng.label("other: onModifyMove").random(10) {
+                0..=1 => {
+                    modified.heal = Some(crate::choices::Heal { target: MoveTarget::Opponent, amount: 0.25 });
+                    crate::doubles::damage::set_infiltrator_move(true);
+                }
+                2..=5 => modified.base_power = 40.0,
+                6..=8 => modified.base_power = 80.0,
+                _ => modified.base_power = 120.0,
+            }
+        }
         Choices::TERRAINPULSE => {
             let grounded = slot_grounded(state.side(side).team_member(idx), &state.side(side).active()[slot], state.gravity.active, state.magic_room.active);
             if let Some(t) = crate::engine::mechanics::terrain_pulse_type(state.terrain.terrain_type, grounded) {

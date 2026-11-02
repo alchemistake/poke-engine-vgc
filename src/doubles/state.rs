@@ -973,6 +973,8 @@ pub struct MoveScratch {
     /// The move failed in `BeforeMove` after its `|move|` line (choicelock):
     /// `useMove` never ran, so no Pressure PP.
     pub before_move_failed: std::cell::Cell<bool>,
+    /// A pivot switch-in: Tera Shift waits for the `runSwitch` speed sort.
+    pub defer_tera_shift: std::cell::Cell<bool>,
     /// PS `battle.activeTarget` while a spread move's Substitute `onTryPrimaryHit`
     /// computes its damage (set only then): the last target of the previous
     /// per-target loop, not the substitute holder. Unaware reads it.

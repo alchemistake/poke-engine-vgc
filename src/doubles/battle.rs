@@ -2620,7 +2620,9 @@ pub fn run_fuzz_turn(
                         if batch {
                             switch_in_inner(state, side, slot, position);
                         } else {
+                            state.tl.defer_tera_shift.set(true);
                             switch_in(state, rng, side, slot, position);
+                            state.tl.defer_tera_shift.set(false);
                         }
                         // PS `insertChoice` -> `pokemon.updateSpeed()` for the incoming
                         // pokemon: its `speed` is fresh for `runSwitch`'s speedSort.
@@ -2681,7 +2683,8 @@ pub fn run_fuzz_turn(
                                 a.metronome_count = old.metronome_count;
                                 a.metronome_last = old.metronome_last;
                             }
-                            a.unburden |= old.unburden;
+                            // `unburden` is not passed: the leaving pokemon's Unburden
+                            // `onEnd` (its ability's End at switch-out) removes it first.
                             // `micleberry` (an eaten Micle Berry's volatile) is copied too.
                             a.micle = old.micle;
                             // PS copyVolatileFrom adds them in the source's key order.
@@ -2754,6 +2757,9 @@ pub fn run_fuzz_turn(
                         each_event_update(state, rng);
                         state.tl.no_white_herb.set(false);
                         let _ = sorted_actives(state, rng, "speed tie (switch-in)");
+                        // Tera Shift (`onSwitchInPriority` 2) runs in the `runSwitch`,
+                        // after its sort: the Terastal forme's speed is not in it.
+                        tera_shift(state, side, slot);
                         apply_sticky_web(state, rng, side, slot);
                         // TODO(PS parity): `fieldEvent('SwitchIn')` handler ties.
                         if switched_in_alive(state, side, slot) && apply_on_switch_abilities(state, side, slot, rng) {
@@ -10526,6 +10532,11 @@ fn execute_move_body(
         }
 
         if choice.move_id == Choices::CHARGE && ti == 0 {
+            // `addVolatile('charge')`: a new volatile sorts its Immunity /
+            // TryAddVolatile handlers (a running one only restarts).
+            if !state.side(side).active()[slot].charge {
+                try_add_volatile_ties(state, rng, side, slot);
+            }
             state.side_mut(side).active_slot_mut(slot).charge = true;
         }
 
@@ -10673,7 +10684,13 @@ fn execute_move_body(
         // or `setType` refuses.
         if choice.move_id == Choices::CONVERSION && ti == 0 && !move_failed {
             let p = state.side(side).team_member(idx);
-            let t = MOVES.get(&p.moves.m0.id).map(|c| c.move_type).unwrap_or(PokemonType::NORMAL);
+            // `dex.moves.get(moveSlots[0].id).type`: Hidden Power's slot is the
+            // plain Normal-type move, whatever its IV type.
+            let t = if format!("{:?}", p.moves.m0.id).starts_with("HIDDENPOWER") {
+                PokemonType::NORMAL
+            } else {
+                MOVES.get(&p.moves.m0.id).map(|c| c.move_type).unwrap_or(PokemonType::NORMAL)
+            };
             let has = p.types.0 == t || p.types.1 == t || state.side(side).active()[slot].added_type == t;
             if has || set_type_blocked(state, side, idx) {
                 move_failed = true;
@@ -14038,7 +14055,9 @@ fn execute_move_body(
     // this move may have moved the user to the other slot.
     let holder = (0..2).find(|&sl| state.side(side).active()[sl].pokemon_index == Some(idx)).unwrap_or(slot);
     // A Magic Bounce reflection is `useMove`, not `runMove`: no AfterMove.
-    let reflected = state.side(side).active()[holder].bounced;
+    // Nor is a called move (Mirror Move -> Outrage): the caller's `runMove`
+    // runs it once.
+    let reflected = state.side(side).active()[holder].bounced || state.side(side).active()[holder].external_call;
     // PS runs the `AfterMove` sort before the lock's `onAfterMove` removes it.
     if !reflected && state.side(side).active()[holder].locked_move.is_some() {
         after_move_handler_ties(state, rng, side, idx, true);
@@ -14784,6 +14803,14 @@ fn paradox_check(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: 
         Abilities::PROTOSYNTHESIS => false,
         Abilities::QUARKDRIVE => true,
         _ => {
+            // Neutralizing Gas runs no End (only for the strong weathers): a
+            // suppressed holder keeps the volatile.
+            if p.ability == Abilities::NONE
+                && matches!(real_ability(state, side, idx), Abilities::PROTOSYNTHESIS | Abilities::QUARKDRIVE)
+                && !state.side(side).active()[slot].gastro_acid
+            {
+                return;
+            }
             // The ability's `onEnd` (replaced by Entrainment / Skill Swap,
             // suppressed): the volatile goes with it.
             if state.side(side).active()[slot].paradox.is_some() {
@@ -17955,6 +17982,14 @@ fn future_move_hit(
             state.pending_after_faint = Some((ss, sslot, si, ab));
         }
         damaged_by_move(state, ts, tslot);
+        // Rage `onHit`: the delayed hit is a damaging move from another pokemon.
+        if damage > 0 && state.side(ts).active()[tslot].rage && Some((ss, si)) != state.side(ts).active()[tslot].pokemon_index.map(|i| (ts, i)) {
+            if let Some(tidx) = state.side(ts).active()[tslot].pokemon_index {
+                if state.side(ts).team_member(tidx).hp > 0 {
+                    apply_boosts(state, rng, ts, tidx, &StatBoosts { attack: 1, ..Default::default() }, false);
+                }
+            }
+        }
         // Anger Point `onHit`: a critical delayed hit maxes Attack.
         if fs_crit {
             if let Some(tidx) = state.side(ts).active()[tslot].pokemon_index {
@@ -22251,7 +22286,9 @@ fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: 
 /// after the placement, the replacement batch runs it in speed-sort order.
 fn entry_hazards(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize) {
     // Tera Shift `onSwitchInPriority` 2: before the slot condition and hazards.
-    tera_shift(state, side, slot);
+    if !state.tl.defer_tera_shift.get() {
+        tera_shift(state, side, slot);
+    }
     let Some(idx) = state.side(side).active()[slot].pokemon_index else {
         return;
     };

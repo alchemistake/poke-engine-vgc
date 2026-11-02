@@ -1705,6 +1705,11 @@ pub fn start_fuzz_battle(state: &mut DoublesState, rng: &mut Gen5Rng) {
                 terrain_seed(state, rng, sd, sl);
             }
         }
+        // Metronome item `onStart` (after the holder's ability Start):
+        // `addVolatile('metronome')` sorts the TryAddVolatile handlers.
+        if switched_in_alive(state, side, slot) && state.side(side).active()[slot].metronome_vol {
+            try_add_volatile_ties(state, rng, side, slot);
+        }
         // Forecast `onWeatherChange` (PS data/abilities.ts forecast): a lead's
         // Drought / Drizzle changes Castform's forme during the send-out.
         update_forecast(state);

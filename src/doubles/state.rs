@@ -916,6 +916,13 @@ pub struct MoveScratch {
     pub tera_shell_resisted: std::cell::Cell<u8>,
     /// Focus Band rolls a spread hit already drew (bit slot: rolled, bit slot + 4: saved).
     pub band_pre: std::cell::Cell<u8>,
+    /// A delayed hit's source no longer in its slot (fainted / switched): PS
+    /// still collects its handlers (`onSource...`) from the pokemon itself.
+    /// The event collector reads it for that side's empty slot.
+    pub ev_source_idx: std::cell::Cell<Option<(Side, PokemonIndex)>>,
+    /// An Update between `switchIn` and its `runSwitch`: White Herb (no
+    /// `onUpdate`) waits for its `onAnySwitchIn` there.
+    pub no_white_herb: std::cell::Cell<bool>,
     /// The residual action is running (PS `!queue.peek()`).
     pub in_residual: std::cell::Cell<bool>,
     /// The residual `fieldEvent` handler loop is running (draw labels).
@@ -1026,6 +1033,9 @@ pub struct DoublesState {
     /// resolves faints after the loop, so its per-hit `eachEvent` still sorts
     /// them: (side, slot, team index).
     pub unresolved_faints: Vec<(crate::doubles::state::Side, usize, PokemonIndex)>,
+    /// PS `checkWin` ended the battle (`this.ended`): later KOs in the same
+    /// callback (Life Orb recoil after the last foe fainted) are never processed.
+    pub battle_ended: bool,
     /// Boosts of a pokemon KO'd but not yet through `faintMessages`: PS keeps
     /// them until `clearVolatile` (a move whose user fell to Spiky Shield
     /// still uses its stages). The engine clears them at the KO.
@@ -1905,6 +1915,7 @@ impl DoublesState {
             echoed_voice: None,
             turn: 1,
             unresolved_faints: Vec::new(),
+            battle_ended: false,
             fainted_boosts: Vec::new(),
             ko_update_ties: Vec::new(),
             mold_saved: arrayvec::ArrayVec::new(),
@@ -2468,7 +2479,8 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
                     forme: SPECIES_NAMES[p.id as usize],
                     hp: p.hp,
                     maxhp: p.maxhp,
-                    fainted: p.hp <= 0,
+                    // A KO after the battle ended stays unprocessed in its slot.
+                    fainted: p.hp <= 0 && !(state.battle_ended && active_slot.is_some()),
                     status: normalize_status(p.status),
                     active_slot,
                     boosts,

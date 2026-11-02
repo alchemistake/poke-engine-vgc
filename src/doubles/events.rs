@@ -1073,7 +1073,17 @@ fn slot_effects(t: &Tables, state: &DoublesState, side: Side, slot: usize, conds
     // Same order as `visit_pokemon_effects`: status, ability, conditions.
     let s = state.side(side);
     let a = &s.active()[slot];
-    let Some(idx) = a.pokemon_index else { return e };
+    let Some(idx) = a.pokemon_index else {
+        // A delayed hit's absent source: its own status, ability and item.
+        if let Some((_, idx)) = state.tl.ev_source_idx.get().filter(|&(sd, _)| sd == side) {
+            if let Some(i) = status_index(s.team_member(idx).status) {
+                add(t.status_fx[i]);
+            }
+            add(t.ability_bit.get(s.team_member(idx).ability as usize).copied().unwrap_or(NO_BIT));
+            add(t.item_bit.get(s.team_member(idx).item as usize).copied().unwrap_or(NO_BIT));
+        }
+        return e;
+    };
     if let Some(i) = status_index(s.team_member(idx).status) {
         add(t.status_fx[i]);
     }

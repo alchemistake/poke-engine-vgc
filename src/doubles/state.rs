@@ -977,6 +977,9 @@ pub struct MoveScratch {
     pub before_move_failed: std::cell::Cell<bool>,
     /// A pivot switch-in: Tera Shift waits for the `runSwitch` speed sort.
     pub defer_tera_shift: std::cell::Cell<bool>,
+    /// A Magic Coat / Bounce reflection ran inside this move: PS's
+    /// `activePokemon` is now the bouncer (Unaware no longer sees the user).
+    pub active_bounced: std::cell::Cell<bool>,
     /// PS `battle.activeTarget` while a spread move's Substitute `onTryPrimaryHit`
     /// computes its damage (set only then): the last target of the previous
     /// per-target loop, not the substitute holder. Unaware reads it.

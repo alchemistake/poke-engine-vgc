@@ -1537,9 +1537,11 @@ fn unaware_zeroes_accuracy(
     choice: &Choice,
 ) -> bool {
     let attacker = state.side(side).team_member(idx);
-    state.side(tside).slot_pokemon(tslot).is_some_and(|d| {
-        d.ability == Abilities::UNAWARE && !crate::engine::abilities::ignores_target_ability(attacker, choice, &d.ability)
-    })
+    // `pokemon === this.activePokemon`: not after a reflection in this move.
+    !state.tl.active_bounced.get()
+        && state.side(tside).slot_pokemon(tslot).is_some_and(|d| {
+            d.ability == Abilities::UNAWARE && !crate::engine::abilities::ignores_target_ability(attacker, choice, &d.ability)
+        })
 }
 
 /// Wonder Skin `onModifyAccuracy` (priority 10, before every chain piece): a
@@ -4312,6 +4314,7 @@ fn execute_action_body(
     state.tl.no_target_fail.set(false);
     state.tl.acc_step.set(false);
     state.tl.micle_spent.set(false);
+    state.tl.active_bounced.set(false);
     state.tl.before_move_failed.set(false);
     state.tl.before_move_aborted.set(false);
     let order_len_outer = move_order.len();
@@ -5250,7 +5253,9 @@ fn execute_move_body(
                     if switched_in_alive(state, ts, tsl) {
                         try_gem(state, rng, side, slot, idx, &action.choice, ts, tsl);
                     }
-                    let ghost = state.side(ts).slot_pokemon(tsl).is_some_and(|p| p.has_type(&PokemonType::GHOST));
+                    // Trick-or-Treat's added Ghost type counts too.
+                    let ghost = state.side(ts).slot_pokemon(tsl).is_some_and(|p| p.has_type(&PokemonType::GHOST))
+                        || state.side(ts).active()[tsl].added_type == PokemonType::GHOST;
                     // `tryMoveHit` runs no Protect `TryHit`: the release hits a
                     // protected target. PS data/moves.ts bide.
                     if !ghost && switched_in_alive(state, ts, tsl) {
@@ -7044,6 +7049,9 @@ fn execute_move_body(
                     let saved_inf = crate::doubles::damage::infiltrator_move();
                     crate::doubles::damage::set_infiltrator_move(false);
                     execute_action_inner(state, rng, &sub, move_order, will_act, queue);
+                    // `useMove` left the bouncer as `activePokemon` for the rest
+                    // of the spread move.
+                    state.tl.active_bounced.set(true);
                     state.tl.pressure_target.set(saved_pt);
                     state.tl.pressure_extra.set(saved_pe);
                     state.tl.pressure_owed.set(saved_po);
@@ -16143,7 +16151,7 @@ fn set_status_event_tie(
     crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::Immunity, (ts, tslot), None);
     if st == PokemonStatus::FREEZE
         && (target.ability == Abilities::MAGMAARMOR
-            || matches!(effective_weather(state), Weather::SUN | Weather::HARSHSUN))
+            || matches!(umbrella_weather(state, target, effective_weather(state)), Weather::SUN | Weather::HARSHSUN))
     {
         return;
     }
@@ -16322,7 +16330,14 @@ fn status_immune_ex(
     let ctx = crate::engine::mechanics::StatusContext {
         // PS sunnyday `onImmunity('frz')` checks `effectiveWeather()`, which is
         // empty while a Cloud Nine / Air Lock holder suppresses the weather.
-        sun: matches!(effective_weather(state), Weather::SUN | Weather::HARSHSUN),
+        // A Utility Umbrella holder sees no sun (`pokemon.effectiveWeather()`).
+        sun: matches!(
+            state
+                .side(ts)
+                .slot_pokemon(tslot)
+                .map_or(effective_weather(state), |t| umbrella_weather(state, t, effective_weather(state))),
+            Weather::SUN | Weather::HARSHSUN
+        ),
         misty_terrain: state.terrain.terrain_type == crate::engine::state::Terrain::MISTYTERRAIN,
         electric_terrain: state.terrain.terrain_type == crate::engine::state::Terrain::ELECTRICTERRAIN,
         safeguard: safeguard_blocks && state.side(ts).side_conditions.safeguard > 0 && !(infiltrates && ts != src_side),
@@ -16338,6 +16353,13 @@ fn status_immune_ex(
         // || target.isSemiInvulnerable()` lets the status through.
         target_grounded: ps_grounded(state, ts, tslot) && !ally_semi_invulnerable(state, ts, tslot),
     };
+    // Shields Down is decided above by the forme (Minior-Meteor), not the
+    // shared rule's HP check: a Core Minior above half HP can be statused.
+    if target.ability == Abilities::SHIELDSDOWN {
+        let mut t = target.clone();
+        t.ability = Abilities::NONE;
+        return crate::engine::mechanics::immune_to_status(&t, &status, &ctx);
+    }
     crate::engine::mechanics::immune_to_status(target, &status, &ctx)
 }
 
@@ -16356,7 +16378,7 @@ fn yawn_volatile_blocked(state: &DoublesState, ts: Side, tslot: usize, src_side:
     }
     // Leaf Guard `onTryAddVolatile`: yawn fails in sun (`effectiveWeather`).
     // PS data/abilities.ts leafguard.
-    if target.ability == Abilities::LEAFGUARD && matches!(effective_weather(state), Weather::SUN | Weather::HARSHSUN) {
+    if target.ability == Abilities::LEAFGUARD && matches!(umbrella_weather(state, target, effective_weather(state)), Weather::SUN | Weather::HARSHSUN) {
         return true;
     }
     // Purifying Salt `onTryAddVolatile`: yawn fails. PS data/abilities.ts purifyingsalt.
@@ -16940,7 +16962,8 @@ fn compute_hit_damage(
                 m
             };
             // Solar Power `onModifySpA` (priority 5, exclusive with Plus / Minus).
-            let sun = matches!(effective_weather(state), Weather::SUN | Weather::HARSHSUN);
+            // `pokemon.effectiveWeather()`: a Utility Umbrella holder sees no sun.
+            let sun = matches!(umbrella_weather(state, attacker, effective_weather(state)), Weather::SUN | Weather::HARSHSUN);
             let m = (m * crate::engine::mechanics::solar_power_spa_modifier(attacker, choice, sun) + 2048) >> 12;
             // Orichalcum Pulse `onModifyAtk` (priority 5): x5461/4096 while the holder's
             // `effectiveWeather()` is sun (Utility Umbrella hides it). Body Press runs
@@ -17735,7 +17758,11 @@ fn semi_invulnerable_blocks(
         let _ = tidx;
         let no_guard = state.side(src_side).team_member(src_idx).ability == Abilities::NOGUARD
             || state.side(ts).slot_pokemon(tslot).is_some_and(|p| p.ability == Abilities::NOGUARD);
-        return !pair && !anti_air && !no_guard && mv != Choices::HELPINGHAND;
+        // Lock-On's `onSourceInvulnerability` (priority 1) runs first and wins.
+        let lock_on = (0..2).any(|sl| {
+            state.side(src_side).active()[sl].pokemon_index == Some(src_idx) && lock_on_hits(state, src_side, sl, ts, tslot)
+        });
+        return !pair && !anti_air && !no_guard && !lock_on && mv != Choices::HELPINGHAND;
     }
     let Some((charging, _)) = t.charging.filter(|_| !t.charge_aborted) else { return false };
     let hits_anyway = match charging {
@@ -24231,8 +24258,12 @@ fn end_of_turn(
                 if ab == Abilities::HYDRATION {
                     // PS hydration.onResidual: cures its status in rain
                     // (`effectiveWeather`, so not under Cloud Nine / Air Lock).
+                    // A Utility Umbrella holder sees no rain.
                     if state.side(side).team_member(idx).status != PokemonStatus::NONE
-                        && matches!(effective_weather(state), Weather::RAIN | Weather::HEAVYRAIN)
+                        && matches!(
+                            umbrella_weather(state, state.side(side).team_member(idx), effective_weather(state)),
+                            Weather::RAIN | Weather::HEAVYRAIN
+                        )
                     {
                         state.side_mut(side).team_member_mut(idx).status = PokemonStatus::NONE;
                     }

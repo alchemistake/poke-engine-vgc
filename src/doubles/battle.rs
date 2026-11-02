@@ -4308,13 +4308,6 @@ fn execute_action_body(
     state.in_move = false;
     crate::doubles::damage::set_scrappy_move(false);
     crate::doubles::damage::set_infiltrator_move(false);
-    // White Herb `onAnyAfterMove` (runMove's AfterMove, after the move's
-    // AfterMoveSecondary: Pickpocket sees the herb still held).
-    for sd in [Side::One, Side::Two] {
-        for sl in 0..2 {
-            white_herb(state, rng, sd, sl);
-        }
-    }
     if move_order.len() > order_len && !pressure_skipped && !state.tl.before_move_failed.get() {
         pressure_deduct_pp(state, action);
     }
@@ -4362,6 +4355,13 @@ fn execute_action_body(
     // them runs (charge removal, lockedmove release below). Only for a move that ran.
     if move_order.len() > order_len && !state.tl.after_move_tie_drawn.get() {
         after_move_handler_ties(state, rng, action.side, action.pokemon_index, false);
+    }
+    // White Herb `onAnyAfterMove` (runMove's AfterMove, after its handler sort, after the move's
+    // AfterMoveSecondary: Pickpocket sees the herb still held).
+    for sd in [Side::One, Side::Two] {
+        for sl in 0..2 {
+            white_herb(state, rng, sd, sl);
+        }
     }
     // Opportunist `onAnyAfterMove` (every holder, after the move).
     if move_order.len() > order_len {
@@ -24444,8 +24444,10 @@ fn end_of_turn(
                 // def/spd -1 from the binder.
                 let Some((ss, si)) = state.side(side).active()[slot].octolock else { continue };
                 let Some(tidx) = state.side(side).active()[slot].pokemon_index else { continue };
-                let src_active = (0..2).any(|sl| state.side(ss).active()[sl].pokemon_index == Some(si));
-                if !src_active || state.side(ss).team_member(si).hp <= 0 {
+                // `!source.activeTurns`: a binder that (re)entered this turn
+                // (Baton Pass back in) ends it too.
+                let src_slot = (0..2).find(|&sl| state.side(ss).active()[sl].pokemon_index == Some(si));
+                if src_slot.map_or(true, |sl| state.side(ss).active()[sl].active_turns == 0) || state.side(ss).team_member(si).hp <= 0 {
                     state.side_mut(side).active_slot_mut(slot).octolock = None;
                     continue;
                 }

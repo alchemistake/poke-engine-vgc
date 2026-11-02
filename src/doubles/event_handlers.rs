@@ -644,6 +644,7 @@ pub fn handlers(callback: &str) -> &'static [EventHandler] {
         "onModifyDamage" => &[
             EventHandler { id: "expertbelt", kind: Item, order: 0, priority: 0, sub_order: 8 },
             EventHandler { id: "lifeorb", kind: Item, order: 0, priority: 0, sub_order: 8 },
+            EventHandler { id: "metronome", kind: Volatile, order: 0, priority: 0, sub_order: 2 },
             EventHandler { id: "sniper", kind: Ability, order: 0, priority: 0, sub_order: 7 },
             EventHandler { id: "tintedlens", kind: Ability, order: 0, priority: 0, sub_order: 7 },
         ],
@@ -811,6 +812,7 @@ pub fn handlers(callback: &str) -> &'static [EventHandler] {
         ],
         "onSourceAccuracy" => &[
             EventHandler { id: "lockon", kind: Volatile, order: 0, priority: 0, sub_order: 2 },
+            EventHandler { id: "micleberry", kind: Volatile, order: 0, priority: 0, sub_order: 2 },
         ],
         "onSourceAfterFaint" => &[
             EventHandler { id: "asoneglastrier", kind: Ability, order: 0, priority: 0, sub_order: 7 },
@@ -1183,6 +1185,7 @@ pub fn handlers(callback: &str) -> &'static [EventHandler] {
             EventHandler { id: "wonderguard", kind: Ability, order: 0, priority: 0, sub_order: 7 },
         ],
         "onTryMove" => &[
+            EventHandler { id: "metronome", kind: Volatile, order: 0, priority: -2, sub_order: 2 },
             EventHandler { id: "powder", kind: Volatile, order: 0, priority: -1, sub_order: 2 },
         ],
         "onTryPrimaryHit" => &[

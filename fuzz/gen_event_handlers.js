@@ -39,6 +39,11 @@ for (const id of [...abilities].sort()) add(id, 'Ability', d.abilities.get(id));
 const items = new Set(buildItemPool(d).map((n) => d.items.get(n).id));
 for (const { stone } of pool) if (stone) items.add(d.items.get(stone).id);
 for (const id of [...items].sort()) add(id, 'Item', d.items.get(id));
+// Item volatiles (`addVolatile(item.id)`: Micle Berry, Metronome).
+for (const id of [...items].sort()) {
+  const it = d.items.get(id);
+  if (it.condition) add(id, 'Volatile', d.conditions.get(id));
+}
 for (const id of ['brn', 'par', 'slp', 'frz', 'psn', 'tox']) add(id, 'Status', d.conditions.get(id));
 for (const id of ['confusion', 'flinch', 'trapped', 'partiallytrapped', 'lockedmove', 'twoturnmove',
   'mustrecharge', 'futuremove', 'stall', 'choicelock', 'rolloutstorage']) {

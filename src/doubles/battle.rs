@@ -244,7 +244,9 @@ fn commit_queue_sort(actions: &mut Vec<Action>, pre: &mut Vec<PreAction>, state:
 /// Mega Evolution (order 104).
 #[derive(Clone, Copy, Debug)]
 enum PreAction {
-    Switch { side: Side, slot: usize, position: usize, speed: i16 },
+    /// `idx`: the pokemon that chose the switch (its action is cancelled once
+    /// it left the field, e.g. through its Eject Pack).
+    Switch { side: Side, slot: usize, position: usize, speed: i16, idx: Option<PokemonIndex> },
     Mega { side: Side, slot: usize, idx: PokemonIndex },
 }
 
@@ -1977,7 +1979,8 @@ pub fn run_fuzz_turn(
                     }
                     FuzzAction::Switch { position } => {
                         let speed = effective_speed(state, side, slot).unwrap_or(0);
-                        pre.push(PreAction::Switch { side, slot, position: *position, speed });
+                        let idx = state.side(side).active()[slot].pokemon_index;
+                        pre.push(PreAction::Switch { side, slot, position: *position, speed, idx });
                     }
                 }
             }
@@ -2117,7 +2120,12 @@ pub fn run_fuzz_turn(
         // Switch actions (order 103) and Mega Evolutions (order 104).
         for p in pre.iter().copied() {
             match p {
-                PreAction::Switch { side, slot, position, .. } => {
+                PreAction::Switch { side, slot, position, idx, .. } => {
+                    // `queue.cancelAction(oldActive)`: a pokemon already switched
+                    // out (Eject Pack) loses its own switch.
+                    if state.side(side).active()[slot].pokemon_index != idx {
+                        continue;
+                    }
                     let pursued = pursuit_before_switch(state, rng, side, slot, &mut actions, &pre, &mut mega_done, &mut move_order, 0);
                     run_switch_action(state, rng, side, slot, position, pursued);
                     // Eject Pack `onAnySwitchIn` (priority -4): the newcomer's
@@ -8569,6 +8577,10 @@ fn execute_move_body(
       }
       // PS `getSpreadDamage`: every target's crit + damage roll comes before
       // any per-target effect.
+      // Trump Card reads its slot's PP after `useMoveInner`'s Pressure `DeductPP`.
+      if choice.move_id == Choices::TRUMPCARD {
+          pressure_pay_now(state, side, idx);
+      }
       let pre_damage: smallvec::SmallVec<[(i16, bool); 4]> = if is_spread && is_attack {
           let sp = spread_count > 1;
           // A substitute's `onTryPrimaryHit` computes its damage first
@@ -20301,12 +20313,6 @@ fn intimidate_adrenaline_orb(
 /// weather (sun Fire, rain Water, hail / snow Ice, otherwise Normal).
 fn update_forecast(state: &mut DoublesState) {
     let weather = effective_weather(state);
-    let t = match weather {
-        Weather::SUN | Weather::HARSHSUN => PokemonType::FIRE,
-        Weather::RAIN | Weather::HEAVYRAIN => PokemonType::WATER,
-        Weather::HAIL | Weather::SNOW => PokemonType::ICE,
-        _ => PokemonType::NORMAL,
-    };
     for sd in [Side::One, Side::Two] {
         for sl in 0..2 {
             if let Some(idx) = state.side(sd).active()[sl].pokemon_index {
@@ -20383,6 +20389,13 @@ fn update_forecast(state: &mut DoublesState) {
                 {
                     continue;
                 }
+                // `pokemon.effectiveWeather()`: a Utility Umbrella hides sun / rain.
+                let t = match umbrella_weather(state, state.side(sd).team_member(idx), weather) {
+                    Weather::SUN | Weather::HARSHSUN => PokemonType::FIRE,
+                    Weather::RAIN | Weather::HEAVYRAIN => PokemonType::WATER,
+                    Weather::HAIL | Weather::SNOW => PokemonType::ICE,
+                    _ => PokemonType::NORMAL,
+                };
                 let pm = state.side_mut(sd).team_member_mut(idx);
                 // PS data/abilities.ts forecast.onUpdate: only Castform (any forme)
                 // changes type; a Forecast holder of another species (Skill Swap,
@@ -20917,7 +20930,11 @@ fn after_hit_item_moves(
         // Bug Bite / Pluck `onHit`: the user steals and eats the target's berry.
         Choices::BUGBITE | Choices::PLUCK => {
             let it = state.side(ts).team_member(tidx).item;
-            if state.side(side).team_member(idx).hp > 0
+            // `source.hp`: a user the target's Destiny Bond takes down is still
+            // up until `faintMessages`.
+            let user_up = state.side(side).team_member(idx).hp > 0
+                || state.db_alive_pending.iter().any(|&(s, i, _)| (s, i) == (side, idx));
+            if user_up
                 && crate::doubles::item_data::is_berry(it)
                 && item_takeable(state, ts, tidx, (ts, tidx) != (side, idx), false, mold, Some((side, idx)))
             {

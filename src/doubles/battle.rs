@@ -2665,6 +2665,8 @@ pub fn run_fuzz_turn(
                                 a.metronome_last = old.metronome_last;
                             }
                             a.unburden |= old.unburden;
+                            // `micleberry` (an eaten Micle Berry's volatile) is copied too.
+                            a.micle = old.micle;
                             // PS copyVolatileFrom adds them in the source's key order.
                             a.vol_order = old.vol_order.clone();
                             a.vol_synced = u128::MAX;
@@ -4952,9 +4954,11 @@ fn execute_move_body(
     // a `randomFoe` sample when a foe is up; then the move does nothing.
     // PS sim/battle-actions.ts useMoveInner, sim/battle.ts getRandomTarget,
     // data/moves.ts throatchop / healblock `condition.onModifyMove`.
+    // Gravity's `onModifyMove` blocks a called `gravity`-flag move (Fly) the same way.
     if external
         && ((state.side(side).active()[slot].throat_chop > 0 && action.choice.flags.sound)
-            || (state.side(side).active()[slot].heal_block > 0 && action.choice.flags.heal))
+            || (state.side(side).active()[slot].heal_block > 0 && action.choice.flags.heal)
+            || (state.gravity.active && has_gravity_flag(action.choice.move_id)))
     {
         let foes = (0..2).filter(|&sl| state.side(side.other()).slot_pokemon(sl).is_some_and(|p| p.hp > 0)).count();
         if foes > 0 {
@@ -5879,9 +5883,10 @@ fn execute_move_body(
         // fires at once: `onTryMove` returns without charging, then the
         // `!targets.length` fail (PS data/moves.ts solarbeam.onTryMove).
         let charge_skipped = {
-            let w = move_weather(state, side, idx);
+            // `attacker.effectiveWeather()`: a Utility Umbrella user sees none.
+            let w = umbrella_weather(state, state.side(side).team_member(idx), move_weather(state, side, idx));
             match choice.charge_setup {
-                ChargeSetup::NotSun { .. } => w == Weather::SUN,
+                ChargeSetup::NotSun { .. } => matches!(w, Weather::SUN | Weather::HARSHSUN),
                 ChargeSetup::OnlyRain { .. } => matches!(w, Weather::RAIN | Weather::HEAVYRAIN),
                 _ => false,
             }
@@ -6072,11 +6077,12 @@ fn execute_move_body(
     // charge turn (PS locks the move via `twoturnmove.onLockMove`).
     {
         // PS `attacker.effectiveWeather()` (Cloud Nine / Air Lock suppress it).
-        let eff_weather = move_weather(state, side, idx);
+        // A Utility Umbrella user sees no sun / rain.
+        let eff_weather = umbrella_weather(state, state.side(side).team_member(idx), move_weather(state, side, idx));
         let needs_charge = match choice.charge_setup {
             ChargeSetup::None => false,
             ChargeSetup::Always { .. } => true,
-            ChargeSetup::NotSun { .. } => eff_weather != Weather::SUN,
+            ChargeSetup::NotSun { .. } => !matches!(eff_weather, Weather::SUN | Weather::HARSHSUN),
             ChargeSetup::OnlyRain { .. } => !matches!(eff_weather, Weather::RAIN | Weather::HEAVYRAIN),
         };
         // PS data/moves.ts electroshot `onTryMove`: `boost({spa: 1})` runs on the
@@ -8207,6 +8213,9 @@ fn execute_move_body(
         beat_up_hits = q.len() as u32;
         state.side_mut(side).slot_scratch_mut(slot).beat_up_queue = q;
     }
+    // Skill Link's `onModifyMove` ran before the hits: a Mummy copy mid-move
+    // does not bring the per-hit accuracy rolls back.
+    let skill_link_start = state.side(side).team_member(idx).ability == Abilities::SKILLLINK;
     let hit_count: u32 = match choice.multihit {
         _ if beat_up_hits > 0 => beat_up_hits,
         0 => 1,
@@ -8383,7 +8392,7 @@ fn execute_move_body(
       // data/abilities.ts skilllink).
       if hit_idx > 0
           && matches!(choice.move_id, Choices::TRIPLEAXEL | Choices::TRIPLEKICK | Choices::POPULATIONBOMB)
-          && state.side(side).team_member(idx).ability != Abilities::SKILLLINK
+          && !skill_link_start
           // Loaded Dice `onModifyMove` deletes it too (PS data/items.ts loadeddice).
           && !{
               let u = state.side(side).team_member(idx);
@@ -8944,6 +8953,8 @@ fn execute_move_body(
                         Choices::TRIATTACK | Choices::DIRECLAW | Choices::SALTCURE | Choices::SPIRITSHACKLE | Choices::ANCHORSHOT
                             | Choices::THROATCHOP | Choices::EERIESPELL | Choices::PSYCHICNOISE
                             | Choices::CEASELESSEDGE | Choices::STONEAXE
+                            // Its table User entry stands in for the `self` roll above.
+                            | Choices::DIAMONDSTORM
                     ) {
                         if let Some(sec) = choice.secondaries.as_ref().and_then(|v| v.get(k)) {
                             if sec.target == MoveTarget::User && (sec.chance <= 0.0 || r < sec.chance) {
@@ -9273,8 +9284,12 @@ fn execute_move_body(
                 Choices::MINIMIZE => b.boosts.evasion = 2,
                 Choices::SWEETSCENT => b.boosts.evasion = -2,
                 // PS growth.onModifyMove: +2 Atk / SpA in harsh sunlight.
+                // `pokemon.effectiveWeather()`: a Utility Umbrella user sees no sun.
                 Choices::GROWTH
-                    if matches!(move_weather(state, side, idx), Weather::SUN | Weather::HARSHSUN) =>
+                    if matches!(
+                        umbrella_weather(state, state.side(side).team_member(idx), move_weather(state, side, idx)),
+                        Weather::SUN | Weather::HARSHSUN
+                    ) =>
                 {
                     b.boosts.attack = 2;
                     b.boosts.special_attack = 2;
@@ -9492,7 +9507,13 @@ fn execute_move_body(
                 choice,
                 &Abilities::GOODASGOLD,
             );
+            // Crafty Shield `onTryHit` (priority 3) on the user's side drops
+            // every target (the user too: `allies` is not `self`), NOT_FAIL.
+            let crafty = state.side(side).side_conditions.crafty_shield > 0;
             for sl in [slot, ally_slot] {
+                if crafty {
+                    continue;
+                }
                 // A semi-invulnerable ally misses (PS `hitStepInvulnerabilityEvent`
                 // prints `-miss` and skips it: no heal for it, no draw).
                 // PS data/conditions.ts dive / fly / dig `onInvulnerability`.
@@ -9542,6 +9563,7 @@ fn execute_move_body(
             }
             if !healed {
                 move_failed = true;
+                not_fail_result |= crafty;
             }
         }
         // Heal Bell (`target: allyTeam`, onHit once with the user as target): every
@@ -9879,9 +9901,15 @@ fn execute_move_body(
                         if a.smackdown {
                             // onRestart: no further effect.
                         } else {
-                            // `hasAbility('levitate')` is not blanked by Mold Breaker.
+                            // `hasAbility('levitate')` is not blanked by Mold Breaker,
+                            // but Neutralizing Gas / Gastro Acid suppress it.
+                            let ab = state
+                                .mold_saved
+                                .iter()
+                                .find(|&&(s_, i_, _)| (s_, i_) == (ts, tidx))
+                                .map_or(p.ability, |&(_, _, a_)| a_);
                             let mut applies = p.has_type(&PokemonType::FLYING)
-                                || matches!(real_ability(state, ts, tidx), Abilities::LEVITATE | Abilities::EELEVATE)
+                                || matches!(ab, Abilities::LEVITATE | Abilities::EELEVATE)
                                 || charge_flight;
                             if p.item == crate::engine::items::Items::IRONBALL
                                 || a.ingrain
@@ -12710,7 +12738,9 @@ fn execute_move_body(
                 if !rng.label("secondary").random_chance(sec.chance as u32, 100) {
                     continue;
                 }
-                let (ts, tslot) = if sec.target == MoveTarget::User {
+                // A `self`-target move's secondary (King's Rock on Bide's start)
+                // lands on the user, its only target.
+                let (ts, tslot) = if sec.target == MoveTarget::User || move_target(choice.move_id) == Tgt::SelfTarget {
                     (side, slot)
                 } else if sec.target == MoveTarget::Ally {
                     (side, ally_slot)
@@ -13169,7 +13199,8 @@ fn execute_move_body(
                     && (side, slot) != (target_side, target_slot)
                     && !is_selfdestruct_always(choice.move_id)
                 {
-                    let back = if is_spread { hit_damage.unwrap_or(0) } else { total_damage };
+                    // `move.totalDamage`: a Substitute's share does not count.
+                    let back = if is_spread { hit_damage.unwrap_or(0) } else { real_damage };
                     if back > 0 && state.side(side).slot_pokemon(slot).is_some_and(|p| p.hp > 0) {
                         apply_indirect_damage(state, rng, side, slot, back);
                     }
@@ -13832,17 +13863,6 @@ fn execute_move_body(
     } else {
         any_hit_landed || real_hit || total_damage > 0
     };
-    if choice.flags.sound
-        && move_ok
-        && !sheer
-        && state.side(side).active()[slot].pokemon_index == Some(idx)
-    {
-        let p = state.side(side).team_member(idx);
-        if p.hp > 0 && p.item == Items::THROATSPRAY && !ignoring_item(state, p) {
-            use_item(state, rng, side, slot, idx, false);
-            apply_boosts(state, rng, side, idx, &StatBoosts { special_attack: 1, ..Default::default() }, false);
-        }
-    }
     // Relic Song `onAfterMoveSecondarySelf`: an untransformed Meloetta switches
     // between Aria and Pirouette. PS data/moves.ts relicsong.
     if choice.move_id == Choices::RELICSONG
@@ -13864,14 +13884,8 @@ fn execute_move_body(
             _ => {}
         }
     }
-    // useMoveInner: `runEvent('EmergencyExit', pokemon)` after the user's
-    // `AfterMoveSecondarySelf` (Life Orb recoil), for a non-Status move at another.
-    if choice.category != MoveCategory::Status
-        && (side, slot) != (target_side, target_slot)
-        && state.side(side).active()[slot].pokemon_index == Some(idx)
-    {
-        emergency_exit_check(state, side, slot, hp_before_self);
-    }
+    // `runEvent('AfterMoveSecondarySelf')`: the user's ability (Magician,
+    // subOrder 7) runs before its item (Throat Spray, subOrder 8).
     // PS data/abilities.ts magician `onAfterMoveSecondarySelf` (run by useMoveInner
     // after the secondaries): with no item and no switch flag, a non-Status move
     // `speedSort`s its `hitTargets` (a draw per speed tie). The item steal
@@ -13937,6 +13951,25 @@ fn execute_move_body(
             item_gained(state, rng, side, slot, idx);
             break;
         }
+    }
+    if choice.flags.sound
+        && move_ok
+        && !sheer
+        && state.side(side).active()[slot].pokemon_index == Some(idx)
+    {
+        let p = state.side(side).team_member(idx);
+        if p.hp > 0 && p.item == Items::THROATSPRAY && !ignoring_item(state, p) {
+            use_item(state, rng, side, slot, idx, false);
+            apply_boosts(state, rng, side, idx, &StatBoosts { special_attack: 1, ..Default::default() }, false);
+        }
+    }
+    // useMoveInner: `runEvent('EmergencyExit', pokemon)` after the user's
+    // `AfterMoveSecondarySelf` (Life Orb recoil), for a non-Status move at another.
+    if choice.category != MoveCategory::Status
+        && (side, slot) != (target_side, target_slot)
+        && state.side(side).active()[slot].pokemon_index == Some(idx)
+    {
+        emergency_exit_check(state, side, slot, hp_before_self);
     }
 
     // lockedmove `onAfterMove` (PS runMove, after useMove: after Life Orb's
@@ -15960,6 +15993,11 @@ fn set_status_event_tie(
     if target.hp <= 0 {
         return;
     }
+    // `trySetStatus` keeps an existing status (`setStatus(this.status || status)`),
+    // which fails at once (`this.status === status.id`), before any event.
+    if target.status != PokemonStatus::NONE {
+        return;
+    }
     let type_immune = match st {
         PokemonStatus::BURN => target.has_type(&PokemonType::FIRE),
         PokemonStatus::PARALYZE => target.has_type(&PokemonType::ELECTRIC),
@@ -16966,7 +17004,15 @@ fn compute_hit_damage(
             // Eviolite `onModifyDef` / `SpD` (priority 2): x1.5 while it can still
             // evolve; Assault Vest `onModifySpD` (priority 1): x1.5.
             if !ignoring_item(state, defender) {
-                if defender.item == Items::EVIOLITE && crate::doubles::move_data::nfe(defender.id) {
+                // `pokemon.baseSpecies.nfe`: a transformed holder keeps its own species.
+                if defender.item == Items::EVIOLITE
+                    && crate::doubles::move_data::nfe(
+                        state.side(target_side).active()[target_slot]
+                            .pokemon_index
+                            .and_then(|ti| state.side(target_side).transform_save[ti as usize].as_ref().map(|t| t.id))
+                            .unwrap_or(defender.id),
+                    )
+                {
                     m = (m * 6144 + 2048) >> 12;
                 }
                 if defender.item == Items::ASSAULTVEST && !names_def {
@@ -17094,7 +17140,14 @@ fn compute_hit_damage(
                 slot_grounded(attacker, &att_slot, state.gravity.active, state.magic_room.active)
                     && !(state.side(side).active()[slot].pokemon_index == Some(idx)
                         && ally_semi_invulnerable(state, side, slot)),
-                slot_grounded(defender, &state.side(target_side).active()[target_slot], state.gravity.active, state.magic_room.active),
+                // `defender.isGrounded()` (no `negateImmunity`): the real pokemon,
+                // not a Ring Target view with its Flying type dropped.
+                slot_grounded(
+                    state.side(target_side).slot_pokemon(target_slot).unwrap_or(defender),
+                    &state.side(target_side).active()[target_slot],
+                    state.gravity.active,
+                    state.magic_room.active,
+                ),
                 state,
             ),
         };
@@ -18423,6 +18476,8 @@ fn prepare_hit(state: &mut DoublesState, side: Side, slot: usize, idx: PokemonIn
     }
     if !matches!(state.side(side).team_member(idx).ability, Abilities::LIBERO | Abilities::PROTEAN)
         || state.side(side).active()[slot].protean_done
+        // `move.hasBounced`: a Magic Coat / Magic Bounce reflection.
+        || state.side(side).active()[slot].bounced
         || choice.move_type == PokemonType::TYPELESS
         || choice.move_id == Choices::STRUGGLE
         || crate::engine::mechanics::is_future_move(choice.move_id)
@@ -22383,6 +22438,8 @@ enum ResidualKind {
     /// earlier in the residual leaves the later ones undropped. The payload is
     /// the `side_condition_duration_mut` index.
     SideDuration(Side, u8),
+    /// A volatile with no residual callback whose duration (1) runs out.
+    MarkerEnd,
     /// Fire Pledge `onResidual`: 1/8 max HP to a non-Fire active.
     FirePledge(Side, usize),
     /// Weather `onFieldResidual` (sandstorm damage via `eachEvent('Weather')`).
@@ -22772,27 +22829,27 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
                 vols.push(("micleberry", NO_ORDER, 2, ResidualKind::VolatileEnd(side, slot, 13)));
             }
             if a.focus_punch {
-                vols.push(("focuspunch", NO_ORDER, 2, ResidualKind::Marker)); // focuspunch (duration 1)
+                vols.push(("focuspunch", NO_ORDER, 2, ResidualKind::MarkerEnd)); // focuspunch (duration 1)
             }
             if a.chilly_reception {
-                vols.push(("chillyreception", NO_ORDER, 2, ResidualKind::Marker)); // chillyreception (duration 1)
+                vols.push(("chillyreception", NO_ORDER, 2, ResidualKind::MarkerEnd)); // chillyreception (duration 1)
             }
             // PS data/moves.ts electrify.condition / beakblast.condition: duration 1.
             if a.electrify {
-                vols.push(("electrify", NO_ORDER, 2, ResidualKind::Marker));
+                vols.push(("electrify", NO_ORDER, 2, ResidualKind::MarkerEnd));
             }
             if a.beak_blast {
-                vols.push(("beakblast", NO_ORDER, 2, ResidualKind::Marker));
+                vols.push(("beakblast", NO_ORDER, 2, ResidualKind::MarkerEnd));
             }
             if a.shell_trap > 0 {
-                vols.push(("shelltrap", NO_ORDER, 2, ResidualKind::Marker));
+                vols.push(("shelltrap", NO_ORDER, 2, ResidualKind::MarkerEnd));
             }
             if a.me_first_vol {
-                vols.push(("mefirst", NO_ORDER, 2, ResidualKind::Marker));
+                vols.push(("mefirst", NO_ORDER, 2, ResidualKind::MarkerEnd));
             }
             // PS data/moves.ts snatch.condition: duration 1 (cleared at turn end).
             if a.snatch {
-                vols.push(("snatch", NO_ORDER, 2, ResidualKind::Marker));
+                vols.push(("snatch", NO_ORDER, 2, ResidualKind::MarkerEnd));
             }
             if a.recharging {
                 vols.push(("mustrecharge", NO_ORDER, 2, ResidualKind::Marker)); // mustrecharge
@@ -22868,7 +22925,7 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
                 vols.push(("pursuit", NO_ORDER, 2, ResidualKind::VolatileEnd(side, slot, 14)));
             }
             if a.powder {
-                vols.push(("powder", NO_ORDER, 2, ResidualKind::Marker)); // powder (duration 1)
+                vols.push(("powder", NO_ORDER, 2, ResidualKind::MarkerEnd)); // powder (duration 1)
             }
             if a.spotlight {
                 vols.push(("spotlight", NO_ORDER, 2, ResidualKind::VolatileEnd(side, slot, 15)));
@@ -23779,6 +23836,9 @@ fn end_of_turn(
         prev_end = false;
         match h.kind {
             ResidualKind::Marker => {}
+            // A duration-1 volatile ends here: PS calls its `end` and skips
+            // `resolveFaints` (sim/battle.ts fieldEvent).
+            ResidualKind::MarkerEnd => prev_end = true,
             // A fainted holder's handler is skipped before `resolveFaints`.
             ResidualKind::FaintedMarker => {
                 prev_end = was_end;

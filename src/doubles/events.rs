@@ -698,10 +698,11 @@ pub enum Event {
     TryBoost,
     TryHitSide,
     TryMove,
+    TryPrimaryHit,
 }
 
 impl Event {
-    const ALL: [Event; 25] = [
+    const ALL: [Event; 26] = [
         Event::Accuracy,
         Event::AfterMega,
         Event::BasePower,
@@ -727,6 +728,7 @@ impl Event {
         Event::TryBoost,
         Event::TryHitSide,
         Event::TryMove,
+        Event::TryPrimaryHit,
     ];
 
     /// The PS event name (`"ModifyAtk"`).
@@ -757,6 +759,7 @@ impl Event {
             Event::TryBoost => "TryBoost",
             Event::TryHitSide => "TryHitSide",
             Event::TryMove => "TryMove",
+            Event::TryPrimaryHit => "TryPrimaryHit",
         }
     }
 }

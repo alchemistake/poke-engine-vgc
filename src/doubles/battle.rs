@@ -1357,8 +1357,10 @@ fn plan_queue_change(
             }
             None => 0,
         };
-        // Full Incense / Lagging Tail `onFractionalPriority: -0.1`.
-        if matches!(p.item, Items::FULLINCENSE | Items::LAGGINGTAIL) && !ignoring_item(state, p) {
+        // Full Incense / Lagging Tail `onFractionalPriority: -0.1` (Quick Draw's
+        // 0.1, priority -1, runs after it and wins).
+        let quick_draw = p.ability == Abilities::QUICKDRAW && a.fractional == 1;
+        if matches!(p.item, Items::FULLINCENSE | Items::LAGGINGTAIL) && !ignoring_item(state, p) && !quick_draw {
             a.fractional = -1;
         }
         // Quick Claw `onFractionalPriority` (after Quick Draw), as at turn start.
@@ -1570,8 +1572,10 @@ fn accuracy_ability_mods(
     }
     // Micle Berry's volatile `onSourceAccuracy`: x1.2 (not for OHKO moves).
     if !choice.ohko
+        && !state.tl.micle_spent.get()
         && (0..2).any(|sl| state.side(side).active()[sl].pokemon_index == Some(idx) && state.side(side).active()[sl].micle > 0)
     {
+        state.tl.micle_spent.set(true);
         post = chain(post, 4915);
     }
     // Held items (priority -2): Bright Powder / Lax Incense on the target, Wide / Zoom Lens
@@ -4252,6 +4256,7 @@ fn execute_action_body(
     state.db_faint_pos = None;
     state.tl.no_target_fail.set(false);
     state.tl.acc_step.set(false);
+    state.tl.micle_spent.set(false);
     state.tl.before_move_aborted.set(false);
     let order_len_outer = move_order.len();
     // A Micle Berry eaten during this move (Bug Bite) was not up at its check.
@@ -5209,6 +5214,10 @@ fn execute_move_body(
                             // `spreadDamage` -> `runEvent('Damage')`: Endure, Sturdy,
                             // Focus Band / Focus Sash `onDamage` on the move's damage.
                             let dmg = move_damage_event(state, rng, ts, tsl, dmg);
+                            // A biding target's `onDamage` counts the release (a Move).
+                            if let Some((d, t, _)) = state.side(ts).active()[tsl].bide {
+                                state.side_mut(ts).active_slot_mut(tsl).bide = Some((d, t.saturating_add(dmg), Some((side, idx))));
+                            }
                             // Focus Punch `onHit`: the (Physical) release breaks focus.
                             if state.side(ts).active()[tsl].focus_punch {
                                 state.side_mut(ts).slot_scratch_mut(tsl).lost_focus = true;
@@ -5541,8 +5550,18 @@ fn execute_move_body(
     }
     // Thunder / Hurricane `onModifyMove`: accuracy 50 in harsh sunlight
     // (`target.effectiveWeather()`: Cloud Nine / Air Lock suppress it).
+    // A Utility Umbrella target sees no sun.
     if matches!(modified.move_id, Choices::THUNDER | Choices::HURRICANE)
-        && matches!(move_weather(state, side, idx), Weather::SUN | Weather::HARSHSUN)
+        && matches!(
+            {
+                let w = move_weather(state, side, idx);
+                match resolved.and_then(|(ts, tsl)| state.side(ts).slot_pokemon(tsl)) {
+                    Some(t) => umbrella_weather(state, t, w),
+                    None => w,
+                }
+            },
+            Weather::SUN | Weather::HARSHSUN
+        )
     {
         modified.accuracy = 50.0;
     }
@@ -8414,6 +8433,13 @@ fn execute_move_body(
               (!has_sub) as u8
           });
           let mut out: smallvec::SmallVec<[(i16, bool); 4]> = smallvec::smallvec![(0i16, false); hit_targets.len()];
+          // PS `tryPrimaryHitEvent`: `runEvent('TryPrimaryHit')` per target
+          // (Aura Break ties) before `getSpreadDamage`.
+          for &(ts, tsl) in hit_targets.iter() {
+              if state.side(ts).slot_pokemon(tsl).is_some() {
+                  crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::TryPrimaryHit, (ts, tsl), Some((side, slot)));
+              }
+          }
           for i in order {
               let (ts, tsl) = hit_targets[i];
               // PS getSpreadDamage skips a target that is gone (`!target`).
@@ -8615,6 +8641,14 @@ fn execute_move_body(
             continue;
         }
 
+        // PS `tryPrimaryHitEvent` for a Status move aimed at a pokemon:
+        // `runEvent('TryPrimaryHit')` (Aura Break ties).
+        if choice.category == MoveCategory::Status
+            && !matches!(move_target(choice.move_id), Tgt::SelfTarget | Tgt::All | Tgt::AllySide | Tgt::AllyTeam | Tgt::FoeSide)
+        {
+            let t = if is_ally { (side, ally_slot) } else { (target_side, target_slot) };
+            crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::TryPrimaryHit, t, Some((side, slot)));
+        }
         // Pollen Puff on an ally (`onTryHit`: basePower 0, so `getDamage`
         // draws nothing; `onHit`: heal floor(baseMaxhp / 2)). The user's Heal
         // Block stops it (`onTryMove`). PS data/moves.ts pollenpuff.
@@ -8654,6 +8688,8 @@ fn execute_move_body(
         }
         if is_attack && !is_self && !is_field && has_target && !pollen_ally {
             if pre_damage.get(ti).is_none() {
+                // PS `runEvent('TryPrimaryHit')` (Aura Break ties, a Gem).
+                crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::TryPrimaryHit, (target_side, target_slot), Some((side, slot)));
                 if choice.move_id == Choices::SURF {
                     gulp_missile_catch(state, side, idx);
                 }
@@ -8866,6 +8902,11 @@ fn execute_move_body(
                     if let Some(p) = state.side(target_side).slot_pokemon(al).filter(|p| p.hp > 0) {
                         let d = (p.maxhp / 16).max(1);
                         apply_indirect_damage(state, rng, target_side, al, d);
+                        // The splash KO (a Condition effect) is the batch's last faint:
+                        // `AfterFaint` reads its effect, so no Moxie / Beast Boost.
+                        if state.side(target_side).active()[al].pokemon_index.map_or(true, |i| state.side(target_side).team_member(i).hp <= 0) {
+                            state.pending_after_faint = None;
+                        }
                     }
                 }
                 // Glaive Rush `self.volatileStatus` applies on a Substitute hit too
@@ -11785,6 +11826,11 @@ fn execute_move_body(
             if let Some(p) = state.side(target_side).slot_pokemon(al).filter(|p| p.hp > 0) {
                 let d = (p.maxhp / 16).max(1);
                 apply_indirect_damage(state, rng, target_side, al, d);
+                // The splash KO (a Condition effect) is the batch's last faint:
+                // `AfterFaint` reads its effect, so no Moxie / Beast Boost.
+                if state.side(target_side).active()[al].pokemon_index.map_or(true, |i| state.side(target_side).team_member(i).hp <= 0) {
+                    state.pending_after_faint = None;
+                }
             }
         }
 
@@ -14524,9 +14570,11 @@ fn fractional_priority_roll(state: &mut DoublesState, rng: &mut Gen5Rng, a: &mut
         None => 0,
     };
     // Full Incense / Lagging Tail `onFractionalPriority: -0.1` (before Quick Claw).
+    // It runs before Quick Draw (priority -1), whose 0.1 then wins.
     {
         let p = state.side(a.side).team_member(a.pokemon_index);
-        if matches!(p.item, Items::FULLINCENSE | Items::LAGGINGTAIL) && !ignoring_item(state, p) {
+        let quick_draw = ability == Abilities::QUICKDRAW && a.fractional == 1;
+        if matches!(p.item, Items::FULLINCENSE | Items::LAGGINGTAIL) && !ignoring_item(state, p) && !quick_draw {
             a.fractional = -1;
         }
     }
@@ -17666,6 +17714,11 @@ fn future_move_hit(
     let saved_pb = std::mem::replace(&mut state.side_mut(ss).slot_scratch_mut(sslot).parental_bond, false);
     // An absent source still holds its `onSource...` handlers (Tinted Lens).
     let prev_src = state.tl.ev_source_idx.replace(if src_slot.is_none() { Some((ss, si)) } else { None });
+    // `trySpreadMoveHit` -> `TryPrimaryHit`: an active source's Gem
+    // (`onSourceTryPrimaryHit`) is used for the delayed hit. PS data/items.ts.
+    if src_slot.is_some() {
+        try_gem(state, rng, ss, sslot, si, &choice, ts, tslot);
+    }
     let (damage, fs_crit) = compute_hit_damage(state, rng, ss, sslot, si, ts, tslot, &choice, false, false);
     state.tl.ev_source_idx.set(prev_src);
     state.side_mut(ss).slot_scratch_mut(sslot).bp_double = saved_bp_double;
@@ -25123,6 +25176,9 @@ fn end_of_turn(
         // `resolveFaints`) before the action's closing eachEvent, which no
         // longer lists it. PS sim/battle.ts fieldEvent / runAction.
         resolve_faints(state, rng, |_, _| true);
+        // Forecast / Ice Face `onStart` (the forme change) is part of the
+        // `runSwitch`, before its closing eachEvent.
+        update_forecast(state);
         each_event_update(state, rng);
     }
     // PS runAction: after the `runSwitch`, `runEvent('EmergencyExit')` with the

@@ -967,6 +967,9 @@ pub struct MoveScratch {
     /// The running move reached its accuracy step (PS `hitStepAccuracy`):
     /// Micle Berry's `onSourceAccuracy` only ends there, not on an earlier fail.
     pub acc_step: std::cell::Cell<bool>,
+    /// Micle Berry's `onSourceAccuracy` ran this move (it removes the
+    /// volatile: a spread move's later targets get no boost).
+    pub micle_spent: std::cell::Cell<bool>,
     /// PS `battle.activeTarget` while a spread move's Substitute `onTryPrimaryHit`
     /// computes its damage (set only then): the last target of the previous
     /// per-target loop, not the substitute holder. Unaware reads it.

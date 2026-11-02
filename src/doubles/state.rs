@@ -975,6 +975,9 @@ pub struct MoveScratch {
     /// Micle Berry's `onSourceAccuracy` ran this move (it removes the
     /// volatile: a spread move's later targets get no boost).
     pub micle_spent: std::cell::Cell<bool>,
+    /// Spread-move targets (bit `side * 2 + slot`) this hit KOs: no Ally /
+    /// Foe / Any handlers during the earlier targets' secondaries.
+    pub spread_kod: std::cell::Cell<u8>,
     /// Lum Berry waits for Poison Puppeteer's confusion (`set_status`).
     pub defer_lum: std::cell::Cell<bool>,
     /// The move failed in `BeforeMove` after its `|move|` line (choicelock):

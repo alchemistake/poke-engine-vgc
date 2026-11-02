@@ -577,6 +577,18 @@ fn resolve_faints(state: &mut DoublesState, rng: &mut Gen5Rng, pick: impl Fn(Sid
                 sort_handler_ties(&mut hs, rng, "speed tie (move order)");
             }
         }
+        // `runEvent('Faint')` collects its handlers up front: a Soul-Heart that
+        // Receiver / Power of Alchemy copies below has no handler for this faint.
+        let mut soul_hearts: Vec<(Side, usize, PokemonIndex)> = Vec::new();
+        for sd in [Side::One, Side::Two] {
+            for sl in 0..2 {
+                if let Some(hi) = state.side(sd).active()[sl].pokemon_index {
+                    if state.side(sd).team_member(hi).ability == Abilities::SOULHEART {
+                        soul_hearts.push((sd, sl, hi));
+                    }
+                }
+            }
+        }
         // PS `Faint` event: `onAllyFaint` of the fainted pokemon's active ally
         // (Receiver / Power of Alchemy), while the holder and the faints behind
         // it still count as active (its Start's `eachEvent` sorts them).
@@ -608,24 +620,19 @@ fn resolve_faints(state: &mut DoublesState, rng: &mut Gen5Rng, pick: impl Fn(Sid
         // of every active holder, the fainting one included, sort first
         // (two equal-speed holders tie).
         {
-            let mut hs: Vec<(i64, i32, i64)> = Vec::new();
-            for sd in [Side::One, Side::Two] {
-                for sl in 0..2 {
-                    let Some(hi) = state.side(sd).active()[sl].pokemon_index else { continue };
-                    if state.side(sd).team_member(hi).ability == Abilities::SOULHEART {
-                        hs.push((0, cached_speed(state, sd, sl), 7));
-                    }
-                }
-            }
+            let mut hs: Vec<(i64, i32, i64)> = soul_hearts
+                .iter()
+                .filter(|&&(sd, sl, hi)| state.side(sd).active()[sl].pokemon_index == Some(hi))
+                .map(|&(sd, sl, _)| (0, cached_speed(state, sd, sl), 7))
+                .collect();
             if hs.len() >= 2 {
                 sort_handler_ties(&mut hs, rng, "speed tie (move order)");
             }
         }
         // Soul-Heart `onAnyFaint`: +1 SpA for each active holder with HP.
-        for sd in [Side::One, Side::Two] {
-            for sl in 0..2 {
-                let Some(hi) = state.side(sd).active()[sl].pokemon_index else { continue };
-                if (sd, hi) == (side, idx) {
+        for &(sd, sl, hi) in &soul_hearts {
+            {
+                if state.side(sd).active()[sl].pokemon_index != Some(hi) || (sd, hi) == (side, idx) {
                     continue;
                 }
                 let h = state.side(sd).team_member(hi);
@@ -4253,6 +4260,7 @@ fn execute_action_body(
     state.tl.will_move.set(will_move);
     state.tl.bypass_protect.set(0);
     state.tl.tera_shell_resisted.set(0);
+    state.tl.spread_kod.set(0);
     state.tl.pressure_target.set(None);
     state.tl.pressure_extra.set(-1);
     state.tl.berserk_pending.set(0);
@@ -7066,7 +7074,10 @@ fn execute_move_body(
                     // The reflected move is the bouncer's own: no `infiltrates` from the original user.
                     let saved_inf = crate::doubles::damage::infiltrator_move();
                     crate::doubles::damage::set_infiltrator_move(false);
+                    // The reflection's accuracy step is the bouncer's (Micle Berry).
+                    let saved_acc = state.tl.acc_step.get();
                     execute_action_inner(state, rng, &sub, move_order, will_act, queue);
+                    state.tl.acc_step.set(saved_acc);
                     // `useMove` left the bouncer as `activePokemon` for the rest
                     // of the spread move.
                     state.tl.active_bounced.set(true);
@@ -7424,7 +7435,10 @@ fn execute_move_body(
             // The reflected move is the bouncer's own: no `infiltrates` from the original user.
             let saved_inf = crate::doubles::damage::infiltrator_move();
             crate::doubles::damage::set_infiltrator_move(false);
+            // The reflection's accuracy step is the bouncer's (Micle Berry).
+            let saved_acc = state.tl.acc_step.get();
             execute_action_inner(state, rng, &sub, move_order, will_act, queue);
+            state.tl.acc_step.set(saved_acc);
             state.tl.pressure_target.set(saved_pt);
             state.tl.pressure_extra.set(saved_pe);
             state.tl.pressure_owed.set(saved_po);
@@ -8350,6 +8364,8 @@ fn execute_move_body(
     let mut total_damage: i16 = 0;
     // Damage dealt to Substitutes, whose recoil was taken inside the hit.
     let mut sub_recoil_damage: i16 = 0;
+    // Damage dealt to Substitutes (PS `HIT_SUBSTITUTE` adds 0 to `move.totalDamage`).
+    let mut sub_dealt: i16 = 0;
     let mut real_damage: i16 = 0;
     // A hit that did nothing ends PS's hit loop with no `eachEvent`.
     // TODO(PS parity): other failing status effects (boosts at +6, ...).
@@ -8638,6 +8654,10 @@ fn execute_move_body(
                           && !band_saved;
                       if lethal {
                           kod.push((ts, pi, p.hp));
+                          // Already at 0 HP for the other targets' secondaries
+                          // (PS damages every target before any secondary).
+                          let m = state.tl.spread_kod.get() | 1 << (ts as u8 * 2 + tsl as u8);
+                          state.tl.spread_kod.set(m);
                       }
                   }
               }
@@ -8876,6 +8896,18 @@ fn execute_move_body(
                         apply_damage(state, side, slot, recoil);
                     }
                 }
+                // `mindBlownRecoil` / `chloroblastRecoil` through `applyRecoilDamage`
+                // too: round(maxhp / 2) per Substitute hit.
+                if d > 0 && matches!(choice.move_id, Choices::STEELBEAM | Choices::MINDBLOWN | Choices::CHLOROBLAST) {
+                    let ab = state.side(side).team_member(idx).ability;
+                    let blocked = ab == Abilities::MAGICGUARD || (choice.move_id == Choices::CHLOROBLAST && ab == Abilities::ROCKHEAD);
+                    if !blocked && state.side(side).team_member(idx).hp > 0 {
+                        let maxhp = state.side(side).team_member(idx).maxhp;
+                        band_roll(state, rng, side, slot, true);
+                        apply_damage(state, side, slot, ((maxhp as f32 / 2.0).round() as i16).max(1));
+                    }
+                }
+                sub_dealt = sub_dealt.saturating_add(d);
                 // Air Balloon `onAfterSubDamage`: a hit on the substitute pops it too.
                 if let Some(tidx) = state.side(target_side).active()[target_slot].pokemon_index {
                     let t = state.side(target_side).team_member(tidx);
@@ -12925,8 +12957,10 @@ fn execute_move_body(
                             .map(|p| p.status != PokemonStatus::NONE)
                             .unwrap_or(false);
                         if let (false, Some(tidx)) = (statused, state.side(ts).active()[tslot].pokemon_index) {
-                            set_status_event_tie(state, rng, ts, tslot, *st, ts != side, true);
-                            if !status_immune(state, ts, tslot, *st, ts != side, side, slot) {
+                            // A sound move's secondary went past the Substitute.
+                            let sub_blocks = !bypasses_substitute(choice);
+                            set_status_event_tie(state, rng, ts, tslot, *st, ts != side, sub_blocks);
+                            if !status_immune_ex(state, ts, tslot, *st, ts != side, side, slot, sub_blocks, true, false) {
                                 state.tl.defer_lum.set(puppeteer_applies(state, ts, tidx, side, idx, *st));
                                 set_status(state, rng, ts, tidx, *st);
                                 // Synchronize also answers an ally's move (PS
@@ -13153,6 +13187,7 @@ fn execute_move_body(
         hit_damage_by[ti] = hit_damage;
         hit_pi_by[ti] = hit_target_pi;
       }
+      state.tl.spread_kod.set(0);
       // A spread status move fails only when it failed on every target (PS
       // `hitStepMoveHitLoop`: `moveDamage.some(val => val !== false)`).
       if status_spread_fails > 0 && status_spread_fails == hit_targets.len() {
@@ -13652,7 +13687,7 @@ fn execute_move_body(
             Choices::STEELBEAM | Choices::MINDBLOWN => magic_guard,
             _ => no_recoil,
         };
-        if matches!(choice.move_id, Choices::STEELBEAM | Choices::MINDBLOWN | Choices::CHLOROBLAST) && !blocked {
+        if matches!(choice.move_id, Choices::STEELBEAM | Choices::MINDBLOWN | Choices::CHLOROBLAST) && !blocked && total_damage > sub_dealt {
             let maxhp = state.side(side).team_member(idx).maxhp;
             band_roll(state, rng, side, slot, true);
             apply_damage(state, side, slot, ((maxhp as f32 / 2.0).round() as i16).max(1));
@@ -18531,7 +18566,8 @@ fn gulp_missile_hit(
 ) {
     use crate::pokemon::PokemonName as N;
     let forme = state.side(ts).team_member(h).id;
-    if !matches!(forme, N::CRAMORANTGULPING | N::CRAMORANTGORGING) {
+    // The forme alone does nothing once Gulp Missile is gone (Skill Swap).
+    if !matches!(forme, N::CRAMORANTGULPING | N::CRAMORANTGORGING) || real_ability(state, ts, h) != Abilities::GULPMISSILE {
         return;
     }
     // `!source.hp`: a Self-Destruct / Explosion user is already fainted for PS.
@@ -20627,6 +20663,8 @@ fn damaging_hit_items(
                         .is_some_and(|m| m > 0)
                         // Tera Shell made the hit not very effective.
                         && state.tl.tera_shell_resisted.get() & (1 << (ts as u8 * 2 + tslot as u8)) == 0
+                        // Disguise / Ice Face `onEffectiveness` made the absorbed hit neutral.
+                        && !state.pending_disguise.contains(&(ts, tslot))
                 }
             };
             if fires && t.hp > 0 {
@@ -20681,7 +20719,10 @@ fn damaging_hit_items(
                     state.side(ts).active()[tslot].added_type,
                     state.side(ts).active()[tslot].tar_shot,
                 )
-                .is_some_and(|m| m > 0) =>
+                .is_some_and(|m| m > 0)
+                // `getMoveHitData(move).typeMod`: Tera Shell / Disguise made it not super effective.
+                && state.tl.tera_shell_resisted.get() & (1 << (ts as u8 * 2 + tslot as u8)) == 0
+                && !state.pending_disguise.contains(&(ts, tslot)) =>
         {
             let ripen = state.side(ts).team_member(tidx).ability == Abilities::RIPEN;
             use_item(state, rng, ts, tslot, tidx, true);
@@ -20785,7 +20826,9 @@ fn after_hit_item_moves(
             if crate::doubles::item_data::is_berry(it) {
                 berry_effect(state, rng, ts, tslot, tidx, it);
                 cheek_pouch(state, ts, tslot, tidx);
-                state.side_mut(ts).ate_berry[tidx as usize] = true;
+                if berry_has_on_eat(it) {
+                    state.side_mut(ts).ate_berry[tidx as usize] = true;
+                }
                 cud_chew_record(state, ts, tslot, tidx, it);
                 return;
             }
@@ -20838,7 +20881,9 @@ fn after_hit_item_moves(
                     cheek_pouch(state, side, slot, idx);
                     ripen_record(state, side, slot, idx, it);
                 }
-                state.side_mut(side).ate_berry[idx as usize] = true;
+                if berry_has_on_eat(it) {
+                    state.side_mut(side).ate_berry[idx as usize] = true;
+                }
             }
         }
         // Incinerate `onHit`: a berry or gem burns up.
@@ -21119,14 +21164,15 @@ fn item_update(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: us
     }
     let ripen = p.ability == Abilities::RIPEN;
     let a = &state.side(side).active()[slot];
-    // Berserk / Anger Shell `onTryEatItem`: the healing items wait for the
+    // Berserk / Anger Shell `onTryEatItem`: the healing berries wait for the
     // ability's `onAfterMoveSecondary` check. PS data/abilities.ts berserk.
+    // Berry Juice is listed there too, but it is `useItem`d (no TryEatItem).
     if a.berserk_hold
         && matches!(p.ability, Abilities::BERSERK | Abilities::ANGERSHELL)
         && matches!(
             item,
             Items::AGUAVBERRY | Items::ENIGMABERRY | Items::FIGYBERRY | Items::IAPAPABERRY | Items::MAGOBERRY
-                | Items::SITRUSBERRY | Items::WIKIBERRY | Items::ORANBERRY | Items::BERRYJUICE
+                | Items::SITRUSBERRY | Items::WIKIBERRY | Items::ORANBERRY
         )
     {
         return;
@@ -21426,6 +21472,20 @@ fn metronome_try_move(state: &mut DoublesState, side: Side, slot: usize, idx: Po
 }
 
 /// Max PP of a move (`MOVES` holds the champions max PP).
+/// A berry with an `onEat` effect (PS `item.onEat` truthy): eating one through
+/// Fling / Bug Bite / Pluck / Cud Chew sets `ateBerry`. The flavor and EV
+/// berries have `onEat: false`.
+fn berry_has_on_eat(item: Items) -> bool {
+    crate::doubles::item_data::is_berry(item)
+        && !matches!(
+            item,
+            Items::BELUEBERRY | Items::BLUKBERRY | Items::CORNNBERRY | Items::DURINBERRY | Items::GREPABERRY
+                | Items::HONDEWBERRY | Items::KELPSYBERRY | Items::MAGOSTBERRY | Items::NANABBERRY | Items::NOMELBERRY
+                | Items::PAMTREBERRY | Items::PINAPBERRY | Items::POMEGBERRY | Items::QUALOTBERRY | Items::RABUTABERRY
+                | Items::RAZZBERRY | Items::SPELONBERRY | Items::TAMATOBERRY | Items::WATMELBERRY | Items::WEPEARBERRY
+        )
+}
+
 fn max_pp(m: Choices) -> i8 {
     MOVES.get(&m).map(|c| c.pp as i8).unwrap_or(0)
 }
@@ -24620,7 +24680,9 @@ fn end_of_turn(
                 }
                 state.side_mut(side).slot_scratch_mut(slot).cud_chew = None;
                 berry_effect_labeled(state, rng, side, slot, idx, item, "residual roll");
-                state.side_mut(side).ate_berry[idx as usize] = true;
+                if berry_has_on_eat(item) {
+                    state.side_mut(side).ate_berry[idx as usize] = true;
+                }
             }
             ResidualKind::Leftovers(side, slot) => {
                 let Some(idx) = state.side(side).active()[slot].pokemon_index else { continue };

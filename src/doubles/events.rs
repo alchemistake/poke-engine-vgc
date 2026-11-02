@@ -1269,6 +1269,7 @@ impl Collector<'_> {
 
 fn alive(state: &DoublesState, side: Side, slot: usize) -> bool {
     state.side(side).slot_pokemon(slot).is_some_and(|p| p.hp > 0)
+        && state.tl.spread_kod.get() & (1 << (side as u8 * 2 + slot as u8)) == 0
 }
 
 /// PS `runEvent(event, target, source)` for a Pokemon target: collect the

@@ -601,6 +601,23 @@ fn resolve_faints(state: &mut DoublesState, rng: &mut Gen5Rng, pick: impl Fn(Sid
                 }
             }
         }
+        // `runEvent('Faint')`: the Soul-Heart `onAnyFaint` handlers (priority 1)
+        // of every active holder, the fainting one included, sort first
+        // (two equal-speed holders tie).
+        {
+            let mut hs: Vec<(i64, i32, i64)> = Vec::new();
+            for sd in [Side::One, Side::Two] {
+                for sl in 0..2 {
+                    let Some(hi) = state.side(sd).active()[sl].pokemon_index else { continue };
+                    if state.side(sd).team_member(hi).ability == Abilities::SOULHEART {
+                        hs.push((0, cached_speed(state, sd, sl), 7));
+                    }
+                }
+            }
+            if hs.len() >= 2 {
+                sort_handler_ties(&mut hs, rng, "speed tie (move order)");
+            }
+        }
         // Soul-Heart `onAnyFaint`: +1 SpA for each active holder with HP.
         for sd in [Side::One, Side::Two] {
             for sl in 0..2 {
@@ -2748,6 +2765,16 @@ pub fn run_fuzz_turn(
                         // Forecast's own `onStart` (the forme change) is part of the
                         // `runSwitch`, before its closing Update sort.
                         update_forecast(state);
+                        // Eject Pack `onAnySwitchIn` (priority -4): the newcomer's
+                        // Intimidate drop uses a foe's armed pack; its switch is the
+                        // next instaswitch round.
+                        eject_pack_fire(state, rng);
+                        if [Side::One, Side::Two].iter().any(|&sd| (0..2).any(|sl| {
+                            let a = &state.side(sd).active()[sl];
+                            a.force_switch && a.eject_switch
+                        })) {
+                            pivot_repeat = true;
+                        }
                         // PS `runAction` (the `runSwitch` action): `resolveFaints`
                         // before `eachEvent('Update')`, so a hazard KO is gone.
                         resolve_faints(state, rng, |_, _| true);
@@ -3724,7 +3751,8 @@ fn mold_breaker_suppress(state: &mut DoublesState, action: &Action) -> bool {
             }
             let Some(i) = state.side(sd).active()[sl].pokemon_index else { continue };
             let a = state.side(sd).team_member(i).ability;
-            if is_breakable(a) {
+            // An Ability Shield holder is not suppressed (`suppressingAbility`).
+            if is_breakable(a) && !ability_shielded(state, sd, i) {
                 saved.push((sd, i, a));
                 state.side_mut(sd).team_member_mut(i).ability = Abilities::NONE;
             }
@@ -4277,6 +4305,13 @@ fn execute_action_body(
     // Micle Berry's volatile ends at the user's next accuracy check (a move at
     // another target, not OHKO, that got past its TryHit / onTry steps).
     // PS data/items.ts micleberry.condition.onSourceAccuracy.
+    // A called move (Copycat -> Hyper Beam) that rolled accuracy with the
+    // boost used the volatile up as well.
+    if micle_before && state.tl.micle_spent.get() {
+        if let Some(sl) = (0..2).find(|&sl| state.side(action.side).active()[sl].pokemon_index == Some(action.pokemon_index)) {
+            state.side_mut(action.side).active_slot_mut(sl).micle = 0;
+        }
+    }
     if micle_before && move_order.len() > order_len_outer && state.tl.acc_step.get() && !action.choice.ohko && !action.recharge {
         let t = move_target(action.choice.move_id);
         // A non-Ghost Curse is `self` (`nonGhostTarget`): no accuracy check.
@@ -5112,6 +5147,9 @@ fn execute_move_body(
         a.confusion -= 1;
         if a.confusion > 0 && rng.label("status before move").random_chance(33, 100) {
             let dmg = confusion_damage(state, rng, side, slot, idx);
+            // `this.damage` -> `spreadDamage` -> `runEvent('Damage')`: its
+            // handlers (Damp's `onAnyDamage`, Disguise, Sturdy, ...) sort first.
+            crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::Damage, (side, slot), Some((side, slot)));
             // Disguise `onDamage` (PS data/abilities.ts disguise): the self-hit
             // is a `Move` effect, so it is absorbed and the forme busts (1/8).
             // Ice Face does not: the `confused` effect has no `category`
@@ -7242,7 +7280,8 @@ fn execute_move_body(
             state,
             choice,
             if choice.move_id == Choices::CURSE && action.curse_self { Tgt::SelfTarget } else { move_target(choice.move_id) },
-            target_side,
+            // An ally-targeted move (Dragon Cheer) meets its own side's shield.
+            if is_ally || move_target(choice.move_id) == Tgt::AdjacentAlly { side } else { target_side },
         ) || mat_block_blocks(state, side, idx, choice, move_target(choice.move_id), target_side, target_slot))
     {
         state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = None;
@@ -9002,7 +9041,9 @@ fn execute_move_body(
                 let busts = (disguise_active(state, target_side, target_slot)
                     || (ice_face_active(state, target_side, target_slot) && choice.category == MoveCategory::Physical))
                     && (side, slot) != (target_side, target_slot)
-                    && choice.category != MoveCategory::Status;
+                    && choice.category != MoveCategory::Status
+                    // Present's heal deals no damage: no Damage event.
+                    && !(choice.move_id == Choices::PRESENT && choice.heal.is_some());
                 if busts {
                     // The forme change runs in the next `eachEvent('Update')`
                     // (`each_event_update` after its sort).
@@ -9097,6 +9138,14 @@ fn execute_move_body(
                         (target_side, target_slot),
                         Some((side, slot)),
                     );
+                } else {
+                    // A KO'd target keeps its volatiles until `faintMessages`: its
+                    // `onHit` volatiles (one holder, subOrder 2) still tie.
+                    let a = &state.side(target_side).active()[target_slot];
+                    let n = a.rage as usize + a.focus_punch as usize + a.beak_blast as usize + (a.shell_trap > 0) as usize;
+                    for i in 0..n.saturating_sub(1) {
+                        let _ = rng.label("speed tie (move order)").random_range(i, n);
+                    }
                 }
                 // Rage `onHit`: a damaging move from another pokemon, +1 Atk.
                 // (Clear Smog's own `onHit` clears first: applied with it below.)
@@ -13360,6 +13409,13 @@ fn execute_move_body(
     // the action (allies included: PS runs it for every damaged target).
     // PS data/mods/champions/abilities.ts emergencyexit.
     for &(ts, tsl, before) in &ee_before {
+        // champions `targetHPBeforeDamage = hurtThisTurn + move.totalDamage`:
+        // a multi-hit's estimate ignores a berry eaten between hits.
+        let before = if choice.multihit > 0 && !is_spread && state.side(ts).active()[tsl].hurt_this_turn {
+            state.side(ts).active()[tsl].hurt_hp.saturating_add(real_damage)
+        } else {
+            before
+        };
         emergency_exit_check(state, ts, tsl, before);
     }
 
@@ -13536,7 +13592,9 @@ fn execute_move_body(
 
     // End of PS's hit loop: one more `eachEvent('Update')` (after recoil), if a
     // target took something (`if (!damage.some(...)) return damage;`).
-    if hits_done > 0 && (!is_spread || !is_attack || any_hit_landed) {
+    // Healing Wish / Lunar Dance ran theirs in the selfdestruct block above.
+    let hw_closed = choice.selfdestruct && matches!(choice.move_id, Choices::HEALINGWISH | Choices::LUNARDANCE) && !move_failed;
+    if hits_done > 0 && (!is_spread || !is_attack || any_hit_landed) && !hw_closed {
         each_event_update(state, rng);
     }
 
@@ -16452,6 +16510,9 @@ fn compute_hit_damage(
     ate_boosted: bool,
     spread: bool,
 ) -> (i16, bool) {
+    // An Ability Shield target is not suppressed by Mold Breaker
+    // (`suppressingAbility`: `!target.hasItem('Ability Shield')`).
+    let def_shield = state.side(target_side).active()[target_slot].pokemon_index.is_some_and(|ti| ability_shielded(state, target_side, ti));
     // Rollout / Ice Ball: the hit's multiplier, x2 more under Defense Curl.
     let rollout_choice;
     let choice = if matches!(choice.move_id, Choices::ROLLOUT | Choices::ICEBALL) {
@@ -16753,7 +16814,7 @@ fn compute_hit_damage(
                 // Aura Guard `onSourceModifyDamage` (breakable): x0.5 for contact.
                 if defender.ability == Abilities::AURAGUARD
                     && choice.flags.contact
-                    && !crate::engine::abilities::ignores_target_ability(attacker, choice, &defender.ability)
+                    && !(crate::engine::abilities::ignores_target_ability(attacker, choice, &defender.ability) && !def_shield)
                 {
                     m = (m * 2048 + 2048) >> 12;
                 }
@@ -16767,13 +16828,13 @@ fn compute_hit_damage(
             solid_rock: matches!(
                 defender.ability,
                 Abilities::FILTER | Abilities::SOLIDROCK | Abilities::PRISMARMOR
-            ) && !crate::engine::abilities::ignores_target_ability(attacker, choice, &defender.ability),
+            ) && !(crate::engine::abilities::ignores_target_ability(attacker, choice, &defender.ability) && !def_shield),
             sniper: attacker.ability == Abilities::SNIPER,
             tinted_lens: attacker.ability == Abilities::TINTEDLENS,
             // Lucky Chant `onCriticalHit: false` on the target's side (not
             // breakable). PS data/moves.ts luckychant.
             no_crit: (matches!(defender.ability, Abilities::SHELLARMOR | Abilities::BATTLEARMOR)
-                && !crate::engine::abilities::ignores_target_ability(attacker, choice, &defender.ability))
+                && !(crate::engine::abilities::ignores_target_ability(attacker, choice, &defender.ability) && !def_shield))
                 || state.side(target_side).side_conditions.lucky_chant > 0,
             guts: attacker.ability == Abilities::GUTS,
             attack_mod: {
@@ -16786,7 +16847,7 @@ fn compute_hit_damage(
             };
             // Thick Fat & co. (`onSourceModifyAtk` / `SpA`, breakable) chain first.
             let src = if (side, slot) != (target_side, target_slot)
-                && !crate::engine::abilities::ignores_target_ability(attacker, choice, &defender.ability)
+                && !(crate::engine::abilities::ignores_target_ability(attacker, choice, &defender.ability) && !def_shield)
             {
                 crate::engine::mechanics::defender_source_stat_modifier(defender, choice)
             } else {
@@ -16993,7 +17054,7 @@ fn compute_hit_damage(
             let tsa = &state.side(target_side).active()[target_slot];
             if matches!(defender.ability, Abilities::PROTOSYNTHESIS | Abilities::QUARKDRIVE)
                 && matches!(tsa.paradox, Some((k, _)) if (k == 1 && names_def) || (k == 3 && !names_def))
-                && !crate::engine::abilities::ignores_target_ability(attacker, choice, &defender.ability)
+                && !(crate::engine::abilities::ignores_target_ability(attacker, choice, &defender.ability) && !def_shield)
             {
                 m = (m * 5325 + 2048) >> 12;
             }
@@ -18722,11 +18783,14 @@ fn ability_update_cures(state: &mut DoublesState, side: Side, slot: usize) {
     };
     // PS flashfire `onEnd` -> `removeVolatile('flashfire')` when the ability
     // changes or is suppressed (Skill Swap, Entrainment, Receiver copies).
-    if ability != Abilities::FLASHFIRE && state.side(side).active()[slot].flash_fire {
+    // Neutralizing Gas runs no End (only for the strong weathers): the
+    // suppressed holder keeps its volatiles.
+    let held = if ability == Abilities::NONE { real_ability(state, side, idx) } else { ability };
+    if held != Abilities::FLASHFIRE && state.side(side).active()[slot].flash_fire {
         state.side_mut(side).active_slot_mut(slot).flash_fire = false;
     }
     // unburden `onEnd`: `delete pokemon.volatiles['unburden']`.
-    if ability != Abilities::UNBURDEN && state.side(side).active()[slot].unburden {
+    if held != Abilities::UNBURDEN && state.side(side).active()[slot].unburden {
         state.side_mut(side).active_slot_mut(slot).unburden = false;
     }
     if hp <= 0 {

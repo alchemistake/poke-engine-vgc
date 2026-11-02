@@ -3142,6 +3142,25 @@ fn revelation_dance_type(types: (PokemonType, PokemonType)) -> PokemonType {
     }
 }
 
+/// Raging Bull `onModifyType`: the Paldean Tauros breed's type.
+fn raging_bull_type(state: &DoublesState, side: Side, idx: PokemonIndex) -> Option<PokemonType> {
+    // `pokemon.species`: a Transform copy's species counts.
+    let sp = if state.side(side).transform_save[idx as usize].is_some() {
+        format!("{:?}", state.side(side).team_member(idx).id).to_lowercase()
+    } else {
+        state.side(side).species_names[idx as usize].to_lowercase()
+    };
+    if sp.contains("aqua") {
+        Some(PokemonType::WATER)
+    } else if sp.contains("blaze") {
+        Some(PokemonType::FIRE)
+    } else if sp.contains("combat") {
+        Some(PokemonType::FIGHTING)
+    } else {
+        None
+    }
+}
+
 fn redirect_move_type(state: &DoublesState, action: &Action) -> PokemonType {
     if action.choice.move_id == Choices::AURAWHEEL {
         return if state.side(action.side).team_member(action.pokemon_index).id == crate::pokemon::PokemonName::MORPEKOHANGRY {
@@ -3155,6 +3174,11 @@ fn redirect_move_type(state: &DoublesState, action: &Action) -> PokemonType {
     }
     if state.ion_deluge && action.choice.move_type == PokemonType::NORMAL {
         return PokemonType::ELECTRIC;
+    }
+    if action.choice.move_id == Choices::RAGINGBULL {
+        if let Some(t) = raging_bull_type(state, action.side, action.pokemon_index) {
+            return t;
+        }
     }
     // Terrain Pulse / Weather Ball `onModifyType` and the -ate abilities'
     // `onModifyType` also run before `getMoveTargets`, as in `execute_action_inner`.
@@ -3713,7 +3737,15 @@ fn drag_in_all(state: &mut DoublesState, rng: &mut Gen5Rng) -> Vec<(Side, Pokemo
 fn roosted_types(t: (PokemonType, PokemonType)) -> (PokemonType, PokemonType) {
     let f = |x: PokemonType| if x == PokemonType::FLYING { PokemonType::TYPELESS } else { x };
     let nt = if t.0 == PokemonType::FLYING { (t.1, PokemonType::TYPELESS) } else { (t.0, f(t.1)) };
-    if nt.0 == PokemonType::TYPELESS && nt.1 != PokemonType::TYPELESS { (nt.1, nt.0) } else { nt }
+    // `getTypes`: no type left (pure Flying) reads as Normal (gen 5+). A
+    // '???' left by Burn Up / Double Shock (TYPELESS first) stays.
+    if t.0 == PokemonType::FLYING && matches!(t.1, PokemonType::TYPELESS | PokemonType::FLYING) {
+        (PokemonType::NORMAL, PokemonType::TYPELESS)
+    } else if nt.0 == PokemonType::TYPELESS && nt.1 != PokemonType::TYPELESS {
+        (nt.1, nt.0)
+    } else {
+        nt
+    }
 }
 
 
@@ -5700,18 +5732,8 @@ fn execute_move_body(
     }
     // Raging Bull `onModifyType`: the Paldean Tauros breed's type.
     if modified.move_id == Choices::RAGINGBULL {
-        // `pokemon.species`: a Transform copy's species counts.
-        let sp = if state.side(side).transform_save[idx as usize].is_some() {
-            format!("{:?}", state.side(side).team_member(idx).id).to_lowercase()
-        } else {
-            state.side(side).species_names[idx as usize].to_lowercase()
-        };
-        if sp.contains("aqua") {
-            modified.move_type = PokemonType::WATER;
-        } else if sp.contains("blaze") {
-            modified.move_type = PokemonType::FIRE;
-        } else if sp.contains("combat") {
-            modified.move_type = PokemonType::FIGHTING;
+        if let Some(t) = raging_bull_type(state, side, idx) {
+            modified.move_type = t;
         }
     }
     // Natural Gift `onModifyType`: the held berry's type (not while ignored).
@@ -6363,6 +6385,17 @@ fn execute_move_body(
     // PS `runEvent('TryMove', pokemon, target)` (useMoveInner): after the move's
     // own `onTryMove` singleEvent (Double Shock / Burn Up fail there, and the
     // runEvent is skipped), before every `onTry` / `onTryHit` below.
+    // Pollen Puff `onTryMove`: aimed at an ally while the user is under Heal
+    // Block, it fails (`cant`, false) before the TryMove runEvent.
+    if choice.move_id == Choices::POLLENPUFF
+        && target_side == side
+        && target_slot != slot
+        && state.side(side).active()[slot].heal_block > 0
+    {
+        state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
+        push_order(move_order);
+        return;
+    }
     let try_move_fails = matches!(choice.move_id, Choices::DOUBLESHOCK | Choices::BURNUP) && {
         let t = state.side(side).team_member(idx).types;
         let need = if choice.move_id == Choices::DOUBLESHOCK { PokemonType::ELECTRIC } else { PokemonType::FIRE };
@@ -6605,8 +6638,10 @@ fn execute_move_body(
 
     // Dark Void `onTry`: only a Darkrai can use it (`-fail`, returns null).
     // PS data/moves.ts darkvoid.
+    // `move.hasBounced`: a Magic Coat / Magic Bounce reflection works for anyone.
     if choice.move_id == Choices::DARKVOID
         && state.side(side).team_member(idx).id != crate::pokemon::PokemonName::DARKRAI
+        && !state.side(side).active()[slot].bounced
     {
         state.side_mut(side).slot_scratch_mut(slot).move_result_null = true;
         push_order(move_order);
@@ -20885,11 +20920,13 @@ fn after_hit_item_moves(
             }
             if crate::doubles::item_data::is_berry(it) {
                 berry_effect(state, rng, ts, tslot, tidx, it);
-                cheek_pouch(state, ts, tslot, tidx);
+                // `onEat: false` berries fail `singleEvent('Eat')`: no EatItem
+                // (Cheek Pouch, Cud Chew), no `ateBerry`.
                 if berry_has_on_eat(it) {
+                    cheek_pouch(state, ts, tslot, tidx);
                     state.side_mut(ts).ate_berry[tidx as usize] = true;
+                    cud_chew_record(state, ts, tslot, tidx, it);
                 }
-                cud_chew_record(state, ts, tslot, tidx, it);
                 return;
             }
             // Shield Dust `onModifySecondaries` filters the pushed secondary.
@@ -20942,7 +20979,9 @@ fn after_hit_item_moves(
                 item_lost(state, ts, tslot, tidx);
                 if state.side(side).active()[slot].pokemon_index == Some(idx) {
                     berry_effect(state, rng, side, slot, idx, it);
-                    cheek_pouch(state, side, slot, idx);
+                    if berry_has_on_eat(it) {
+                        cheek_pouch(state, side, slot, idx);
+                    }
                     ripen_record(state, side, slot, idx, it);
                 }
                 if berry_has_on_eat(it) {

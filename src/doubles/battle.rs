@@ -5351,6 +5351,9 @@ fn execute_move_body(
                             // Armor, Stamina, Sand Spit, Cotton Down, ...), as on
                             // the delayed Future Sight hit.
                             damaging_hit_self_abilities(state, rng, ts, tsl, &action.choice);
+                            if let Some(h) = hit_pi {
+                                gulp_missile_hit(state, rng, side, slot, idx, ts, tsl, h);
+                            }
                             maybe_wandering_spirit(state, side, slot, ts, tsl, &action.choice, rng);
                             if let Some(h) = hit_pi {
                                 let ability = state.side(ts).team_member(h).ability;
@@ -5997,7 +6000,9 @@ fn execute_move_body(
             state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
             state.tl.no_target_fail.set(true);
             modify_move_field_tie(state, rng);
-        modify_move_user_tie(state, rng, side, slot);
+            modify_move_user_tie(state, rng, side, slot);
+            // `runEvent('TryMove', pokemon, target)` sorts its handlers (Damp).
+            crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::TryMove, (side, slot), Some((target_side, target_slot)));
             // `selfdestruct: 'always'` faints the user before the target check
             // (PS sim/battle-actions.ts useMoveInner), even with no target left.
             if matches!(choice.move_id, Choices::EXPLOSION | Choices::MISTYEXPLOSION | Choices::SELFDESTRUCT) {
@@ -9591,10 +9596,27 @@ fn execute_move_body(
                 choice,
                 &Abilities::GOODASGOLD,
             );
+            // Sap Sipper `onTryHit` (all targets' TryHit run before any heal): the
+            // ally absorbs the Grass Jungle Healing, +1 Atk, and is dropped.
+            let mut sap_absorbed = false;
+            if choice.move_id == Choices::JUNGLEHEALING {
+                if let Some(aidx) = state.side(side).active()[ally_slot].pokemon_index {
+                    let a = state.side(side).team_member(aidx);
+                    if a.hp > 0
+                        && a.ability == Abilities::SAPSIPPER
+                        && !crate::engine::abilities::ignores_target_ability(state.side(side).team_member(idx), choice, &Abilities::SAPSIPPER)
+                        && !semi_invulnerable_blocks(state, side, idx, choice.move_id, side, ally_slot)
+                    {
+                        apply_boosts(state, rng, side, aidx, &StatBoosts { attack: 1, ..Default::default() }, false);
+                        sap_absorbed = true;
+                    }
+                }
+            }
             for sl in [slot, ally_slot] {
                 let Some(tidx) = state.side(side).active()[sl].pokemon_index else { continue };
                 let p = state.side(side).team_member(tidx);
                 if p.hp <= 0
+                    || (sl != slot && sap_absorbed)
                     || (sl != slot && p.ability == Abilities::GOODASGOLD && !user_breaks_gold)
                     || (sl != slot && semi_invulnerable_blocks(state, side, idx, choice.move_id, side, sl))
                     // Lunar Blessing has no `bypasssub`: an ally's Substitute

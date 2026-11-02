@@ -975,6 +975,9 @@ pub struct MoveScratch {
     /// Micle Berry's `onSourceAccuracy` ran this move (it removes the
     /// volatile: a spread move's later targets get no boost).
     pub micle_spent: std::cell::Cell<bool>,
+    /// Team positions a queued switch action will bring in (bit `side * 8 +
+    /// position`): PS `possibleSwitches` leaves them out (Eject Pack).
+    pub queued_switch_ins: std::cell::Cell<u16>,
     /// Spread-move targets (bit `side * 2 + slot`) this hit KOs: no Ally /
     /// Foe / Any handlers during the earlier targets' secondaries.
     pub spread_kod: std::cell::Cell<u8>,

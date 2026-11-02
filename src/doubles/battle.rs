@@ -2118,7 +2118,15 @@ pub fn run_fuzz_turn(
         // Mega Evolutions already run by a Pursuit user before its move.
         let mut mega_done: Vec<(Side, PokemonIndex)> = Vec::new();
         // Switch actions (order 103) and Mega Evolutions (order 104).
-        for p in pre.iter().copied() {
+        for (pi, p) in pre.iter().copied().enumerate() {
+            // `queue.getSwitches(side)`: the switches still queued after this one.
+            let mut queued = 0u16;
+            for q in &pre[pi + 1..] {
+                if let PreAction::Switch { side: qs, position: qp, .. } = *q {
+                    queued |= 1 << (qs as u16 * 8 + qp as u16);
+                }
+            }
+            state.tl.queued_switch_ins.set(queued);
             match p {
                 PreAction::Switch { side, slot, position, idx, .. } => {
                     // `queue.cancelAction(oldActive)`: a pokemon already switched
@@ -2192,6 +2200,7 @@ pub fn run_fuzz_turn(
                 }
             }
         }
+        state.tl.queued_switch_ins.set(0);
         // `priorityChargeMove` actions (order 107: after `beforeTurn`, before
         // every move): Focus Punch adds its volatile. When one is queued,
         // `beforeTurn` is not followed by a move, so its re-sort is skipped;
@@ -6600,6 +6609,8 @@ fn execute_move_body(
     // explosion / mindblown / mistyexplosion / selfdestruct (`cant`). No draw.
     if damp_blocks_explosion(state, side, idx, choice) {
         state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
+        // `useMoveInner` returns at the TryMove failure: no `MoveFail` (Mind Blown).
+        state.tl.no_target_fail.set(true);
         push_order(move_order);
         return;
     }
@@ -16651,7 +16662,10 @@ fn eject_pack_fire_slot(state: &mut DoublesState, rng: &mut Gen5Rng, sd: Side, s
     let switching = [Side::One, Side::Two]
         .iter()
         .any(|&s2| (0..2).any(|k| state.side(s2).active()[k].force_switch));
-    if switching || state.side(sd).find_replacement().is_none() {
+    // `canSwitch`: a queued switch's incoming pokemon does not count.
+    let queued = state.tl.queued_switch_ins.get();
+    let can_switch = possible_switches(state, sd).iter().any(|&t| queued & (1 << (sd as u16 * 8 + t as u16)) == 0);
+    if switching || state.side(sd).find_replacement().is_none() || !can_switch {
         return;
     }
     let a = state.side_mut(sd).slot_scratch_mut(sl);
@@ -16687,7 +16701,13 @@ fn echoed_voice_try_move(state: &mut DoublesState) {
 /// roll (not an OHKO move) uses the item for +2 Spe.
 fn blunder_policy(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: usize, idx: PokemonIndex, choice: &Choice) {
     let p = state.side(side).team_member(idx);
-    if choice.ohko || p.item != Items::BLUNDERPOLICY || ignoring_item(state, p) || p.hp <= 0 {
+    // An Explosion user already fainted (`selfdestruct: 'always'`): `useItem` fails.
+    if choice.ohko
+        || p.item != Items::BLUNDERPOLICY
+        || ignoring_item(state, p)
+        || p.hp <= 0
+        || state.tl.selfdestructing.get() == Some((side, idx))
+    {
         return;
     }
     use_item(state, rng, side, slot, idx, false);
@@ -23978,8 +23998,12 @@ fn end_turn_disable_moves(state: &DoublesState, rng: &mut Gen5Rng) {
                 run_event_ties(state, rng, crate::doubles::events::Event::Immunity, (s, sl), None);
             }
         }
-        // `getImmunity('trapped')`: Ghost types are immune.
-        if state.side(s).team_member(idx).has_type(&PokemonType::GHOST) {
+        // `!knownType || getImmunity('trapped')`: Ghost types are immune, so
+        // only a non-Ghost (or a Ghost whose type is unknown: Transformed into
+        // a foe) runs it.
+        let known_ghost = state.side(s).team_member(idx).has_type(&PokemonType::GHOST)
+            && state.side(s).transform_save[idx as usize].is_none();
+        if !known_ghost {
             run_event_ties(state, rng, crate::doubles::events::Event::MaybeTrapPokemon, (s, sl), None);
         }
     }

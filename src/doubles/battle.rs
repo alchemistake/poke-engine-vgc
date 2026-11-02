@@ -5343,6 +5343,7 @@ fn execute_move_body(
                             // Armor, Stamina, Sand Spit, Cotton Down, ...), as on
                             // the delayed Future Sight hit.
                             damaging_hit_self_abilities(state, rng, ts, tsl, &action.choice);
+                            maybe_wandering_spirit(state, side, slot, ts, tsl, &action.choice, rng);
                             if let Some(h) = hit_pi {
                                 let ability = state.side(ts).team_member(h).ability;
                                 field_setting_damaging_hit(state, rng, ability, held_item(state, ts, h));
@@ -7488,7 +7489,11 @@ fn execute_move_body(
         && state
             .side(target_side)
             .slot_pokemon(target_slot)
-            .is_some_and(|d| crate::doubles::damage::type_mod(&choice.move_type, d).is_none())
+            .is_some_and(|d| {
+                // Ring Target `onNegateImmunity: false` (PS data/items.ts ringtarget).
+                crate::doubles::damage::type_mod(&choice.move_type, d).is_none()
+                    && !(d.item == Items::RINGTARGET && !ignoring_item(state, d))
+            })
     {
         state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
         push_order(move_order);
@@ -9688,14 +9693,18 @@ fn execute_move_body(
                 || crate::doubles::damage::infiltrator_move();
             let mut cured = false;
             for t in crate::state::pokemon_index_iter() {
-                let (hp, status, ability) = {
+                let (hp, status) = {
                     let p = state.side(side).team_member(t);
-                    (p.hp, p.status, p.ability)
+                    (p.hp, p.status)
                 };
                 if hp <= 0 || status == PokemonStatus::NONE {
                     continue;
                 }
                 let blocker = if aroma { Abilities::SAPSIPPER } else { Abilities::SOUNDPROOF };
+                // `hasAbility`: a benched pokemon's ability is ignored (PS
+                // `ignoringAbility`, gen >= 5 `!isActive`).
+                let active = (0..2).any(|k| state.side(side).active()[k].pokemon_index == Some(t));
+                let ability = if active { real_ability(state, side, t) } else { Abilities::NONE };
                 if t != idx && (ability == blocker || ability == Abilities::GOODASGOLD) {
                     continue;
                 }
@@ -9922,6 +9931,7 @@ fn execute_move_body(
                         move_failed = true;
                     }
                 } else {
+                    state.tl.defer_lum.set(puppeteer_applies(state, ts, tidx, side, idx, st.status));
                     set_status(state, rng, ts, tidx, st.status);
                     // Synchronize copies non-sleep/freeze status back to the
                     // move user.
@@ -12917,6 +12927,7 @@ fn execute_move_body(
                         if let (false, Some(tidx)) = (statused, state.side(ts).active()[tslot].pokemon_index) {
                             set_status_event_tie(state, rng, ts, tslot, *st, ts != side, true);
                             if !status_immune(state, ts, tslot, *st, ts != side, side, slot) {
+                                state.tl.defer_lum.set(puppeteer_applies(state, ts, tidx, side, idx, *st));
                                 set_status(state, rng, ts, tidx, *st);
                                 // Synchronize also answers an ally's move (PS
                                 // synchronize.onAfterSetStatus: `source === target` only).
@@ -15890,8 +15901,16 @@ fn set_status(state: &mut DoublesState, rng: &mut Gen5Rng, ts: Side, tidx: Pokem
         pm.base_ability = Abilities::NATURALCURE;
     }
     ev_reset(state);
-    // Lum Berry `onAfterSetStatus`: eaten at once (before the move's later
-    // effects, e.g. Thief's steal). PS data/items.ts lumberry.
+    // Poison Puppeteer (`onAnyAfterSetStatus`, priority 0) runs before Lum
+    // Berry (priority -1): `poison_puppeteer` eats it after the confusion.
+    if !state.tl.defer_lum.get() {
+        lum_after_set_status(state, rng, ts, tidx);
+    }
+}
+
+/// Lum Berry `onAfterSetStatus`: eaten at once (before the move's later
+/// effects, e.g. Thief's steal). PS data/items.ts lumberry.
+fn lum_after_set_status(state: &mut DoublesState, rng: &mut Gen5Rng, ts: Side, tidx: PokemonIndex) {
     if let Some(slot) = (0..2).find(|&k| state.side(ts).active()[k].pokemon_index == Some(tidx)) {
         let p = state.side(ts).team_member(tidx);
         if p.item == Items::LUMBERRY && p.hp > 0 && !ignoring_item(state, p) && !unnerved(state, ts) {
@@ -16248,6 +16267,8 @@ fn try_set_status_with(
     if status_immune_ex(state, ts, tslot, st, from_other, src_side, src_slot.unwrap_or(0), substitute_blocks, safeguard_blocks, effect_is_yawn) {
         return;
     }
+    let puppet = substitute_blocks && !effect_is_yawn;
+    state.tl.defer_lum.set(puppet && puppeteer_applies(state, ts, tidx, src_side, src_idx, st));
     set_status(state, rng, ts, tidx, st);
     maybe_synchronize(state, ts, tidx, src_side, src_idx, st);
     // The move-effect callers are the ones a Substitute blocks.
@@ -16269,13 +16290,20 @@ fn poison_puppeteer(
     src_idx: PokemonIndex,
     st: PokemonStatus,
 ) {
-    if !matches!(st, PokemonStatus::POISON | PokemonStatus::TOXIC) || (ts, tidx) == (src_side, src_idx) {
-        return;
-    }
-    let src = state.side(src_side).team_member(src_idx);
-    if src.ability == Abilities::POISONPUPPETEER && src.id == crate::pokemon::PokemonName::PECHARUNT {
+    if puppeteer_applies(state, ts, tidx, src_side, src_idx, st) {
         try_confuse(state, rng, ts, tslot);
     }
+    if state.tl.defer_lum.replace(false) {
+        lum_after_set_status(state, rng, ts, tidx);
+    }
+}
+
+fn puppeteer_applies(state: &DoublesState, ts: Side, tidx: PokemonIndex, src_side: Side, src_idx: PokemonIndex, st: PokemonStatus) -> bool {
+    if !matches!(st, PokemonStatus::POISON | PokemonStatus::TOXIC) || (ts, tidx) == (src_side, src_idx) {
+        return false;
+    }
+    let src = state.side(src_side).team_member(src_idx);
+    src.ability == Abilities::POISONPUPPETEER && src.id == crate::pokemon::PokemonName::PECHARUNT
 }
 
 /// Whether the pokemon in `ts`/`tslot` cannot get `status`: the shared
@@ -17899,6 +17927,8 @@ fn resolve_future_move(
     {
         return;
     }
+    // Residual: the queue is empty, so Analytic's `willMove` check passes.
+    state.tl.analytic_no_move.set(true);
     future_move_hit(state, rng, mv, ss, si, ts, tslot);
     // futuremove `onEnd`: after `trySpreadMoveHit` (hit or not), an active
     // source's Life Orb `onAfterMoveSecondarySelf` recoil. PS data/conditions.ts.
@@ -20109,6 +20139,10 @@ fn apply_on_switch_abilities(
         if ability == Abilities::INTIMIDATE {
             match state.side(foe).team_member(fidx).ability {
                 Abilities::OWNTEMPO | Abilities::OBLIVIOUS | Abilities::INNERFOCUS | Abilities::SCRAPPY => {
+                    // PS `boost` still sorts its ChangeBoost / TryBoost handlers
+                    // (the immunity is one of them, an ally's Flower Veil another).
+                    crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::ChangeBoost, (foe, fslot), None);
+                    crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::TryBoost, (foe, fslot), None);
                     intimidate_adrenaline_orb(state, rng, foe, fslot, fidx, before);
                     continue;
                 }
@@ -21012,8 +21046,11 @@ fn berry_effect_labeled(
             // A foe's Pressure PP was already taken (PS `deductPP` at move start).
             pressure_pay_now(state, side, idx);
             let restore = if ripen { 20 } else { 10 };
-            let transformed = state.side(side).transform_save[idx as usize].is_some();
-            let cap = |id: Choices| if transformed { 5 } else { max_pp(id) };
+            let caps: [i8; 4] = {
+                let mv = &state.side(side).team_member(idx).moves;
+                let ids = [mv.m0.id, mv.m1.id, mv.m2.id, mv.m3.id];
+                std::array::from_fn(|k| slot_max_pp(state, side, idx, k, ids[k]))
+            };
             let pm = state.side_mut(side).team_member_mut(idx);
             let k = [&pm.moves.m0, &pm.moves.m1, &pm.moves.m2, &pm.moves.m3]
                 .iter()
@@ -21021,7 +21058,8 @@ fn berry_effect_labeled(
                 .or_else(|| {
                     [&pm.moves.m0, &pm.moves.m1, &pm.moves.m2, &pm.moves.m3]
                         .iter()
-                        .position(|m| m.id != Choices::NONE && m.pp < cap(m.id))
+                        .enumerate()
+                        .position(|(k, m)| m.id != Choices::NONE && m.pp < caps[k])
                 });
             if let Some(k) = k {
                 let m = match k {
@@ -21030,7 +21068,7 @@ fn berry_effect_labeled(
                     2 => &mut pm.moves.m2,
                     _ => &mut pm.moves.m3,
                 };
-                m.pp = (m.pp + restore).min(cap(m.id));
+                m.pp = (m.pp + restore).min(caps[k]);
             }
         }
         // Mystery Berry `onEat` without the `leppaberry` volatile (Fling, Cud
@@ -21179,15 +21217,16 @@ fn item_update(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: us
         // leppaberry: a move at 0 PP gets 10 back (20 with Ripen).
         Items::LEPPABERRY => {
             pressure_pay_now(state, side, idx);
-            // A transformed pokemon's moves have 5 max PP (PS transformInto).
-            let transformed = state.side(side).transform_save[idx as usize].is_some();
             let moves = &state.side(side).team_member(idx).moves;
             if let Some(k) = [&moves.m0, &moves.m1, &moves.m2, &moves.m3]
                 .iter()
                 .position(|m| m.id != Choices::NONE && m.pp == 0)
             {
+                let id = [moves.m0.id, moves.m1.id, moves.m2.id, moves.m3.id][k];
                 use_item(state, rng, side, slot, idx, true);
                 let restore = if ripen { 20 } else { 10 };
+                // A transformed pokemon's moves have 5 max PP (PS transformInto).
+                let max = slot_max_pp(state, side, idx, k, id);
                 let pm = state.side_mut(side).team_member_mut(idx);
                 let m = match k {
                     0 => &mut pm.moves.m0,
@@ -21195,7 +21234,6 @@ fn item_update(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: us
                     2 => &mut pm.moves.m2,
                     _ => &mut pm.moves.m3,
                 };
-                let max = if transformed { 5 } else { max_pp(m.id) };
                 m.pp = (m.pp + restore).min(max);
                 cheek_pouch(state, side, slot, idx);
             }
@@ -21390,6 +21428,23 @@ fn metronome_try_move(state: &mut DoublesState, side: Side, slot: usize, idx: Po
 /// Max PP of a move (`MOVES` holds the champions max PP).
 fn max_pp(m: Choices) -> i8 {
     MOVES.get(&m).map(|c| c.pp as i8).unwrap_or(0)
+}
+
+/// The max PP of move slot `k`: 5 while Transformed, the dex PP (no PP Ups)
+/// for a Mimic copy (PS mimic `maxpp: move.pp`), `max_pp` otherwise.
+fn slot_max_pp(state: &DoublesState, side: Side, idx: PokemonIndex, k: usize, id: Choices) -> i8 {
+    if state.side(side).transform_save[idx as usize].is_some() {
+        return 5;
+    }
+    let mimicked = (0..2).any(|sl| {
+        let a = &state.side(side).active()[sl];
+        a.pokemon_index == Some(idx) && a.mimic.is_some_and(|(mk, _, _)| mk as usize == k)
+    });
+    if mimicked {
+        crate::doubles::move_data::raw_pp(id) as i8
+    } else {
+        max_pp(id)
+    }
 }
 
 /// A resist berry eaten during the last damage calculation.

@@ -400,6 +400,10 @@ fn faint_pokemon(state: &mut DoublesState, side: Side, slot: usize) {
         }
         let disabled = state.side(side).active()[slot].disabled;
         state.faint_disabled.push((side, idx, disabled));
+        state.faint_embargo.retain(|&e| e != (side, idx));
+        if state.side(side).active()[slot].embargo > 0 {
+            state.faint_embargo.push((side, idx));
+        }
         // Its `onUpdate` volatiles (Attract, Syrup Bomb, Telekinesis) still tie
         // in the next Updates until the faint is processed.
         {
@@ -4257,6 +4261,7 @@ fn execute_action_body(
     state.tl.no_target_fail.set(false);
     state.tl.acc_step.set(false);
     state.tl.micle_spent.set(false);
+    state.tl.before_move_failed.set(false);
     state.tl.before_move_aborted.set(false);
     let order_len_outer = move_order.len();
     // A Micle Berry eaten during this move (Bug Bite) was not up at its check.
@@ -4310,7 +4315,7 @@ fn execute_action_body(
             white_herb(state, rng, sd, sl);
         }
     }
-    if move_order.len() > order_len && !pressure_skipped {
+    if move_order.len() > order_len && !pressure_skipped && !state.tl.before_move_failed.get() {
         pressure_deduct_pp(state, action);
     }
     // Destiny Bond `onBeforeMove` (any other move) / `onMoveAborted` (a `cant`)
@@ -5312,6 +5317,7 @@ fn execute_move_body(
         if !is_choice_item(p.item) {
             state.side_mut(side).active_slot_mut(slot).choice_lock = None;
         } else if !ignoring_item(state, p) && action.choice.move_id != m && action.choice.move_id != Choices::STRUGGLE && !external {
+            state.tl.before_move_failed.set(true);
             push_order(move_order);
             return;
         }
@@ -10787,8 +10793,12 @@ fn execute_move_body(
                     success = true;
                 }
             }
+            // `-fail` and NOT_FAIL: the hit still runs its two `eachEvent('Update')`s.
             if !success {
                 move_failed = true;
+                not_fail_result = true;
+                each_event_update(state, rng);
+                each_event_update(state, rng);
             }
         }
 
@@ -12441,6 +12451,13 @@ fn execute_move_body(
                 let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
             }
         }
+        let pseudo_on = |st: &DoublesState| -> u32 {
+            [st.trick_room.active, st.gravity.active, st.magic_room.active, st.wonder_room.active, st.fairy_lock.active, st.mud_sport.active, st.water_sport.active]
+                .iter()
+                .enumerate()
+                .fold(0, |m, (i, &on)| if on { m | 1 << (11 + i) } else { m })
+        };
+        let pseudo_before = pseudo_on(state);
         if choice.pseudo_weather_id == 1 {
             // `onFieldRestart` removes Trick Room when used again.
             state.trick_room = if state.trick_room.active {
@@ -12521,6 +12538,10 @@ fn execute_move_body(
                 crate::state::StateTrickRoom { active: true, turns_remaining: 5 }
             };
         }
+        // A pseudo-weather (re)started this move has a fresh state: no
+        // `effectState.target` until one of its handlers runs.
+        let started = pseudo_on(state) & !pseudo_before;
+        state.pseudo_targeted.set(state.pseudo_targeted.get() & !started);
         if choice.pseudo_weather_id == 2 {
             state.side_mut(side).side_conditions.tailwind = 4;
             wind_rider_tailwind(state, rng, side);
@@ -15352,9 +15373,22 @@ fn expanding_force_spreads(state: &DoublesState, side: Side, slot: usize, choice
 fn grassy_glide_boost(state: &DoublesState, p: &crate::state::Pokemon, choice: &Choice) -> i8 {
     (choice.move_id == Choices::GRASSYGLIDE
         && state.terrain.terrain_type == crate::engine::state::Terrain::GRASSYTERRAIN
-        // TODO(PS parity): use `slot_grounded` (Ingrain / Smack Down / Magnet Rise);
-        // the callers pass no slot.
-        && (p.is_grounded() || state.gravity.active)) as i8
+        // `isGrounded()` of the active slot holding `p` (Telekinesis, Magnet
+        // Rise, Ingrain, Smack Down); the callers pass no slot.
+        && {
+            let mut slot = None;
+            for sd in [Side::One, Side::Two] {
+                for sl in 0..2 {
+                    if state.side(sd).active()[sl].pokemon_index.is_some_and(|i| std::ptr::eq(state.side(sd).team_member(i), p)) {
+                        slot = Some((sd, sl));
+                    }
+                }
+            }
+            match slot {
+                Some((sd, sl)) => slot_grounded(p, &state.side(sd).active()[sl], state.gravity.active, state.magic_room.active),
+                None => p.is_grounded() || state.gravity.active,
+            }
+        }) as i8
 }
 
 /// Residual / weather / status damage: PS `Magic Guard` `onDamage` returns
@@ -20324,6 +20358,9 @@ fn damaging_hit_items(
                 && !unnerved(state, ts)
                 && (state.side(ts).active()[tslot].heal_block == 0 || state.tl.heal_block_fresh.get() == Some((ts, tslot)))
                 && state.side(ts).team_member(tidx).hp > 0
+                // Berserk / Anger Shell `onTryEatItem` holds it until `onAfterMoveSecondary`.
+                && !(state.side(ts).active()[tslot].berserk_hold
+                    && matches!(state.side(ts).team_member(tidx).ability, Abilities::BERSERK | Abilities::ANGERSHELL))
                 && crate::doubles::damage::hit_type_mod(
                     state.side(side).team_member(idx),
                     choice,
@@ -21296,8 +21333,11 @@ fn embargoed(state: &DoublesState, p: &crate::state::Pokemon) -> bool {
     [Side::One, Side::Two].into_iter().any(|sd| {
         (0..2).any(|sl| {
             state.side(*sd).active()[sl].embargo > 0
-                && state.side(*sd).slot_pokemon(sl).is_some_and(|q| std::ptr::eq(q, p))
+                // A KO'd holder is still active (and Embargoed) until `faintMessages`.
+                && state.side(*sd).active()[sl].pokemon_index.is_some_and(|i| std::ptr::eq(state.side(*sd).team_member(i), p))
         })
+    }) || state.unresolved_faints.iter().any(|&(sd, _, i)| {
+        state.faint_embargo.contains(&(sd, i)) && std::ptr::eq(state.side(sd).team_member(i), p)
     })
 }
 
@@ -24180,8 +24220,15 @@ fn end_of_turn(
                     .map(|&(_, _, i)| i);
                 let Some(idx) = state.side(side).active()[slot].pokemon_index.or(pending) else { continue };
                 let p = state.side(side).team_member(idx);
-                if (p.hp <= 0 && pending != Some(idx)) || p.item != Items::NONE {
+                // A `fainted` holder is skipped (no `resolveFaints`); otherwise the
+                // callback runs (`resolveFaints` after it) even when it does nothing.
+                if p.hp <= 0 && pending != Some(idx) {
+                    prev_end = was_end;
                     continue;
+                }
+                'pickup: {
+                if p.item != Items::NONE {
+                    break 'pickup;
                 }
                 let targets: Vec<(Side, usize, PokemonIndex)> = [Side::One, Side::Two]
                     .iter()
@@ -24196,16 +24243,17 @@ fn end_of_turn(
                     })
                     .collect();
                 if targets.is_empty() {
-                    continue;
+                    break 'pickup;
                 }
                 let (ts, _, ti) = targets[rng.label("residual roll").random(targets.len() as u32) as usize];
                 let item = std::mem::replace(&mut state.side_mut(ts).last_item[ti as usize], Items::NONE);
                 // `setItem` fails on a holder with no HP (a pending Perish Song faint).
                 if state.side(side).team_member(idx).hp <= 0 {
-                    continue;
+                    break 'pickup;
                 }
                 state.side_mut(side).team_member_mut(idx).item = item;
                 item_gained(state, rng, side, slot, idx);
+                }
             }
             ResidualKind::CudChew(side, slot) => {
                 let Some(idx) = state.side(side).active()[slot].pokemon_index else { continue };
@@ -24326,7 +24374,10 @@ fn end_of_turn(
                 // Perish Song's faint this residual (`apply_damage` to 0, still in
                 // the slot: an `end` callback defers `resolveFaints`) counts too.
                 let perished = state.side(side).active()[slot].pokemon_index == Some(idx);
-                if state.side(side).team_member(idx).hp <= 0 && pending != Some(idx) && !perished {
+                // Once a later handler's `resolveFaints` ran, the holder is
+                // `fainted` and skipped.
+                let _ = perished;
+                if state.side(side).team_member(idx).hp <= 0 && pending != Some(idx) {
                     continue;
                 }
                 let tb = state.side(side).team_boosts[idx as usize].clone();
@@ -25203,6 +25254,11 @@ fn end_of_turn(
         }
     }
     ee_round.extend(eject_round);
+    // PS `runAction` switches loop: `runPursuitActivation` for every live
+    // pokemon with a `switchFlag` (gen >= 5: `eachEvent('Update')`).
+    for _ in &ee_round {
+        each_event_update(state, rng);
+    }
     if !ee_round.is_empty() {
         rounds.push_front(ee_round);
     }

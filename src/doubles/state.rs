@@ -970,6 +970,9 @@ pub struct MoveScratch {
     /// Micle Berry's `onSourceAccuracy` ran this move (it removes the
     /// volatile: a spread move's later targets get no boost).
     pub micle_spent: std::cell::Cell<bool>,
+    /// The move failed in `BeforeMove` after its `|move|` line (choicelock):
+    /// `useMove` never ran, so no Pressure PP.
+    pub before_move_failed: std::cell::Cell<bool>,
     /// PS `battle.activeTarget` while a spread move's Substitute `onTryPrimaryHit`
     /// computes its damage (set only then): the last target of the previous
     /// per-target loop, not the substitute holder. Unaware reads it.
@@ -1094,6 +1097,9 @@ pub struct DoublesState {
     /// volatiles until `faintMessages`, so a DamagingHit handler that runs after
     /// a Destiny Bond KO of its attacker still sees the attacker's Disable.
     pub faint_disabled: Vec<(Side, PokemonIndex, Option<(Choices, u8)>)>,
+    /// KO'd pokemon that were Embargoed: the volatile still holds until
+    /// `faintMessages` (a Jaboca Berry on the KO hit stays unused).
+    pub faint_embargo: Vec<(Side, PokemonIndex)>,
     /// Attackers KO'd by a Destiny Bond `onAfterFaint` during the current move.
     /// PS only resolves their faint after the move, so until then they still
     /// have HP for the rest of the hit (e.g. a lock volatile's `addVolatile`).
@@ -1951,6 +1957,7 @@ impl DoublesState {
             last_success_move: None,
             ev_snap: None,
             faint_disabled: Vec::new(),
+            faint_embargo: Vec::new(),
             db_alive_pending: Vec::new(),
             grudge_pending: Vec::new(),
             pending_disguise: Vec::new(),

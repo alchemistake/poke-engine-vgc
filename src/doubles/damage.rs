@@ -283,6 +283,8 @@ pub struct DamageCtx {
     /// PS `addedType` of the attacker (TYPELESS = none). `hasType` counts it,
     /// so a Forest's Curse / Trick-or-Treat holder gets STAB on that type.
     pub attacker_added_type: PokemonType,
+    /// PS `move.forceSTAB` (a combined Pledge).
+    pub force_stab: bool,
     /// Base offensive stat (boosts applied in `calculate_damage`; negative
     /// boosts dropped on a crit).
     pub attack_base: i16,
@@ -561,7 +563,8 @@ pub fn calculate_damage_with(
         // PS `source.hasType(type)`: the attacker's types include its addedType.
         let is_stab = attacker.types.0 == choice.move_type
             || attacker.types.1 == choice.move_type
-            || ctx.attacker_added_type == choice.move_type;
+            || ctx.attacker_added_type == choice.move_type
+            || ctx.force_stab;
         if is_stab {
             // Adaptability `onModifySTAB`: 2 instead of 1.5.
             let stab = if attacker.ability == crate::engine::abilities::Abilities::ADAPTABILITY { 2.0 } else { 1.5 };

@@ -741,6 +741,8 @@ pub struct DoublesSide {
     /// `effectState.target` to that pokemon, so `fieldEvent('SwitchIn')` skips
     /// it from then on (only another Swap can still use it).
     pub healing_wish_detached: [bool; 2],
+    /// Grass / Fire / Water Pledge side conditions (turns left, 0 = none).
+    pub pledges: [i8; 3],
     /// The slot's `healing_wish_slot` condition is Lunar Dance (also restores PP).
     pub lunar_dance_slot: [bool; 2],
     /// PS `moveSlot.used` per team member / move slot (set by `deductPP`).
@@ -920,11 +922,16 @@ pub struct MoveScratch {
     /// still collects its handlers (`onSource...`) from the pokemon itself.
     /// The event collector reads it for that side's empty slot.
     pub ev_source_idx: std::cell::Cell<Option<(Side, PokemonIndex)>>,
+    /// Heal Block that Psychic Noise's secondary just added this move: PS ran
+    /// the target's item `onHit` (Enigma Berry) before the secondaries.
+    pub heal_block_fresh: std::cell::Cell<Option<(Side, usize)>>,
     /// An Update between `switchIn` and its `runSwitch`: White Herb (no
     /// `onUpdate`) waits for its `onAnySwitchIn` there.
     pub no_white_herb: std::cell::Cell<bool>,
     /// The residual action is running (PS `!queue.peek()`).
     pub in_residual: std::cell::Cell<bool>,
+    /// The running move is a combined Pledge (`move.forceSTAB`), by its user.
+    pub pledge_stab: std::cell::Cell<Option<(Side, PokemonIndex)>>,
     /// The residual `fieldEvent` handler loop is running (draw labels).
     pub in_field_event: std::cell::Cell<bool>,
     /// The `selfdestruct: 'always'` user whose move is running (fainted for PS).
@@ -1071,6 +1078,9 @@ pub struct DoublesState {
     pub ev_drag: bool,
     /// Ion Deluge's one-turn `iondeluge` pseudo-weather: Normal moves are Electric.
     pub ion_deluge: bool,
+    /// A move's `runEvent('ModifyType')` ran the `iondeluge` handler, which set
+    /// its `effectState.target` (the Field): its Residual subOrder is 5, not 2.
+    pub ion_deluge_target: bool,
     /// PS `battle.lastSuccessfulMoveThisTurn`: the last move whose `useMove`
     /// did something this turn (Fusion Flare / Fusion Bolt).
     pub last_success_move: Option<Choices>,
@@ -1117,6 +1127,9 @@ pub struct DoublesState {
     /// After You `onHit`: the target's queued action moves to the front
     /// (`queue.prioritizeAction`), applied by the battle loop.
     pub queue_prioritize: Option<(Side, PokemonIndex)>,
+    /// Pledge `onPrepareHit`: the ally's prioritized action runs as a combo
+    /// (`action.sourceEffect` = this Pledge).
+    pub queue_pledge: Option<(Side, PokemonIndex, crate::choices::Choices)>,
     /// Quash `onHit`: the target's queued action is moved last (`order = 201`).
     pub queue_quash: Option<(Side, usize)>,
     /// Instruct `onHit`: the target's last move is queued again at the front of
@@ -1804,6 +1817,7 @@ impl DoublesState {
             ate_berry: [false; 6],
             healing_wish_slot: [false; 2],
             healing_wish_detached: [false; 2],
+            pledges: [0; 3],
             lunar_dance_slot: [false; 2],
             moves_used: [[false; 4]; 6],
             damaged_by: std::array::from_fn(|_| Vec::new()),
@@ -1838,6 +1852,7 @@ impl DoublesState {
             ate_berry: [false; 6],
             healing_wish_slot: [false; 2],
             healing_wish_detached: [false; 2],
+            pledges: [0; 3],
             lunar_dance_slot: [false; 2],
             moves_used: [[false; 4]; 6],
             damaged_by: std::array::from_fn(|_| Vec::new()),
@@ -1868,6 +1883,7 @@ impl DoublesState {
             queue_change: None,
             queue_round: false,
             queue_prioritize: None,
+            queue_pledge: None,
             queue_quash: None,
             queue_instruct: None,
             in_move: false,
@@ -1928,6 +1944,7 @@ impl DoublesState {
             ev_move: None,
             ev_drag: false,
             ion_deluge: false,
+            ion_deluge_target: false,
             last_success_move: None,
             ev_snap: None,
             faint_disabled: Vec::new(),
@@ -2538,10 +2555,15 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
             })
             .collect()
     };
-    let sc_entries = |sc: &SideConditions, order: &[&'static str]| -> Vec<SideConditionEntry> {
+    let sc_entries = |sc: &SideConditions, order: &[&'static str], pledges: [i8; 3]| -> Vec<SideConditionEntry> {
         // The harness lists `sideConditions` sorted by id.
         let _ = order;
         let mut v = side_condition_entries(sc);
+        for (&n, id) in pledges.iter().zip(["grasspledge", "firepledge", "waterpledge"]) {
+            if n != 0 {
+                v.push(SideConditionEntry { id, duration: Some(n) });
+            }
+        }
         v.sort_by(|a, b| a.id.cmp(&b.id));
         v
     };
@@ -2588,8 +2610,8 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
         weather_turns: if state.weather.weather_type == Weather::NONE { 0 } else { state.weather.turns_remaining },
         terrain_turns: if state.terrain.terrain_type == Terrain::NONE { 0 } else { state.terrain.turns_remaining },
         pseudo_weather_turns,
-        a_side_conditions: sc_entries(&state.side_one.side_conditions, &state.side_one.sc_order),
-        b_side_conditions: sc_entries(&state.side_two.side_conditions, &state.side_two.sc_order),
+        a_side_conditions: sc_entries(&state.side_one.side_conditions, &state.side_one.sc_order, state.side_one.pledges),
+        b_side_conditions: sc_entries(&state.side_two.side_conditions, &state.side_two.sc_order, state.side_two.pledges),
         move_order,
         a_options: if state.snap_options {
             (0..2).map(|sl| crate::doubles::legal::slot_options(state, Side::One, sl)).collect()

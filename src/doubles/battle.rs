@@ -558,6 +558,10 @@ fn resolve_faints(state: &mut DoublesState, rng: &mut Gen5Rng, pick: impl Fn(Sid
             state.unresolved_faints = view;
             each_event_update(state, rng);
             state.unresolved_faints = Vec::new();
+        } else if matches!(held, Abilities::CLOUDNINE | Abilities::AIRLOCK) {
+            // In a move the sort was drawn after the hit; the WeatherChange
+            // handlers (Forecast, Flower Gift) still see the weather return.
+            update_forecast(state);
         }
         // PS faintMessages -> `runEvent('Faint', pokemon)`: the fainted pokemon's
         // `onFaint` (Illusion) and its active ally's `onAllyFaint` (Receiver,
@@ -1919,6 +1923,9 @@ pub fn run_fuzz_turn(
                                     + ability_priority_boost(p, &mv)
                                     + grassy_glide_boost(state, p, &mv)
                             };
+                            let curse_self = mv.move_id == Choices::CURSE
+                                && !p.has_type(&PokemonType::GHOST)
+                                && s.active()[slot].added_type != PokemonType::GHOST;
                             actions.push(Action {
                                 side,
                                 slot,
@@ -1930,9 +1937,7 @@ pub fn run_fuzz_turn(
                                 },
                                 pledge: None,
                                 round_mold: false,
-                                curse_self: mv.move_id == Choices::CURSE
-                                    && !p.has_type(&PokemonType::GHOST)
-                                    && s.active()[slot].added_type != PokemonType::GHOST,
+                                curse_self,
                                 choice: mv,
                                 priority: prio,
                                 speed: effective_speed(state, side, slot).unwrap_or(0),
@@ -1954,6 +1959,11 @@ pub fn run_fuzz_turn(
                                     // `lastMoveTargetLoc` (side.ts `chooseMove`).
                                     _ if s.active()[slot].locked_move.is_some() || s.active()[slot].uproar > 0 || s.active()[slot].rollout.is_some() || (s.active()[slot].recharging && matches!(p.ability, Abilities::STALWART | Abilities::PROPELLERTAIL)) => {
                                         s.active()[slot].last_target_loc
+                                    }
+                                    // A non-Ghost Curse ('self'): `resolveAction` stores the
+                                    // user's own loc (`getRandomTarget` returns the user).
+                                    _ if *target == 0 && curse_self => {
+                                        -(slot as i8 + 1)
                                     }
                                     _ => *target,
                                 },
@@ -3213,7 +3223,13 @@ fn redirect_target(state: &DoublesState, action: &Action, target: (Side, usize))
         Choices::MIRRORCOAT => a.mirror_coat_vol,
         _ => None,
     };
-    let ty = move_target(action.choice.move_id);
+    // A Curse chosen as 'self' (non-Ghost user) keeps `move.target = 'self'`
+    // even after the user turns Ghost: no redirection.
+    let ty = if action.choice.move_id == Choices::CURSE && action.curse_self {
+        Tgt::SelfTarget
+    } else {
+        move_target(action.choice.move_id)
+    };
     if !matches!(ty, Tgt::Normal | Tgt::RandomNormal | Tgt::AdjacentFoe | Tgt::Any | Tgt::Scripted) {
         if let Some((Some(t), _)) = rec {
             return t;
@@ -6421,6 +6437,8 @@ fn execute_move_body(
             } =>
         {
             state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = None;
+            // The null result is falsy for the Metronome item's `moveLastTurnResult`.
+            state.side_mut(side).slot_scratch_mut(slot).move_result_null = true;
             push_order(move_order);
             return;
         }
@@ -14735,7 +14753,14 @@ fn base_power_with_modifiers(
     if defender.ability == Abilities::DRYSKIN && choice.move_type == PokemonType::FIRE {
         mods.push((17, 5120));
     }
-    if ate_boosted {
+    // The -ate `onBasePower` is the ability's own handler: gone after a
+    // mid-move swap (Wandering Spirit), the type change stays.
+    if ate_boosted
+        && matches!(
+            attacker.ability,
+            Abilities::PIXILATE | Abilities::AERILATE | Abilities::REFRIGERATE | Abilities::GALVANIZE | Abilities::DRAGONIZE | Abilities::NORMALIZE
+        )
+    {
         mods.push((23, 4915));
     }
     // steelyspirit.onAllyBasePower (priority 22): x1.5 per holder (user or ally).

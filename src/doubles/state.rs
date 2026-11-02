@@ -745,6 +745,9 @@ pub struct DoublesSide {
     pub pledges: [i8; 3],
     /// PS `side.totalFainted`: every faint resolved, revived pokemon included.
     pub total_fainted: u8,
+    /// Gluttony's `abilityState.gluttony` reset by Neutralizing Gas ending:
+    /// the pinch-berry threshold stays 1/4 until the holder takes damage.
+    pub gluttony_off: [bool; 6],
     /// The slot's `healing_wish_slot` condition is Lunar Dance (also restores PP).
     pub lunar_dance_slot: [bool; 2],
     /// PS `moveSlot.used` per team member / move slot (set by `deductPP`).
@@ -1838,6 +1841,7 @@ impl DoublesState {
             healing_wish_detached: [false; 2],
             pledges: [0; 3],
             total_fainted: 0,
+            gluttony_off: [false; 6],
             lunar_dance_slot: [false; 2],
             moves_used: [[false; 4]; 6],
             damaged_by: std::array::from_fn(|_| Vec::new()),
@@ -1874,6 +1878,7 @@ impl DoublesState {
             healing_wish_detached: [false; 2],
             pledges: [0; 3],
             total_fainted: 0,
+            gluttony_off: [false; 6],
             lunar_dance_slot: [false; 2],
             moves_used: [[false; 4]; 6],
             damaged_by: std::array::from_fn(|_| Vec::new()),

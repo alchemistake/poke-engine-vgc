@@ -965,6 +965,8 @@ fn apply_damage_fx(state: &mut DoublesState, side: Side, slot: usize, amount: i1
 fn apply_damage_raw(state: &mut DoublesState, side: Side, slot: usize, amount: i16) -> bool {
     let s = state.side_mut(side);
     if let Some(idx) = s.active()[slot].pokemon_index {
+        // Gluttony `onDamage`: `abilityState.gluttony = true`.
+        s.gluttony_off[idx as usize] = false;
         let p = s.team_member_mut(idx);
         p.hp -= amount;
         let left = p.hp.max(0);
@@ -4206,8 +4208,10 @@ fn after_move_handler_ties(state: &DoublesState, rng: &mut Gen5Rng, side: Side, 
             {
                 hs.push((4294967296, cached_speed(state, sd, sl), 7));
             }
-            // White Herb `onAnyAfterMove` (item, subOrder 8).
-            if state.side(sd).slot_pokemon(sl).is_some_and(|p| p.hp > 0 && p.item == Items::WHITEHERB && !ignoring_item(state, p)) {
+            // White Herb / Mirror Herb `onAnyAfterMove` (item, subOrder 8).
+            if state.side(sd).slot_pokemon(sl).is_some_and(|p| {
+                p.hp > 0 && matches!(p.item, Items::WHITEHERB | Items::MIRRORHERB) && !ignoring_item(state, p)
+            }) {
                 hs.push((4294967296, cached_speed(state, sd, sl), 8));
             }
         }
@@ -4564,8 +4568,11 @@ fn run_dancers(
 ) {
     let (us, ui) = (action.side, action.pokemon_index);
     let Some(usl) = (0..2).find(|&sl| state.side(us).active()[sl].pokemon_index == Some(ui)) else { return };
-    // A NOT_FAIL result (Protect blocked it) is falsy too.
-    if state.side(us).active()[usl].move_result_this_turn != Some(true) || state.side(us).active()[usl].move_result_null {
+    // A NOT_FAIL result (Protect blocked it) is falsy too. A called dance
+    // (Copycat -> Feather Dance) counts the caller's own `useMove` result,
+    // which succeeded once it called the move.
+    let called = dance_move != action.choice.move_id;
+    if !called && (state.side(us).active()[usl].move_result_this_turn != Some(true) || state.side(us).active()[usl].move_result_null) {
         return;
     }
     let mut dancers: Vec<(Side, PokemonIndex, i16)> = Vec::new();
@@ -5306,6 +5313,16 @@ fn execute_move_body(
                             // Counter's condition `onDamagingHit`: the release is a
                             // Physical move from a foe.
                             let dealt = hp_before - hit_pi.map_or(0, |h| state.side(ts).team_member(h).hp);
+                            // Toxic Debris `onDamagingHit` (a Physical move): a layer
+                            // of Toxic Spikes on the attacker's side.
+                            if let Some(h) = hit_pi {
+                                if state.side(ts).team_member(h).ability == Abilities::TOXICDEBRIS && (ts, tsl) != (side, slot) {
+                                    let spikes_side = if ts == side { side.other() } else { side };
+                                    if state.side(spikes_side).side_conditions.toxic_spikes < 2 {
+                                        state.side_mut(spikes_side).side_conditions.toxic_spikes += 1;
+                                    }
+                                }
+                            }
                             if ts != side && dealt > 0 {
                                 if let Some(c) = state.side_mut(ts).slot_scratch_mut(tsl).counter_vol.as_mut() {
                                     *c = (Some((side, slot)), dealt.saturating_mul(2));
@@ -7860,7 +7877,9 @@ fn execute_move_body(
             .side(target_side)
             .slot_pokemon(target_slot)
             .map(|p| p.has_type(&PokemonType::GHOST))
-            .unwrap_or(false);
+            .unwrap_or(false)
+            // Trick-or-Treat's added Ghost type counts (`hasType`).
+            || state.side(target_side).active()[target_slot].added_type == PokemonType::GHOST;
         if ghost {
             state.side_mut(side).slot_scratch_mut(slot).move_result_this_turn = Some(false);
             push_order(move_order);
@@ -13050,6 +13069,25 @@ fn execute_move_body(
             }
         }
 
+        // `runMoveEffects` -> `runEvent('Hit', target, source)` for a status
+        // move on another pokemon (after the move's own `onHit`): the target's
+        // `onHit` volatiles (Rage, Focus Punch, ...) still sort and tie.
+        // TODO(PS parity): self-targeted status moves (`runEvent('Hit', user)`).
+        if choice.category == MoveCategory::Status
+            && !move_failed
+            && choice.target != MoveTarget::User
+            && (side, slot) != (target_side, target_slot)
+            && state.side(target_side).slot_pokemon(target_slot).is_some_and(|p| p.hp > 0)
+        {
+            crate::doubles::events::run_event_ties(
+                state,
+                rng,
+                crate::doubles::events::Event::Hit,
+                (target_side, target_slot),
+                Some((side, slot)),
+            );
+        }
+
         // PS `forceSwitch` step (after secondaries): Roar / Whirlwind /
         // Dragon Tail / Circle Throw flag the target to be dragged out.
         // Commander's volatiles `onDragOut` block it too.
@@ -14790,7 +14828,8 @@ fn fractional_priority_roll(state: &mut DoublesState, rng: &mut Gen5Rng, a: &mut
     // bracket. PS data/items.ts custapberry, sim/pokemon.ts eatItem.
     {
         let p = state.side(a.side).team_member(a.pokemon_index);
-        let pinch = p.hp * 4 <= p.maxhp || (p.ability == Abilities::GLUTTONY && p.hp * 2 <= p.maxhp);
+        let gl = p.ability == Abilities::GLUTTONY && !state.side(a.side).gluttony_off[a.pokemon_index as usize];
+        let pinch = p.hp * 4 <= p.maxhp || (gl && p.hp * 2 <= p.maxhp);
         if p.item == Items::CUSTAPBERRY
             && p.hp > 0
             && !ignoring_item(state, p)
@@ -19684,6 +19723,13 @@ fn gas_end(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, idx: Pokemon
         if !restored.contains(&(s, sl)) {
             continue;
         }
+        // `if (pokemon.ability === 'gluttony') abilityState.gluttony = false`
+        // after its Start.
+        if let Some(gi) = state.side(s).active()[sl].pokemon_index {
+            if state.side(s).team_member(gi).ability == Abilities::GLUTTONY {
+                state.side_mut(s).gluttony_off[gi as usize] = true;
+            }
+        }
         if apply_on_switch_abilities(state, s, sl, rng) {
             let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
             update_forecast(state);
@@ -20545,6 +20591,8 @@ fn damaging_hit_items(
                             state.side(ts).active()[tslot].tar_shot,
                         )
                         .is_some_and(|m| m > 0)
+                        // Tera Shell made the hit not very effective.
+                        && state.tl.tera_shell_resisted.get() & (1 << (ts as u8 * 2 + tslot as u8)) == 0
                 }
             };
             if fires && t.hp > 0 {
@@ -21062,7 +21110,7 @@ fn item_update(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot: us
         _ => false,
     };
     // Pinch berries `onUpdate`: 1/4 max HP, 1/2 with an active Gluttony.
-    let gluttony = state.side(side).team_member(idx).ability == Abilities::GLUTTONY;
+    let gluttony = state.side(side).team_member(idx).ability == Abilities::GLUTTONY && !state.side(side).gluttony_off[idx as usize];
     let pinch = hp * 4 <= maxhp || (gluttony && hp * 2 <= maxhp);
     let heal_pinch = matches!(
         item,
@@ -22090,6 +22138,10 @@ fn healing_wish_on_switch_in(s: &mut DoublesSide, slot: usize) -> Option<(Pokemo
 }
 
 fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: usize) {
+    // Gluttony `onStart`: `abilityState.gluttony = true` (a fresh state).
+    if position < 6 {
+        state.side_mut(side).gluttony_off[position] = false;
+    }
     let drag = std::mem::take(&mut state.ev_drag);
     emit(state, |st| {
         let kind = if drag { EventKind::Drag } else { EventKind::Switch };
@@ -24536,7 +24588,8 @@ fn end_of_turn(
             ResidualKind::MicleEat(side, slot) => {
                 let Some(idx) = state.side(side).active()[slot].pokemon_index else { continue };
                 let p = state.side(side).team_member(idx);
-                let pinch = p.hp * 4 <= p.maxhp || (p.ability == Abilities::GLUTTONY && p.hp * 2 <= p.maxhp);
+                let gl = p.ability == Abilities::GLUTTONY && !state.side(side).gluttony_off[idx as usize];
+                let pinch = p.hp * 4 <= p.maxhp || (gl && p.hp * 2 <= p.maxhp);
                 if p.hp <= 0 || !pinch || ignoring_item(state, p) || unnerved(state, side) {
                     continue;
                 }

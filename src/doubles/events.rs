@@ -689,6 +689,7 @@ pub enum Event {
     ModifyCritRatio,
     ModifyDamage,
     ModifyDef,
+    ModifySecondaries,
     ModifySpA,
     ModifySpD,
     MoveAborted,
@@ -702,7 +703,7 @@ pub enum Event {
 }
 
 impl Event {
-    const ALL: [Event; 26] = [
+    const ALL: [Event; 27] = [
         Event::Accuracy,
         Event::AfterMega,
         Event::BasePower,
@@ -719,6 +720,7 @@ impl Event {
         Event::ModifyCritRatio,
         Event::ModifyDamage,
         Event::ModifyDef,
+        Event::ModifySecondaries,
         Event::ModifySpA,
         Event::ModifySpD,
         Event::MoveAborted,
@@ -750,6 +752,7 @@ impl Event {
             Event::ModifyCritRatio => "ModifyCritRatio",
             Event::ModifyDamage => "ModifyDamage",
             Event::ModifyDef => "ModifyDef",
+            Event::ModifySecondaries => "ModifySecondaries",
             Event::ModifySpA => "ModifySpA",
             Event::ModifySpD => "ModifySpD",
             Event::MoveAborted => "MoveAborted",

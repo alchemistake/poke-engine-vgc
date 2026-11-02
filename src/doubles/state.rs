@@ -743,6 +743,8 @@ pub struct DoublesSide {
     pub healing_wish_detached: [bool; 2],
     /// Grass / Fire / Water Pledge side conditions (turns left, 0 = none).
     pub pledges: [i8; 3],
+    /// PS `side.totalFainted`: every faint resolved, revived pokemon included.
+    pub total_fainted: u8,
     /// The slot's `healing_wish_slot` condition is Lunar Dance (also restores PP).
     pub lunar_dance_slot: [bool; 2],
     /// PS `moveSlot.used` per team member / move slot (set by `deductPP`).
@@ -1135,6 +1137,9 @@ pub struct DoublesState {
     /// Round `onTry` ran this action: the battle loop prioritizes the next
     /// queued Round with BP doubled (`queue.prioritizeAction`).
     pub queue_round: bool,
+    /// The Round that queued the next one ignores abilities (Mold Breaker):
+    /// the called Round inherits `move.ignoreAbility` from its sourceEffect.
+    pub queue_round_mold: bool,
     /// After You `onHit`: the target's queued action moves to the front
     /// (`queue.prioritizeAction`), applied by the battle loop.
     pub queue_prioritize: Option<(Side, PokemonIndex)>,
@@ -1829,6 +1834,7 @@ impl DoublesState {
             healing_wish_slot: [false; 2],
             healing_wish_detached: [false; 2],
             pledges: [0; 3],
+            total_fainted: 0,
             lunar_dance_slot: [false; 2],
             moves_used: [[false; 4]; 6],
             damaged_by: std::array::from_fn(|_| Vec::new()),
@@ -1864,6 +1870,7 @@ impl DoublesState {
             healing_wish_slot: [false; 2],
             healing_wish_detached: [false; 2],
             pledges: [0; 3],
+            total_fainted: 0,
             lunar_dance_slot: [false; 2],
             moves_used: [[false; 4]; 6],
             damaged_by: std::array::from_fn(|_| Vec::new()),
@@ -1893,6 +1900,7 @@ impl DoublesState {
             copy_called: false,
             queue_change: None,
             queue_round: false,
+            queue_round_mold: false,
             queue_prioritize: None,
             queue_pledge: None,
             queue_quash: None,

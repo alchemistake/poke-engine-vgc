@@ -49,8 +49,30 @@ gen8:
 gen9:
 	cargo build --release --features gen9 --no-default-features
 
-champions:
+# Default champions build: profile-guided (see bench/pgo.sh), output in
+# target/pgo/release/. Needs `rustup component add llvm-tools-preview`.
+# `make champions_plain` is the ordinary release build.
+champions: champions_pgo
+
+champions_plain:
 	cargo build --release --features champions --no-default-features
+
+# Profile-guided build of the champions binaries for THIS machine (~10% faster
+# on bench/games.json; trains on the benchmark games). Output: target/pgo/release/.
+# target-cpu=native and panic=abort were measured and gave no gain.
+champions_pgo:
+	bench/pgo.sh
+
+# The 100-game speed test (PGO build), best of 3 x 30 runs, in microseconds.
+bench: champions_pgo
+	for i in 1 2 3; do target/pgo/release/bench-doubles bench/games.json 30 --sim 2>/dev/null; done | sort -n | head -1
+
+# Same with the plain release build.
+bench_plain:
+	cargo build -q --release --features champions --no-default-features --bin bench-doubles
+	for i in 1 2 3; do target/release/bench-doubles bench/games.json 30 --sim 2>/dev/null; done | sort -n | head -1
+
+bench_pgo: bench
 
 bss:
 	cargo build --release --features bss --no-default-features

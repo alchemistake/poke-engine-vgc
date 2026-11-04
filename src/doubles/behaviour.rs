@@ -30,6 +30,12 @@ pub(crate) const MB_HIT: MoveBits = 1 << 1;
 /// `onAfterMove` / `selfSwitch` steps (Spit Up, pivots, Relic Song, ...).
 pub(crate) const MB_POST: MoveBits = 1 << 2;
 
+/// The `ModifyMove` / `ModifyType` region between the pre-hit checks and the
+/// target resolution (Thunder / Hurricane accuracy, Raging Bull / Aura Wheel /
+/// Ivy Cudgel types, Rollout / Ice Ball, Shell Side Arm, Photon Geyser,
+/// ElectroShot, Focus Punch, thaw-on-use moves, ...).
+pub(crate) const MB_MOD: MoveBits = 1 << 3;
+
 static MOVE_BITS: std::sync::LazyLock<Vec<MoveBits>> = std::sync::LazyLock::new(|| {
     (0..=u16::MAX)
         .map(Choices::from)
@@ -214,6 +220,23 @@ fn move_bits(m: Choices) -> MoveBits {
             | Choices::WATERSPORT
             | Choices::FAIRYLOCK
             | Choices::WONDERROOM
+            // Stage 2: remaining per-target blocks.
+            | Choices::BATONPASS
+            | Choices::TAKEHEART
+            | Choices::JUNGLEHEALING
+            | Choices::LUNARBLESSING
+            | Choices::LIFEDEW
+            | Choices::HEALBELL
+            | Choices::AROMATHERAPY
+            | Choices::REFLECTTYPE
+            | Choices::VENOMDRENCH
+            | Choices::THUNDERWAVE
+            | Choices::ELECTROBALL
+            | Choices::GYROBALL
+            | Choices::YAWN
+            | Choices::DRAGONDARTS
+            // Present's heal is set in `onModifyMove`, not in the base table.
+            | Choices::PRESENT
             // Weather moves the upstream table has no `weather_id` for (the
             // engine's `weather_id` match special-cases them).
             | Choices::RAINDANCE
@@ -258,6 +281,38 @@ fn move_bits(m: Choices) -> MoveBits {
     ) {
         b |= MB_POST;
     }
+    if matches!(
+        m,
+        // `ModifyMove` / `ModifyType` region.
+        Choices::THUNDER
+            | Choices::HURRICANE
+            | Choices::PURSUIT
+            | Choices::RAGINGBULL
+            | Choices::NATURALGIFT
+            | Choices::AURAWHEEL
+            | Choices::IVYCUDGEL
+            | Choices::ROLLOUT
+            | Choices::ICEBALL
+            | Choices::FOCUSPUNCH
+            | Choices::SHELLSIDEARM
+            | Choices::PHOTONGEYSER
+            | Choices::ELECTROSHOT
+            // Thaw-on-use / thaw-on-hit moves (`THAWS_USER` / `THAWS_TARGET`).
+            | Choices::FLAMEWHEEL
+            | Choices::SACREDFIRE
+            | Choices::FLAREBLITZ
+            | Choices::FUSIONFLARE
+            | Choices::SCALD
+            | Choices::STEAMERUPTION
+            | Choices::BURNUP
+            | Choices::PYROBALL
+            | Choices::SCORCHINGSANDS
+            | Choices::MATCHAGOTCHA
+            | Choices::HYDROSTEAM
+            | Choices::SIZZLYSLIDE
+    ) {
+        b |= MB_MOD;
+    }
 
     // Field-derived: the guarded blocks also read these move fields.
     if let Some(c) = MOVES.get(&m) {
@@ -288,6 +343,7 @@ fn move_bits(m: Choices) -> MoveBits {
             || c.weather_id != 0
             || c.terrain_id != 0
             || c.pseudo_weather_id != 0
+            || c.heal.is_some()
         {
             b |= MB_HIT;
         }

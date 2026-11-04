@@ -6,6 +6,7 @@
 //! tests are unaffected.
 
 pub mod ability_flags;
+pub mod behaviour;
 pub mod battle;
 pub mod damage;
 pub mod debug;

@@ -16,6 +16,7 @@ rm -rf "$DATA" && mkdir -p "$DATA"
 cd "$ROOT"
 RUSTFLAGS="-Cprofile-generate=$DATA" cargo build -q "${FEATURES[@]}" --target-dir target/pgo-gen
 target/pgo-gen/release/bench-doubles bench/games.json 5 >/dev/null 2>&1
+target/pgo-gen/release/bench-doubles bench/games.json 5 --sim >/dev/null 2>&1
 "$PROFDATA" merge -o "$DATA/merged.profdata" "$DATA"/*.profraw
 RUSTFLAGS="-Cprofile-use=$DATA/merged.profdata" cargo build -q "${FEATURES[@]}" --target-dir target/pgo
 echo "built target/pgo/release/ (profile: $DATA/merged.profdata)"

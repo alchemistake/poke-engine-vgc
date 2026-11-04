@@ -35,6 +35,15 @@ Do not regenerate `games.json` between commits you compare: the numbers in
 | pokemon-showdown (Node 24, replay, no snapshots) | 1,731,183 us | 1.20 ms |
 | poke-engine doubles (release) | 118,557 us | 82 us |
 
+## Current (7cb52cd, Apple M1 Max)
+
+| simulator | 100 games | per turn |
+|-----------|-----------|----------|
+| pokemon-showdown (Node, replay, no snapshots) | 915,252 us | 633 us |
+| poke-engine doubles, plain release, fuzz-output mode (`bench/run.sh`) | 7,513 us | 5.2 us |
+| poke-engine doubles, PGO, `--sim` (`make bench`) | 5,680 us | 3.9 us |
+| poke-engine doubles, plain release, `--sim` (`make bench_plain`) | about 6,560 us | 4.5 us |
+
 ## Profile of the baseline (valgrind 3.19 in Docker, linux/arm64, 1 run)
 
 - memcheck: 0 errors, no definite leaks.

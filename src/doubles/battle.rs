@@ -440,22 +440,19 @@ fn faint_pokemon(state: &mut DoublesState, side: Side, slot: usize) {
         }
     }
     // PS `onFaint`: `target.isAlly(source)` returns (an ally's or the user's own
-    // damage does not take the attacker down).
+    // damage does not take the attacker down). The attacker's KO is deferred to
+    // `faintMessages` (`resolve_faints`): a spread move's later hits still see
+    // the attacker alive (Spicy Spray burns it, PS log order).
     if db {
+        if let Some(fidx) = state.side(side).active()[slot].pokemon_index {
         if let Some((att_side, att_idx)) = la.filter(|&(a, _)| a != side) {
             if let Some(att_slot) = (0..2).find(|&sl| {
                 state.side(att_side).active()[sl].pokemon_index == Some(att_idx)
             }) {
-                if state.side(att_side).team_member(att_idx).hp > 0 {
-                    let lock = state.side(att_side).active()[att_slot].locked_move();
-                    state.db_alive_pending.push((att_side, att_idx, lock));
-                    let hp0_ev = state.side(att_side).team_member(att_idx).hp;
-                    state.side_mut(att_side).team_member_mut(att_idx).hp = 0;
-                    hp_event(state, att_side, att_idx, hp0_ev, "destinybond");
-                    faint_pokemon(state, att_side, att_slot);
-                    state.db_faint_pos = Some(state.faint_log.len() - 1);
-                }
+                let lock = state.side(att_side).active()[att_slot].locked_move();
+                state.db_pending.push((side, fidx, att_side, att_idx, att_slot as u8, lock));
             }
+        }
         }
     }
     if let Some(idx) = state.side(side).active()[slot].pokemon_index {
@@ -544,9 +541,11 @@ fn resolve_faints(state: &mut DoublesState, rng: &mut Gen5Rng, pick: impl Fn(Sid
     let faints = std::mem::take(&mut state.unresolved_faints);
     let mut resolved = Vec::new();
     let keep: Vec<(Side, u8, PokemonIndex)> = faints.iter().copied().filter(|&(s, sl, _)| !pick(s, sl as usize)).collect();
-    let picked: Vec<(Side, u8, PokemonIndex)> = faints.iter().copied().filter(|&(s, sl, _)| pick(s, sl as usize)).collect();
-    for (k, &(side, slot, idx)) in picked.iter().enumerate() {
-        let slot = slot as usize;
+    let mut picked: Vec<(Side, u8, PokemonIndex)> = faints.iter().copied().filter(|&(s, sl, _)| pick(s, sl as usize)).collect();
+    let mut k = 0;
+    while k < picked.len() {
+        let (side, slot8, idx) = picked[k];
+        let slot = slot8 as usize;
         // PS `resolveFaints` -> `singleEvent('End', ability)`: a Cloud Nine / Air
         // Lock holder's `onEnd` runs `eachEvent('WeatherChange')` while the holder
         // and the faints still queued behind it count as actives (`getAllActive`).
@@ -624,6 +623,29 @@ fn resolve_faints(state: &mut DoublesState, rng: &mut Gen5Rng, pick: impl Fn(Sid
                 }
             }
         }
+        // Destiny Bond `onFaint` (PS `faintMessages`): the last attacker also
+        // faints, queued after the move's other faints. A spread move's later
+        // hits already ran with the attacker alive (Spicy Spray).
+        let mut db_hits: Vec<(Side, PokemonIndex, Side, PokemonIndex, u8, Option<(u8, u8)>)> = Vec::new();
+        state.db_pending.retain(|e| {
+            if e.0 == side && e.1 == idx {
+                db_hits.push(*e);
+                false
+            } else {
+                true
+            }
+        });
+        for &(_, _, att_side, att_idx, att_slot, lock) in &db_hits {
+            if state.side(att_side).team_member(att_idx).hp > 0 {
+                state.db_alive_pending.push((att_side, att_idx, lock));
+                let hp0_ev = state.side(att_side).team_member(att_idx).hp;
+                state.side_mut(att_side).team_member_mut(att_idx).hp = 0;
+                hp_event(state, att_side, att_idx, hp0_ev, "destinybond");
+                faint_pokemon(state, att_side, att_slot as usize);
+                state.db_faint_pos = Some(state.faint_log.len() - 1);
+                picked.push((att_side, att_slot, att_idx));
+            }
+        }
         // `runEvent('Faint')`: the Soul-Heart `onAnyFaint` handlers (priority 1)
         // of every active holder, the fainting one included, sort first
         // (two equal-speed holders tie).
@@ -675,6 +697,7 @@ fn resolve_faints(state: &mut DoublesState, rng: &mut Gen5Rng, pick: impl Fn(Sid
         // `faintMessages`: `pokemon.side.totalFainted++` (a revive keeps it).
         s.total_fainted = s.total_fainted.saturating_add(1);
         resolved.push((side, idx));
+        k += 1;
     }
     // Still-queued faints of other slots remain unresolved.
     state.unresolved_faints = keep.into();
@@ -3101,7 +3124,7 @@ fn prankster_boosted(state: &DoublesState, side: Side, slot: usize, choice: &Cho
 /// when it has to pick a random target (`getRandomTarget` -> `randomFoe` ->
 /// `sample`, which draws even with one candidate). PS calls it in
 /// `getActionSpeed` (queue build and every re-sort) and in `runMove`.
-fn ps_get_target(state: &DoublesState, rng: &mut Gen5Rng, action: &Action) -> Option<(Side, usize)> {
+fn ps_get_target(state: &mut DoublesState, rng: &mut Gen5Rng, action: &Action) -> Option<(Side, usize)> {
     ps_get_target_inner(state, rng, action, "retarget")
 }
 
@@ -6363,6 +6386,9 @@ fn execute_move_body(
             Some((m, turns_left)) if m == choice.move_id && turns_left > 0 => {
                 // Still charging (Geomancy's second charge turn).
                 state.side_mut(side).active_slot_mut(slot).set_charging(Some((m, turns_left - 1)));
+                // `runEvent('TryMove')` (Metronome) runs after the charge's own
+                // `onTryMove` re-added `twoturnmove`.
+                metronome_try_move(state, side, slot, idx, choice.move_id);
                 push_order(move_order);
                 return;
             }
@@ -6465,6 +6491,10 @@ fn execute_move_body(
                 // `twoturnmove.onStart` runs `runEvent('PrepareHit')` on the charge
                 // turn (Protean / Libero). PS data/conditions.ts twoturnmove.
                 prepare_hit(state, side, slot, idx, choice);
+                // The charge turn's `onTryMove` returns null:
+                // `moveThisTurnResult = null` (Metronome's `onTryMove` is
+                // skipped, so the charge is not a Metronome "use").
+                state.side_mut(side).slot_scratch_mut(slot).move_result_null = true;
                 // A Copycat-called charge move has no chosen target: keep the
                 // randomly resolved one (PS `lockedMoveTargetLoc`).
                 // The signed location (an ally target stays on the ally).
@@ -6978,7 +7008,7 @@ fn execute_move_body(
                     || crate::doubles::megas::is_mega_stone(it)
                     // The item's own `onTakeItem` (`singleEvent('TakeItem')`): plates,
                     // memories, masks, ... refuse on their species.
-                    || crate::doubles::item_data::take_lock_num(it).is_some_and(|n| crate::doubles::move_data::lock_num(p.id) == n)
+                    || crate::doubles::item_data::take_lock_num(it).is_some_and(|n| crate::doubles::move_data::lock_num(base_species_id(state, side, idx)) == n)
                     // Flower Sweet's `fling` is `{basePower: 0}`: flung, no damage.
                     || (crate::doubles::item_data::fling_power(it) == 0 && it != Items::FLOWERSWEET)
                 {
@@ -8278,9 +8308,11 @@ fn execute_move_body(
         // `ModifyAccuracy` and the boosts, then forced to `true`.
         crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::ModifyAccuracy, (target_side, target_slot), Some((side, slot)));
         accuracy_boost_ties(state, rng, side, slot, target_side, target_slot, choice.move_id);
-    } else if !is_spread && !is_field && move_ty != Tgt::All && !choice.ohko && (choice.always_hit || weather_guaranteed) {
+    } else if !is_spread && !is_field && !matches!(move_ty, Tgt::All | Tgt::AllySide | Tgt::FoeSide | Tgt::AllyTeam) && !choice.ohko && (choice.always_hit || weather_guaranteed) {
         // `accuracy: true` still runs `ModifyAccuracy`, then `Accuracy` unless
-        // the move is a self-targeted Status move. PS sim/battle-actions.ts hitStepAccuracy.
+        // the move is a self-targeted Status move. PS sim/battle-actions.ts
+        // hitStepAccuracy. `all` / `allySide` / `foeSide` / `allyTeam` moves run
+        // `tryMoveHit` instead (no accuracy step).
         let tgt = if is_self { (side, slot) } else { (target_side, target_slot) };
         // Howl & co. (`target: 'allies'`): `hitStepAccuracy` runs its events for
         // each target (the user, then an ally its TryHit step kept).
@@ -9277,6 +9309,12 @@ fn execute_move_body(
                             state.side(side).team_member(idx).ability,
                             Abilities::ROCKHEAD | Abilities::MAGICGUARD
                         );
+                        // `applyRecoilDamage` -> `damage(..., 'recoil')`: the Damage
+                        // event sorts its handlers (Damp, Rock Head) even when Rock
+                        // Head then blocks it.
+                        if state.side(side).active()[slot].pokemon_index == Some(idx) && state.side(side).team_member(idx).hp > 0 {
+                            crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::Damage, (side, slot), Some((side, slot)));
+                        }
                         if !no_recoil && state.side(side).team_member(idx).hp > 0 {
                             let recoil = ((d as f32) * frac).round().max(1.0) as i16;
                             band_roll(state, rng, side, slot, true);
@@ -9290,6 +9328,11 @@ fn execute_move_body(
                     cold(|| {
                         let ab = state.side(side).team_member(idx).ability;
                         let blocked = ab == Abilities::MAGICGUARD || (choice.move_id == Choices::CHLOROBLAST && ab == Abilities::ROCKHEAD);
+                        // `damage(recoil, ...)` runs the Damage event ties even when
+                        // the ability blocks the damage.
+                        if state.side(side).active()[slot].pokemon_index == Some(idx) && state.side(side).team_member(idx).hp > 0 {
+                            crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::Damage, (side, slot), Some((side, slot)));
+                        }
                         if !blocked && state.side(side).team_member(idx).hp > 0 {
                             let maxhp = state.side(side).team_member(idx).maxhp;
                             band_roll(state, rng, side, slot, true);
@@ -10496,6 +10539,9 @@ fn execute_move_body(
                                     if a.smackdown() {
                                         // onRestart: no further effect.
                                     } else {
+                                        // `addVolatile`: Immunity / TryAddVolatile ties
+                                        // (Vital Spirit, Sweet Veil, ...).
+                                        try_add_volatile_ties(state, rng, ts, tslot);
                                         // `hasAbility('levitate')` is not blanked by Mold Breaker,
                                         // but Neutralizing Gas / Gastro Acid suppress it.
                                         let ab = state
@@ -10899,13 +10945,20 @@ fn execute_move_body(
                         // Tar Shot: `addVolatile('tarshot')` (no-op when present; the
                         // Speed drop already counts as success).
                         PokemonVolatileStatus::TARSHOT => {
-                            state.side_mut(ts).active_slot_mut(tslot).tar_shot = true;
+                            if state.side(ts).active()[tslot].tar_shot {
+                                // Already present: `addVolatile` fails (no `onRestart`),
+                                // no ties.
+                            } else {
+                                try_add_volatile_ties(state, rng, ts, tslot);
+                                state.side_mut(ts).active_slot_mut(tslot).tar_shot = true;
+                            }
                         }
                         // Powder: `addVolatile('powder')` fails while present.
                         PokemonVolatileStatus::POWDER => {
                             if state.side(ts).active()[tslot].powder {
                                 move_failed = true;
                             } else {
+                                try_add_volatile_ties(state, rng, ts, tslot);
                                 state.side_mut(ts).active_slot_mut(tslot).powder = true;
                             }
                         }
@@ -12157,7 +12210,7 @@ fn execute_move_body(
                                 // orb / mask cannot go to its own species either.
                                 let lock_for = |it: Items, rs: Side, ri: PokemonIndex| {
                                     crate::doubles::item_data::take_lock_num(it)
-                                        .is_some_and(|n| crate::doubles::move_data::lock_num(state.side(rs).team_member(ri).id) == n)
+                                        .is_some_and(|n| crate::doubles::move_data::lock_num(base_species_id(state, rs, ri)) == n)
                                 };
                                 let recv_locked = lock_for(mine, target_side, tidx) || lock_for(theirs, side, idx);
                                 if sticky || !take_theirs || !take_mine || recv_locked || (mine == Items::NONE && theirs == Items::NONE) {
@@ -12203,7 +12256,7 @@ fn execute_move_body(
                                 } else {
                                     item_lost(state, side, slot, idx);
                                     let receiver_locked = crate::doubles::item_data::take_lock_num(mine)
-                                        .is_some_and(|n| crate::doubles::move_data::lock_num(state.side(target_side).team_member(tidx).id) == n);
+                                        .is_some_and(|n| crate::doubles::move_data::lock_num(base_species_id(state, target_side, tidx)) == n);
                                     if !item_takeable(state, side, idx, false, false, true, None)
                                         || receiver_locked
                                         || state.side(target_side).team_member(tidx).hp <= 0
@@ -13270,6 +13323,13 @@ fn execute_move_body(
                         // `setWeather` -> `eachEvent('WeatherChange')` (Forecast, Flower
                         // Gift: a Mold Breaker user suppresses Flower Gift's handler).
                         let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+                        // Protosynthesis / Quark Drive `onWeatherChange`: the
+                        // volatile starts / drops with the weather.
+                        for sd in [Side::One, Side::Two] {
+                            for sl in 0..2 {
+                                paradox_check(state, rng, sd, sl);
+                            }
+                        }
                         update_forecast(state);
                     }
                 }
@@ -13384,6 +13444,7 @@ fn execute_move_body(
                     move_failed = true;
                 } else {
                     state.fairy_lock = crate::state::StateTrickRoom { active: true, turns_remaining: 2 };
+                    state.fairy_lock_target = false;
                 }
             })
         }
@@ -15270,6 +15331,9 @@ fn base_power_with_modifiers(
     choice: &Choice,
     attacker: &crate::state::Pokemon,
     defender: &crate::state::Pokemon,
+    // The defender's pre-Transform species (Knock Off's plate/memory
+    // `onTakeItem` compares `baseSpecies.num`).
+    defender_base: crate::pokemon::PokemonName,
     helping_hand_mult: f32,
     // `onBasePower` modifiers from the user's slot (Charge, Lash Out):
     // (priority, 4096-based factor), chained with the others.
@@ -15457,7 +15521,7 @@ fn base_power_with_modifiers(
         && !crate::doubles::megas::is_mega_stone(defender.item)
         // Plates / Memories / Drives / orbs `onTakeItem`: not from their species.
         && !crate::doubles::item_data::take_lock_num(defender.item)
-            .is_some_and(|n| crate::doubles::move_data::lock_num(defender.id) == n)
+            .is_some_and(|n| crate::doubles::move_data::lock_num(defender_base) == n)
     {
         mods.push((0, 6144));
     }
@@ -18103,6 +18167,9 @@ fn compute_hit_damage(
                 choice,
                 attacker,
                 defender,
+                state.side(target_side).active()[target_slot].pokemon_index
+                    .map(|di| base_species_id(state, target_side, di))
+                    .unwrap_or(defender.id),
                 att_slot.helping_hand_mult(),
                 &{
                     let mut m: Vec<(i32, i64)> = Vec::new();
@@ -18708,6 +18775,12 @@ fn field_setting_damaging_hit(state: &mut DoublesState, rng: &mut Gen5Rng, abili
                 turns_remaining: weather_turns(item, Weather::SAND),
             };
             let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+            // Protosynthesis / Quark Drive `onWeatherChange`.
+            for sd in [Side::One, Side::Two] {
+                for sl in 0..2 {
+                    paradox_check(state, rng, sd, sl);
+                }
+            }
         }
         Abilities::SEEDSOWER if state.terrain.terrain_type != crate::engine::state::Terrain::GRASSYTERRAIN => {
             state.terrain = crate::state::StateTerrain {
@@ -20619,6 +20692,11 @@ fn gas_end(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, idx: Pokemon
         }
         if apply_on_switch_abilities(state, s, sl, rng) {
             let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+            // A switch-in weather setter's `eachEvent('WeatherChange')` also
+            // runs Protosynthesis / Quark Drive `onWeatherChange`.
+            for (sd, sl2) in [(Side::One, 0), (Side::One, 1), (Side::Two, 0), (Side::Two, 1)] {
+                paradox_check(state, rng, sd, sl2);
+            }
             update_forecast(state);
         }
     }
@@ -21398,6 +21476,17 @@ fn transform_into(state: &mut DoublesState, rng: &mut Gen5Rng, side: Side, slot:
 /// PS `takeItem` checks: the holder has an item, it is not a Mega Stone on
 /// its own species, and Sticky Hold (unless Mold Breaker) keeps it from a
 /// foe or from Knock Off while the holder has HP.
+/// PS `baseSpecies`: the pre-Transform species (Transform's `setSpecies`
+/// does not touch it). Item `onTakeItem` locks (Plates / Memories / orbs /
+/// masks) compare `baseSpecies.num`, so a Ditto that transformed into
+/// Silvally is still Ditto for the lock check.
+fn base_species_id(state: &DoublesState, side: Side, idx: PokemonIndex) -> crate::pokemon::PokemonName {
+    state.side(side).transform_save[idx as usize]
+        .as_ref()
+        .map(|t| t.id)
+        .unwrap_or(state.side(side).team_member(idx).id)
+}
+
 fn item_takeable(
     state: &DoublesState,
     hs: Side,
@@ -21414,11 +21503,11 @@ fn item_takeable(
     }
     // Plates / Memories / Drives / orbs / masks `onTakeItem`: not from their
     // species; all but Ogerpon's masks also not by it (`source.baseSpecies.num`).
-    // PS data/items.ts.
+    // PS data/items.ts. Both sides use `baseSpecies` (Transform-proof).
     if crate::doubles::item_data::take_lock_num(h.item).is_some_and(|n| {
-        crate::doubles::move_data::lock_num(h.id) == n
+        crate::doubles::move_data::lock_num(base_species_id(state, hs, hidx)) == n
             || (n != 1017
-                && src.is_some_and(|(ss, si)| crate::doubles::move_data::lock_num(state.side(ss).team_member(si).id) == n))
+                && src.is_some_and(|(ss, si)| crate::doubles::move_data::lock_num(base_species_id(state, ss, si)) == n))
     }) {
         return false;
     }
@@ -23093,6 +23182,12 @@ fn healing_wish_on_switch_in(s: &mut DoublesSide, slot: usize) -> Option<(Pokemo
 }
 
 fn switch_in_inner(state: &mut DoublesState, side: Side, slot: usize, position: usize) {
+    // `runEvent('TrapPokemon')` on the switch-out: Fairy Lock's
+    // `onTrapPokemon` ran, setting its pseudoWeather `effectState.target`
+    // (the Field) — its Residual subOrder is 5 from now on.
+    if state.fairy_lock.active {
+        state.fairy_lock_target = true;
+    }
     // Gluttony `onStart`: `abilityState.gluttony = true` (a fresh state).
     if position < 6 {
         state.side_mut(side).gluttony_off.set(position, false);
@@ -23610,6 +23705,10 @@ enum ResidualKind {
     /// A handler with no modeled effect (duration countdowns, ...): it only
     /// takes part in the sort, where ties still consume PRNG draws.
     Marker,
+    /// The Focus Punch `focuspunch` volatile (duration 1) ends: the flag is
+    /// cleared at the residual, so the end-of-turn snapshot has no volatile.
+    /// PS data/moves.ts focuspunch.condition.
+    FocusPunchEnd(Side, usize),
     /// A handler of a fainted holder (still in the sort, skipped at run time
     /// before `resolveFaints`).
     FaintedMarker,
@@ -23826,8 +23925,10 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
         push(27, 0, 4, ResidualKind::MudSport);
     }
     if state.fairy_lock.active {
-        // No `onFieldResidualOrder`; a field condition's default subOrder is 5.
-        push(NO_ORDER, 0, 5, ResidualKind::FairyLock);
+        // Like Echoed Voice until a switch-out runs `onTrapPokemon` (see
+        // `fairy_lock_target`): the pseudoWeather state's `target` is unset,
+        // so it stays a plain Condition (subOrder 2), not a field condition's 5.
+        push(NO_ORDER, 0, if state.fairy_lock_target { 5 } else { 2 }, ResidualKind::FairyLock);
     }
     for side in [Side::One, Side::Two] {
         // Side conditions with a duration (`onSideResidualOrder` 26).
@@ -24004,7 +24105,7 @@ fn collect_residual_handlers(state: &DoublesState) -> Vec<ResidualHandler> {
                 vols.push(("micleberry", NO_ORDER, 2, ResidualKind::VolatileEnd(side, slot, 13)));
             }
             if a.focus_punch() {
-                vols.push(("focuspunch", NO_ORDER, 2, ResidualKind::MarkerEnd)); // focuspunch (duration 1)
+                vols.push(("focuspunch", NO_ORDER, 2, ResidualKind::FocusPunchEnd(side, slot)));
             }
             if a.chilly_reception {
                 vols.push(("chillyreception", NO_ORDER, 2, ResidualKind::MarkerEnd)); // chillyreception (duration 1)
@@ -24961,6 +25062,12 @@ fn end_of_turn(
     // shuffling exact ties (consuming PRNG draws), then runs them in order.
     // `runAction('residual')` -> `updateSpeed()` first.
     update_speed(state, rng);
+    // The faint-replacement switches run before PS collects the Residual
+    // handlers (each `useMove`'s `resolveFaints`), so their switch-outs have
+    // already run Fairy Lock's `onTrapPokemon` (subOrder 5).
+    if state.fairy_lock.active && !pending_in.is_empty() {
+        state.fairy_lock_target = true;
+    }
     let handlers = collect_residual_handlers(state);
     // Powder (duration 1) ends with the turn (its handler is in the sort).
     for sd in [Side::One, Side::Two] {
@@ -25003,6 +25110,10 @@ fn end_of_turn(
             // A duration-1 volatile ends here: PS calls its `end` and skips
             // `resolveFaints` (sim/battle.ts fieldEvent).
             ResidualKind::MarkerEnd => prev_end = true,
+            ResidualKind::FocusPunchEnd(side, slot) => {
+                state.side_mut(side).active_slot_mut(slot).set_focus_punch(false);
+                prev_end = true;
+            }
             // A fainted holder's handler is skipped before `resolveFaints`.
             ResidualKind::FaintedMarker => {
                 prev_end = was_end;
@@ -25039,6 +25150,13 @@ fn end_of_turn(
                         // changes forme now (PS data/abilities.ts forecast), so its
                         // raw cached speed is what the residual's Update sort sees.
                         let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+                        // Protosynthesis / Quark Drive `onWeatherChange`: the
+                        // volatile drops with the weather (the stat boost goes).
+                        for sd in [Side::One, Side::Two] {
+                            for sl in 0..2 {
+                                paradox_check(state, rng, sd, sl);
+                            }
+                        }
                         update_forecast(state);
                         prev_end = true;
                         continue;
@@ -25900,6 +26018,7 @@ fn end_of_turn(
                     state.fairy_lock.turns_remaining -= 1;
                     if state.fairy_lock.turns_remaining == 0 {
                         state.fairy_lock.active = false;
+                        state.fairy_lock_target = false;
                         prev_end = true;
                     }
                 }

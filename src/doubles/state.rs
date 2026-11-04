@@ -994,6 +994,10 @@ pub struct DoublesState {
     /// A move's `runEvent('ModifyType')` ran the `iondeluge` handler, which set
     /// its `effectState.target` (the Field): its Residual subOrder is 5, not 2.
     pub ion_deluge_target: bool,
+    /// Fairy Lock's `onTrapPokemon` ran (a switch-out while it is active),
+    /// which set its pseudoWeather `effectState.target` (the Field): its
+    /// Residual subOrder is 5, not 2. PS sim/battle.ts runEvent.
+    pub fairy_lock_target: bool,
     /// PS `battle.lastSuccessfulMoveThisTurn`: the last move whose `useMove`
     /// did something this turn (Fusion Flare / Fusion Bolt).
     pub last_success_move: Option<Choices>,
@@ -1012,6 +1016,11 @@ pub struct DoublesState {
     /// have HP for the rest of the hit (e.g. a lock volatile's `addVolatile`).
     /// The attacker's lock (`locked_move`) at its KO, for the same reason.
     pub db_alive_pending: crate::copyvec::CopyVec<(Side, PokemonIndex, Option<(u8, u8)>), 16>,
+    /// Destiny Bond `onFaint` waits for `faintMessages` (`resolve_faints`):
+    /// (fainted side, fainted index, attacker side, attacker index, the
+    /// attacker's active slot at the KO, the attacker's lock at the KO). A
+    /// spread move's later hits still see the attacker alive (Spicy Spray).
+    pub db_pending: crate::copyvec::CopyVec<(Side, PokemonIndex, Side, PokemonIndex, u8, Option<(u8, u8)>), 16>,
     /// Grudge `onFaint` waits for `faintMessages`: (victim side, victim index,
     /// attacker side, attacker index, attacker's last move).
     pub grudge_pending: crate::copyvec::CopyVec<(Side, PokemonIndex, Side, PokemonIndex, Choices), 16>,
@@ -1922,11 +1931,13 @@ impl DoublesState {
             ev_drag: false,
             ion_deluge: false,
             ion_deluge_target: false,
+            fairy_lock_target: false,
             last_success_move: None,
             ev_snap: None,
             faint_disabled: crate::copyvec::CopyVec::new(),
             faint_embargo: crate::copyvec::CopyVec::new(),
             db_alive_pending: crate::copyvec::CopyVec::new(),
+            db_pending: crate::copyvec::CopyVec::new(),
             grudge_pending: crate::copyvec::CopyVec::new(),
             pending_disguise: crate::copyvec::CopyVec::new(),
             faint_log: crate::copyvec::CopyVec::new(),

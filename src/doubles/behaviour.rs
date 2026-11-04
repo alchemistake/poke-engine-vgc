@@ -359,3 +359,100 @@ fn move_bits(m: Choices) -> MoveBits {
 pub(crate) fn move_bits_of(m: Choices) -> MoveBits {
     MOVE_BITS[m as usize]
 }
+
+/// Abilities `each_event_update` acts on (its `onUpdate` / Commander /
+/// Protosynthesis / Quark Drive handlers). Trace is covered by the slot's
+/// `trace_seek` flag. A superset of `commander_update`, `paradox_check` and
+/// `ability_status_cures`.
+fn ability_has_update(a: crate::engine::abilities::Abilities) -> bool {
+    use crate::engine::abilities::Abilities as A;
+    matches!(
+        a,
+        A::COMMANDER
+            | A::PROTOSYNTHESIS
+            | A::QUARKDRIVE
+            | A::LIMBER
+            | A::INSOMNIA
+            | A::VITALSPIRIT
+            | A::IMMUNITY
+            | A::PASTELVEIL
+            | A::MAGMAARMOR
+            | A::WATERBUBBLE
+            | A::THERMALEXCHANGE
+            | A::WATERVEIL
+            | A::OWNTEMPO
+            | A::OBLIVIOUS
+    )
+}
+
+/// Items `each_event_update` acts on: the arms of `item_update` and White
+/// Herb. The terrain seeds and Room Service are covered by the terrain and
+/// Trick Room tests of `terrain_seed`.
+fn item_has_update(i: crate::engine::items::Items) -> bool {
+    use crate::engine::items::Items as I;
+    matches!(
+        i,
+        I::FIGYBERRY
+            | I::IAPAPABERRY
+            | I::WIKIBERRY
+            | I::AGUAVBERRY
+            | I::MAGOBERRY
+            | I::LIECHIBERRY
+            | I::GANLONBERRY
+            | I::PETAYABERRY
+            | I::APICOTBERRY
+            | I::SALACBERRY
+            | I::STARFBERRY
+            | I::LANSATBERRY
+            | I::BERSERKGENE
+            | I::BERRYJUICE
+            | I::SITRUSBERRY
+            | I::ORANBERRY
+            | I::CHERIBERRY
+            | I::CHESTOBERRY
+            | I::PECHABERRY
+            | I::RAWSTBERRY
+            | I::ASPEARBERRY
+            | I::LUMBERRY
+            | I::MIRACLEBERRY
+            | I::PRZCUREBERRY
+            | I::MINTBERRY
+            | I::PSNCUREBERRY
+            | I::ICEBERRY
+            | I::BURNTBERRY
+            | I::PERSIMBERRY
+            | I::BITTERBERRY
+            | I::LEPPABERRY
+            | I::MYSTERYBERRY
+            | I::MENTALHERB
+            | I::WHITEHERB
+    )
+}
+
+static ABILITY_UPDATE: std::sync::LazyLock<Vec<bool>> = std::sync::LazyLock::new(|| {
+    (0..i16::MAX)
+        .map(crate::engine::abilities::Abilities::from)
+        .enumerate()
+        .take_while(|&(i, a)| i == 0 || a as usize == i)
+        .map(|(_, a)| ability_has_update(a))
+        .collect()
+});
+
+static ITEM_UPDATE: std::sync::LazyLock<Vec<bool>> = std::sync::LazyLock::new(|| {
+    (0..1024u16)
+        .map(crate::engine::items::Items::from)
+        .enumerate()
+        .take_while(|&(i, it)| i == 0 || it as usize == i)
+        .map(|(_, it)| item_has_update(it))
+        .collect()
+});
+
+#[inline]
+pub(crate) fn ability_update_of(a: crate::engine::abilities::Abilities) -> bool {
+    ABILITY_UPDATE.get(a as usize).copied().unwrap_or(true)
+}
+
+#[inline]
+pub(crate) fn item_update_of(i: crate::engine::items::Items) -> bool {
+    ITEM_UPDATE.get(i as usize).copied().unwrap_or(true)
+}

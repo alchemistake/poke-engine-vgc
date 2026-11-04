@@ -24477,7 +24477,52 @@ fn commander_update(state: &mut DoublesState, rng: &mut Gen5Rng) {
     }
 }
 
+/// Whether `each_event_update` certainly changes nothing (and draws nothing)
+/// beyond its speed sort: no active pokemon has an ability / item / volatile
+/// it acts on, no pending list, and no terrain seed or Room Service to check.
+/// Every test is a superset of the guard of the step it skips.
+fn each_event_update_idle(state: &DoublesState) -> bool {
+    use crate::doubles::behaviour::{ability_update_of, item_update_of};
+    if state.trick_room.active
+        || !state.fling_pending.is_empty()
+        || !state.pending_disguise.is_empty()
+        || !state.ko_update_ties.is_empty()
+    {
+        return false;
+    }
+    for sd in [Side::One, Side::Two] {
+        let s = state.side(sd);
+        for sl in 0..2 {
+            let a = &s.active()[sl];
+            // Slot flags are read even for an empty slot (`end_nightmares`,
+            // `release_sky_drops`).
+            if a.nightmare || a.sky_lifted_by.is_some() {
+                return false;
+            }
+            let Some(idx) = a.pokemon_index else { continue };
+            let p = s.team_member(idx);
+            if ability_update_of(p.ability)
+                || item_update_of(p.item)
+                || a.attract().is_some()
+                || a.syrup_bomb().is_some()
+                || a.telekinesis() > 0
+                || a.paradox().is_some()
+                || a.trace_seek
+                || a.seed_terrain != Some(state.terrain.terrain_type)
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 fn each_event_update(state: &mut DoublesState, rng: &mut Gen5Rng) {
+    if each_event_update_idle(state) {
+        // The steps below do nothing; the sort still draws on speed ties.
+        let _ = sorted_actives(state, rng, "speed tie (eachEvent)");
+        return;
+    }
     commander_update(state, rng);
     release_sky_drops(state);
     end_nightmares(state);

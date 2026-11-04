@@ -6,7 +6,7 @@ This is a port of Pokemon Showdown to Rust based on [pmariglia/poke-engine](http
 > This is a slop port, i didn't read the code, i didn't extensively test it. It is not reflecting my or pmariglia's coding skills.
 > It is meant to be a starting point for you own pokemon AI's engine.
 
-Tests show around x250 speed up against unmodified pokemon showdown.
+Tests show around x130 speed up against unmodified pokemon showdown.
 
 It has been developed using generation based fuzzer. It should have 99.96% accuracy against PS.
 

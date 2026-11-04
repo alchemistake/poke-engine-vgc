@@ -18285,6 +18285,9 @@ fn compute_hit_damage(
         // collected (`ev_source_idx`).
         let att_active = state.side(side).active()[slot].pokemon_index == Some(idx)
             || state.tl.ev_source_idx.get() == Some((side, idx));
+        // One gate for every event of this calculation: the state is not changed
+        // between them.
+        let gate = crate::doubles::events::PokeGate::new(state);
         let mut on_event = |ev: crate::doubles::damage::DamageEvent, rng: &mut Gen5Rng| {
             use crate::doubles::damage::DamageEvent;
             use crate::doubles::events::Event;
@@ -18294,7 +18297,7 @@ fn compute_hit_damage(
             let (src, tgt) = ((side, slot), (target_side, target_slot));
             match ev {
                 DamageEvent::ModifyCritRatio => {
-                    crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::ModifyCritRatio, src, Some(tgt));
+                    crate::doubles::events::run_event_ties_gated(state, rng, gate, Event::ModifyCritRatio, src, Some(tgt), None);
                 }
                 DamageEvent::BasePower => {
                     // The move's own `onBasePower` (none has a priority) joins the sort.
@@ -18304,8 +18307,8 @@ fn compute_hit_damage(
                             | Choices::FICKLEBEAM | Choices::KNOCKOFF | Choices::LASHOUT | Choices::MISTYEXPLOSION
                             | Choices::SOLARBEAM | Choices::SOLARBLADE | Choices::VENOSHOCK
                     );
-                    crate::doubles::events::run_event_ties_on_effect(
-                        state, rng, crate::doubles::events::Event::BasePower, src, Some(tgt), own.then_some(0),
+                    crate::doubles::events::run_event_ties_gated(
+                        state, rng, gate, Event::BasePower, src, Some(tgt), own.then_some(0),
                     );
                 }
                 DamageEvent::ModifyStats => {
@@ -18323,11 +18326,11 @@ fn compute_hit_damage(
                     // on the stat users first. PS sim/battle-actions.ts getDamage.
                     modify_boost_ties(state, rng, src.0, src.1);
                     modify_boost_ties(state, rng, tgt.0, tgt.1);
-                    crate::doubles::events::run_event_ties(state, rng, atk, src, Some(tgt));
-                    crate::doubles::events::run_event_ties(state, rng, def, tgt, Some(src));
+                    crate::doubles::events::run_event_ties_gated(state, rng, gate, atk, src, Some(tgt), None);
+                    crate::doubles::events::run_event_ties_gated(state, rng, gate, def, tgt, Some(src), None);
                 }
                 DamageEvent::ModifyDamage => {
-                    crate::doubles::events::run_event_ties(state, rng, crate::doubles::events::Event::ModifyDamage, src, Some(tgt));
+                    crate::doubles::events::run_event_ties_gated(state, rng, gate, Event::ModifyDamage, src, Some(tgt), None);
                 }
             }
             true

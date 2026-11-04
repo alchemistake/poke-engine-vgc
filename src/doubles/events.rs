@@ -906,6 +906,12 @@ struct Tables {
     cond_fx: [u16; CONDS.len()],
     /// Effect bit of each `STATUS_IDS` entry, or `NO_BIT`.
     status_fx: [u16; 6],
+    /// Per holder: the events (bit = `Event as usize`) it has a handler for,
+    /// in any prefix. Static, for `poke_gate`.
+    ability_ev: Vec<u64>,
+    item_ev: Vec<u64>,
+    status_ev: [u64; 6],
+    cond_ev: [u64; CONDS.len()],
     events: Vec<EventTable>,
 }
 
@@ -1090,7 +1096,34 @@ fn build_tables() -> Tables {
         ev.any_ability = bitset(&ability_bit);
         ev.any_item = bitset(&item_bit);
     }
-    Tables { ability_bit, item_bit, cond_fx, status_fx, events }
+    let mut ability_ev = vec![0u64; ability_bit.len()];
+    let mut item_ev = vec![0u64; item_bit.len()];
+    let mut status_ev = [0u64; 6];
+    let mut cond_ev = [0u64; CONDS.len()];
+    for (e, ev) in events.iter().enumerate() {
+        let all = ev.any_poke;
+        for (i, &bit) in ability_bit.iter().enumerate() {
+            if bit != NO_BIT && all.has(bit) {
+                ability_ev[i] |= 1 << e;
+            }
+        }
+        for (i, &bit) in item_bit.iter().enumerate() {
+            if bit != NO_BIT && all.has(bit) {
+                item_ev[i] |= 1 << e;
+            }
+        }
+        for (i, &bit) in status_fx.iter().enumerate() {
+            if bit != NO_BIT && all.has(bit) {
+                status_ev[i] |= 1 << e;
+            }
+        }
+        for (i, &bit) in cond_fx.iter().enumerate() {
+            if bit != NO_BIT && all.has(bit) {
+                cond_ev[i] |= 1 << e;
+            }
+        }
+    }
+    Tables { ability_bit, item_bit, cond_fx, status_fx, ability_ev, item_ev, status_ev, cond_ev, events }
 }
 
 /// The effects of the pokemon in a slot that have a handler somewhere, as
@@ -1150,9 +1183,8 @@ struct Key {
     sub_order: i32,
 }
 
-/// Whether any active pokemon, side or the field holds an effect with a
-/// handler for the event (any prefix). Most event sorts have none.
-fn has_any_handler(ev: &EventTable, state: &DoublesState) -> bool {
+/// Whether any side condition or field effect has a handler for the event.
+fn has_side_or_field_handler(ev: &EventTable, state: &DoublesState) -> bool {
     if ev.any_side != 0 {
         for sd in [Side::One, Side::Two] {
             let b = side_bytes(&state.side(sd).side_conditions);
@@ -1177,6 +1209,12 @@ fn has_any_handler(ev: &EventTable, state: &DoublesState) -> bool {
             return true;
         }
     }
+    false
+}
+
+/// Whether any active pokemon holds an effect with a handler for the event
+/// (any prefix).
+fn has_any_poke_handler(ev: &EventTable, state: &DoublesState) -> bool {
     if ev.any_poke.is_zero() {
         return false;
     }
@@ -1196,6 +1234,36 @@ fn has_any_handler(ev: &EventTable, state: &DoublesState) -> bool {
         }
     }
     false
+}
+
+/// The events (bit = `Event as usize`) that some active pokemon has a handler
+/// for. Valid only while the state is not changed: build it once for a group
+/// of events run on the same state (a damage calculation, an accuracy check)
+/// and pass it to `run_event_ties_gated`. Not kept between actions.
+#[derive(Clone, Copy)]
+pub struct PokeGate(u64);
+
+impl PokeGate {
+    pub fn new(state: &DoublesState) -> PokeGate {
+        let t: &Tables = &TABLES;
+        let mut m = 0u64;
+        for side in [Side::One, Side::Two] {
+            let s = state.side(side);
+            for slot in 0..2 {
+                let Some(idx) = s.active()[slot].pokemon_index else { continue };
+                let p = s.team_member(idx);
+                m |= status_index(p.status).map_or(0, |i| t.status_ev[i])
+                    | t.item_ev.get(p.item as usize).copied().unwrap_or(0)
+                    | t.ability_ev.get(real_ability(state, side, idx) as usize).copied().unwrap_or(0);
+                let mut c = cond_mask(s, slot);
+                while c != 0 {
+                    m |= t.cond_ev[c.trailing_zeros() as usize];
+                    c &= c - 1;
+                }
+            }
+        }
+        PokeGate(m)
+    }
 }
 
 /// Collects the handlers of one `run_event_ties` call. Each slot's effects
@@ -1292,9 +1360,46 @@ pub fn run_event_ties_on_effect(
     source: Option<(Side, usize)>,
     effect_priority: Option<i32>,
 ) {
+    run_event_ties_inner(state, rng, None, event, target, source, effect_priority);
+}
+
+/// `run_event_ties_on_effect` with a `PokeGate` built on the same state.
+pub fn run_event_ties_gated(
+    state: &DoublesState,
+    rng: &mut Gen5Rng,
+    gate: PokeGate,
+    event: Event,
+    target: (Side, usize),
+    source: Option<(Side, usize)>,
+    effect_priority: Option<i32>,
+) {
+    debug_assert_eq!(
+        gate.0 >> event as usize & 1 != 0,
+        has_any_poke_handler(&TABLES.events[event as usize], state),
+        "stale PokeGate for {:?}",
+        event
+    );
+    run_event_ties_inner(state, rng, Some(gate), event, target, source, effect_priority);
+}
+
+fn run_event_ties_inner(
+    state: &DoublesState,
+    rng: &mut Gen5Rng,
+    gate: Option<PokeGate>,
+    event: Event,
+    target: (Side, usize),
+    source: Option<(Side, usize)>,
+    effect_priority: Option<i32>,
+) {
     let t: &Tables = &TABLES;
     let ev = &t.events[event as usize];
-    if ev.left_to_right || !has_any_handler(ev, state) {
+    if ev.left_to_right
+        || !(has_side_or_field_handler(ev, state)
+            || match gate {
+                Some(g) => g.0 >> event as usize & 1 != 0,
+                None => has_any_poke_handler(ev, state),
+            })
+    {
         // At most the effect's own handler: a sort of one key draws nothing.
         return;
     }

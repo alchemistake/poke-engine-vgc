@@ -1,14 +1,14 @@
 // Fuzz tester: runs poke-engine and pokemon-showdown on the same random
 // battles and compares full per-turn state.
 //
-//   node fuzz.js --seed <testerSeed> --count <numTests> [--mode random|champions]
+//   node fuzz.js --seed <testerSeed> --count <numTests> [--mode champions|random]
 //                [--workdir dir] [--engine path]
 //
-// - Modes (teams.js): `random` (default) draws from every species, move,
-//   ability and item, past gens included; `champions` only makes sets the
-//   format's validator accepts. Each mode has its own seed space, PS cache,
-//   default workdir (fuzz/work, fuzz/work/champions) and score file
-//   (fuzz/SCORE, fuzz/SCORE_CHAMPIONS).
+// - Modes (teams.js): `champions` (default, the main score) only makes sets
+//   the format's validator accepts; `random` draws from every species, move,
+//   ability and item, past gens included. Each mode has its own seed space,
+//   PS cache, default workdir (fuzz/work/champions, fuzz/work) and score file
+//   (fuzz/SCORE, fuzz/SCORE_RANDOM).
 // - The tester seed drives the controller PRNG (team generation, battle seed
 //   selection, and all in-game move/switch/team-preview choices). Re-running
 //   with the same seed reproduces the exact same test cases.
@@ -37,7 +37,7 @@ const MODES = Object.keys(SEED_SPACES);
 let MODE = null;
 const seedSpace = () => SEED_SPACES[MODE];
 // The `--mode` part of a command line (none for the default mode).
-const modeArg = () => (MODE === 'random' ? '' : ` --mode ${MODE}`);
+const modeArg = () => (MODE === 'champions' ? '' : ` --mode ${MODE}`);
 
 // Parallel sweep parent: start the workers BEFORE loading pokemon-showdown
 // (the parent only needs it to print a report). See runParallel / main.
@@ -80,7 +80,7 @@ function parseArgs() {
   const opts = {
     seed: null,
     count: null,
-    mode: process.env.FUZZ_MODE || 'random',
+    mode: process.env.FUZZ_MODE || 'champions',
     workdir: null,
     engine: path.resolve(__dirname, '..', 'target', 'release', 'poke-engine'),
     verbose: false,
@@ -109,7 +109,7 @@ function parseArgs() {
     }
   }
   if (opts.seed === null || opts.count === null || Number.isNaN(opts.seed) || Number.isNaN(opts.count)) {
-    console.error('usage: node fuzz.js --seed <n> --count <n> [--mode random|champions] [--workdir dir] [--engine path] [--verbose]');
+    console.error('usage: node fuzz.js --seed <n> --count <n> [--mode champions|random] [--workdir dir] [--engine path] [--verbose]');
     process.exit(2);
   }
   if (!MODES.includes(opts.mode)) {

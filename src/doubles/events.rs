@@ -159,12 +159,12 @@ const WISH_BIT: u32 = CONDS.len() as u32 - 1;
 
 /// The move a slot is charging (a two-turn move not aborted).
 fn charging(a: &crate::doubles::state::ActiveSlot) -> Option<Choices> {
-    a.charging.filter(|_| !a.charge_aborted).map(|(m, _)| m)
+    a.charging().filter(|_| !a.charge_aborted()).map(|(m, _)| m)
 }
 
 /// The conditions of `CONDS` that are up, as bits (bit i = `CONDS[i]`).
 fn cond_mask(s: &crate::doubles::state::DoublesSide, slot: usize) -> u128 {
-    let mut m = s.cached_conds(slot, vol_mask);
+    let mut m = vol_mask(&s.active()[slot]);
     if s.future_move[slot].is_some() {
         m |= 1 << FUTURE_BIT;
     }
@@ -172,6 +172,11 @@ fn cond_mask(s: &crate::doubles::state::DoublesSide, slot: usize) -> u128 {
         m |= 1 << WISH_BIT;
     }
     m
+}
+
+/// PS id of a `CONDS` entry (`ActiveSlot::vol_order`).
+pub(crate) fn cond_id(i: u8) -> &'static str {
+    CONDS[i as usize].0
 }
 
 /// The ids of the volatile conditions up in a slot, sorted (fuzz snapshot).
@@ -183,7 +188,7 @@ pub(crate) fn volatile_ids(a: &crate::doubles::state::ActiveSlot) -> Vec<String>
     while m != 0 {
         let id = CONDS[m.trailing_zeros() as usize].0;
         // One bit holds both redirect volatiles.
-        v.push(if id == "followme" && a.follow_me == 2 { "ragepowder" } else { id }.to_string());
+        v.push(if id == "followme" && a.follow_me() == 2 { "ragepowder" } else { id }.to_string());
         m &= m - 1;
     }
     if let Some(mv) = charging(a) {
@@ -242,68 +247,75 @@ pub(crate) fn volatile_ids(a: &crate::doubles::state::ActiveSlot) -> Vec<String>
 
 /// The volatile conditions of `CONDS` (every bit below `FUTURE_BIT`) that are
 /// up in a slot.
+#[inline]
 pub(crate) fn vol_mask(a: &crate::doubles::state::ActiveSlot) -> u128 {
     if a.pokemon_index.is_none() {
         return 0;
     }
+    debug_assert_eq!(a.vols(), vol_mask_derived(a), "vols out of sync");
+    a.vols()
+}
+
+/// `vol_mask` derived from the fields (debug check of `ActiveSlot::vols`).
+fn vol_mask_derived(a: &crate::doubles::state::ActiveSlot) -> u128 {
     let mut m = 0u128;
-    if a.choice_lock.is_some() {
+    if a.choice_lock().is_some() {
         m |= 1 << 64;
     }
-    if a.truant {
+    if a.truant() {
         m |= 1 << 65;
     }
-    if a.laser_focus > 0 {
+    if a.laser_focus() > 0 {
         m |= 1 << 66;
     }
-    if a.fury_cutter.is_some() {
+    if a.fury_cutter().is_some() {
         m |= 1 << 67;
     }
-    if a.telekinesis > 0 {
+    if a.telekinesis() > 0 {
         m |= 1 << 68;
     }
-    if a.rollout.is_some() {
+    if a.rollout().is_some() {
         // Ice Ball's lock is its own `iceball` volatile. PS data/moves.ts iceball.
-        m |= if a.rollout_ice { 1 << 81 } else { 1 << 69 };
+        m |= if a.rollout_ice() { 1 << 81 } else { 1 << 69 };
     }
-    if a.defense_curl {
+    if a.defense_curl() {
         m |= 1 << 70;
     }
-    if a.bide.is_some() {
+    if a.bide().is_some() {
         m |= 1 << 71;
     }
-    if a.rage {
+    if a.rage() {
         m |= 1 << 72;
     }
-    if a.paradox.is_some() {
+    if a.paradox().is_some() {
         // The holder's ability names the volatile (Booster Energy keeps it).
-        m |= if a.paradox_quark { 1 << 74 } else { 1 << 73 };
+        m |= if a.paradox_quark() { 1 << 74 } else { 1 << 73 };
     }
-    if a.magic_coat {
+    if a.magic_coat() {
         m |= 1 << 75;
     }
-    if a.grudge {
+    if a.grudge() {
         m |= 1 << 76;
     }
-    if a.micle > 0 {
+    if a.micle() > 0 {
         m |= 1 << 77;
     }
-    if a.embargo > 0 {
+    if a.embargo() > 0 {
         m |= 1 << 78;
     }
-    if a.foresight {
+    if a.foresight() {
         m |= 1 << 79;
     }
-    if a.miracle_eye {
+    if a.miracle_eye() {
         m |= 1 << 80;
     }
-    if a.confusion > 0 {
+    if a.confusion() > 0 {
         m |= 1 << 0;
     }
-    if a.flinched {
+    if a.flinched() {
         m |= 1 << 1;
     }
-    if a.recharging {
+    if a.recharging() {
         m |= 1 << 2;
     }
     if charging(a).is_some() {
@@ -330,168 +342,168 @@ pub(crate) fn vol_mask(a: &crate::doubles::state::ActiveSlot) -> u128 {
     if charging(a) == Some(Choices::SKYDROP) {
         m |= 1 << 10;
     }
-    if a.protected && a.protect_kind == 0 {
+    if a.protected() && a.protect_kind() == 0 {
         m |= 1 << 11;
     }
-    if a.protected && a.protect_kind == 1 {
+    if a.protected() && a.protect_kind() == 1 {
         m |= 1 << 12;
     }
-    if a.protected && a.protect_kind == 2 {
+    if a.protected() && a.protect_kind() == 2 {
         m |= 1 << 13;
     }
-    if a.protected && a.protect_kind == 3 {
+    if a.protected() && a.protect_kind() == 3 {
         m |= 1 << 14;
     }
-    if a.protected && a.protect_kind == 4 {
+    if a.protected() && a.protect_kind() == 4 {
         m |= 1 << 15;
     }
-    if a.protected && a.protect_kind == 5 {
+    if a.protected() && a.protect_kind() == 5 {
         m |= 1 << 16;
     }
-    if a.endure {
+    if a.endure() {
         m |= 1 << 17;
     }
-    if a.substitute_health > 0 {
+    if a.substitute_health() > 0 {
         m |= 1 << 18;
     }
-    if a.salt_cure {
+    if a.salt_cure() {
         m |= 1 << 19;
     }
-    if a.stockpile > 0 {
+    if a.stockpile() > 0 {
         m |= 1 << 20;
     }
-    if a.focus_punch {
+    if a.focus_punch() {
         m |= 1 << 21;
     }
-    if a.beak_blast {
+    if a.beak_blast() {
         m |= 1 << 22;
     }
-    if a.gastro_acid {
+    if a.gastro_acid() {
         m |= 1 << 23;
     }
-    if a.helping_hand_mult > 1.0 {
+    if a.helping_hand_mult() > 1.0 {
         m |= 1 << 24;
     }
-    if a.destinybond {
+    if a.destinybond() {
         m |= 1 << 25;
     }
-    if a.partial_trap.is_some() {
+    if a.partial_trap().is_some() {
         m |= 1 << 26;
     }
-    if a.yawn > 0 {
+    if a.yawn() > 0 {
         m |= 1 << 27;
     }
-    if a.throat_chop > 0 {
+    if a.throat_chop() > 0 {
         m |= 1 << 28;
     }
-    if a.taunt > 0 {
+    if a.taunt() > 0 {
         m |= 1 << 29;
     }
-    if a.magnet_rise > 0 {
+    if a.magnet_rise() > 0 {
         m |= 1 << 30;
     }
-    if a.smackdown {
+    if a.smackdown() {
         m |= 1 << 31;
     }
-    if a.cursed {
+    if a.cursed() {
         m |= 1 << 32;
     }
-    if a.follow_me > 0 {
+    if a.follow_me() > 0 {
         m |= 1 << 33;
     }
-    if a.perish > 0 {
+    if a.perish() > 0 {
         m |= 1 << 34;
     }
-    if a.flash_fire {
+    if a.flash_fire() {
         m |= 1 << 35;
     }
-    if a.charge {
+    if a.charge() {
         m |= 1 << 36;
     }
-    if a.no_retreat {
+    if a.no_retreat() {
         m |= 1 << 37;
     }
-    if a.focus_energy {
+    if a.focus_energy() {
         m |= 1 << 38;
     }
-    if a.attract.is_some() {
+    if a.attract().is_some() {
         m |= 1 << 39;
     }
-    if a.leech_seed.is_some() {
+    if a.leech_seed().is_some() {
         m |= 1 << 40;
     }
-    if a.dragon_cheer.is_some() {
+    if a.dragon_cheer().is_some() {
         m |= 1 << 41;
     }
-    if a.glaive_rush {
+    if a.glaive_rush() {
         m |= 1 << 42;
     }
-    if a.minimize {
+    if a.minimize() {
         m |= 1 << 43;
     }
-    if a.ingrain {
+    if a.ingrain() {
         m |= 1 << 44;
     }
-    if a.heal_block > 0 {
+    if a.heal_block() > 0 {
         m |= 1 << 45;
     }
-    if a.syrup_bomb.is_some() {
+    if a.syrup_bomb().is_some() {
         m |= 1 << 46;
     }
-    if a.octolock.is_some() {
+    if a.octolock().is_some() {
         m |= 1 << 47;
     }
     // No Retreat `onStart` adds the `trapped` volatile (PS data/moves.ts noretreat).
-    if a.trapped || a.no_retreat_trap {
+    if a.trapped() || a.no_retreat_trap() {
         m |= 1 << 48;
     }
-    if a.encore.is_some() {
+    if a.encore().is_some() {
         m |= 1 << 49;
     }
-    if a.torment {
+    if a.torment() {
         m |= 1 << 50;
     }
-    if a.imprison {
+    if a.imprison() {
         m |= 1 << 51;
     }
-    if a.roost {
+    if a.roost() {
         m |= 1 << 52;
     }
-    if a.aqua_ring {
+    if a.aqua_ring() {
         m |= 1 << 53;
     }
-    if a.counter_vol.is_some() {
+    if a.counter_vol().is_some() {
         m |= 1 << 54;
     }
-    if a.mirror_coat_vol.is_some() {
+    if a.mirror_coat_vol().is_some() {
         m |= 1 << 55;
     }
-    if a.ally_switch.is_some() {
+    if a.ally_switch().is_some() {
         m |= 1 << 56;
     }
-    if a.lock_on.is_some() {
+    if a.lock_on().is_some() {
         m |= 1 << 57;
     }
-    if a.uproar > 0 {
+    if a.uproar() > 0 {
         m |= 1 << 58;
     }
-    if a.stall.is_some() {
+    if a.stall().is_some() {
         m |= 1 << 59;
     }
-    if a.locked_move.is_some() {
+    if a.locked_move().is_some() {
         m |= 1 << 60;
     }
-    if a.disabled.is_some() {
+    if a.disabled().is_some() {
         m |= 1 << 61;
     }
-    if a.electrify {
+    if a.electrify() {
         m |= 1 << 62;
     }
-    if a.power_trick {
+    if a.power_trick() {
         m |= 1 << 63;
     }
     // Obstruct (protect kind 6).
-    if a.protected && a.protect_kind == 6 {
+    if a.protected() && a.protect_kind() == 6 {
         m |= 1 << 82;
     }
     m
@@ -865,6 +877,11 @@ struct EventTable {
     /// Union of `poke_mask`, and of the `SIDE_IDS` / `FIELD_IDS` bits with a
     /// handler: an event whose effects are all absent has nothing to sort.
     any_poke: FxMask,
+    /// `any_poke` split by holder kind, for a direct per-slot test: statuses
+    /// (bit = `STATUS_IDS` index), abilities and items (bit = enum value).
+    any_status: u8,
+    any_ability: Vec<u64>,
+    any_item: Vec<u64>,
     any_side: u32,
     any_field: u32,
     /// `any_side` as a byte mask over `SideConditions` (`side_bytes`): a
@@ -1005,6 +1022,9 @@ fn build_tables() -> Tables {
             poke_mask,
             conds: 0,
             any_poke: FxMask::ZERO,
+            any_status: 0,
+            any_ability: Vec::new(),
+            any_item: Vec::new(),
             any_side: 0,
             any_field: 0,
             side_bytes: [0; 2],
@@ -1053,6 +1073,22 @@ fn build_tables() -> Tables {
                 ev.conds |= 1 << i;
             }
         }
+        for (i, &bit) in status_fx.iter().enumerate() {
+            if bit != NO_BIT && all.has(bit) {
+                ev.any_status |= 1 << i;
+            }
+        }
+        let bitset = |bits: &[u16]| {
+            let mut v = vec![0u64; bits.len().div_ceil(64)];
+            for (i, &bit) in bits.iter().enumerate() {
+                if bit != NO_BIT && all.has(bit) {
+                    v[i / 64] |= 1 << (i % 64);
+                }
+            }
+            v
+        };
+        ev.any_ability = bitset(&ability_bit);
+        ev.any_item = bitset(&item_bit);
     }
     Tables { ability_bit, item_bit, cond_fx, status_fx, events }
 }
@@ -1106,7 +1142,7 @@ fn slot_effects(t: &Tables, state: &DoublesState, side: Side, slot: usize, conds
 }
 
 /// One collected handler: PS `comparePriority` keys.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct Key {
     order: i64,
     priority: i32,
@@ -1116,7 +1152,7 @@ struct Key {
 
 /// Whether any active pokemon, side or the field holds an effect with a
 /// handler for the event (any prefix). Most event sorts have none.
-fn has_any_handler(t: &Tables, ev: &EventTable, state: &DoublesState) -> bool {
+fn has_any_handler(ev: &EventTable, state: &DoublesState) -> bool {
     if ev.any_side != 0 {
         for sd in [Side::One, Side::Two] {
             let b = side_bytes(&state.side(sd).side_conditions);
@@ -1144,66 +1180,22 @@ fn has_any_handler(t: &Tables, ev: &EventTable, state: &DoublesState) -> bool {
     if ev.any_poke.is_zero() {
         return false;
     }
-    fx_union(t, state).intersects(&ev.any_poke)
-}
-
-/// `slot_fx` of all four slots, OR-ed; cached in `DoublesState::fx_union`
-/// while no slot or team member changed (and no Mold Breaker list is up).
-fn fx_union(t: &Tables, state: &DoublesState) -> FxMask {
-    let (a, b) = (&state.side_one, &state.side_two);
-    let extra = a.future_move[0].is_some() as u8
-        | (a.future_move[1].is_some() as u8) << 1
-        | (b.future_move[0].is_some() as u8) << 2
-        | (b.future_move[1].is_some() as u8) << 3
-        | (a.wish[0].is_some() as u8) << 4
-        | (a.wish[1].is_some() as u8) << 5
-        | (b.wish[0].is_some() as u8) << 6
-        | (b.wish[1].is_some() as u8) << 7;
-    let cacheable = state.mold_saved.is_empty();
-    if cacheable {
-        if let Some((va, vb, e, u)) = state.fx_union.get() {
-            if va == a.ver && vb == b.ver && e == extra {
-                return u;
+    let has = |set: &[u64], i: usize| set.get(i / 64).is_some_and(|w| w >> (i % 64) & 1 != 0);
+    for side in [Side::One, Side::Two] {
+        let s = state.side(side);
+        for slot in 0..2 {
+            let Some(idx) = s.active()[slot].pokemon_index else { continue };
+            let p = s.team_member(idx);
+            if cond_mask(s, slot) & ev.conds != 0
+                || status_index(p.status).is_some_and(|i| ev.any_status >> i & 1 != 0)
+                || has(&ev.any_item, p.item as usize)
+                || has(&ev.any_ability, real_ability(state, side, idx) as usize)
+            {
+                return true;
             }
         }
     }
-    let mut u = FxMask::ZERO;
-    for side in [Side::One, Side::Two] {
-        for slot in 0..2 {
-            u |= slot_fx(t, state, side, slot);
-        }
-    }
-    if cacheable {
-        state.fx_union.set(Some((a.ver, b.ver, extra, u)));
-    }
-    u
-}
-
-/// The effect bits (`Tables::fx`) of everything the slot's occupant holds:
-/// status, ability and conditions. Cached per slot (`DoublesSide::fx_cache`).
-fn slot_fx(t: &Tables, state: &DoublesState, side: Side, slot: usize) -> FxMask {
-    let s = state.side(side);
-    let Some(idx) = s.active()[slot].pokemon_index else { return FxMask::ZERO };
-    let status = s.team_member(idx).status;
-    let ability = real_ability(state, side, idx);
-    let item = s.team_member(idx).item;
-    let extra = s.future_move[slot].is_some() as u8 | (s.wish[slot].is_some() as u8) << 1;
-    if let Some(c) = s.fx_cache[slot].get() {
-        if c.status == status && c.ability == ability && c.item == item && c.extra == extra {
-            return c.fx;
-        }
-    }
-    let bit = |b: u16| if b == NO_BIT { FxMask::ZERO } else { FxMask::bit(b) };
-    let mut fx = status_index(status).map_or(FxMask::ZERO, |i| bit(t.status_fx[i]));
-    fx |= bit(t.ability_bit.get(ability as usize).copied().unwrap_or(NO_BIT));
-    fx |= bit(t.item_bit.get(item as usize).copied().unwrap_or(NO_BIT));
-    let mut m = cond_mask(s, slot);
-    while m != 0 {
-        fx |= bit(t.cond_fx[m.trailing_zeros() as usize]);
-        m &= m - 1;
-    }
-    s.fx_cache[slot].set(Some(crate::doubles::state::FxCache { status, ability, item, extra, fx }));
-    fx
+    false
 }
 
 /// Collects the handlers of one `run_event_ties` call. Each slot's effects
@@ -1302,7 +1294,7 @@ pub fn run_event_ties_on_effect(
 ) {
     let t: &Tables = &TABLES;
     let ev = &t.events[event as usize];
-    if ev.left_to_right || !has_any_handler(t, ev, state) {
+    if ev.left_to_right || !has_any_handler(ev, state) {
         // At most the effect's own handler: a sort of one key draws nothing.
         return;
     }
@@ -1375,48 +1367,16 @@ pub fn run_event_ties_on_effect(
     }
     // A runEvent inside the residual's `fieldEvent` (no `eachEvent` between).
     let label = if state.tl.in_field_event.get() { "speed tie (residual)" } else { "speed tie (move order)" };
-    speed_sort_keys(&mut c.hs, rng, label);
+    speed_sort_keys(&c.hs, rng, label);
 }
 
-/// PS `speedSort` (selection sort, shuffling each group of equal keys).
-fn speed_sort_keys(hs: &mut [Key], rng: &mut Gen5Rng, label: &'static str) {
-    let cmp = |a: &Key, b: &Key| {
-        a.order
-            .cmp(&b.order)
-            .then(b.priority.cmp(&a.priority))
-            .then(b.speed.cmp(&a.speed))
-            .then(a.sub_order.cmp(&b.sub_order))
-    };
-    let mut sorted = 0usize;
-    // Indices of the smallest keys found so far (reused across rounds).
-    let mut next: smallvec::SmallVec<[usize; 16]> = smallvec::SmallVec::new();
-    while sorted + 1 < hs.len() {
-        next.clear();
-        next.push(sorted);
-        for i in (sorted + 1)..hs.len() {
-            match cmp(&hs[i], &hs[next[0]]) {
-                std::cmp::Ordering::Less => {
-                    next.clear();
-                    next.push(i);
-                }
-                std::cmp::Ordering::Equal => next.push(i),
-                std::cmp::Ordering::Greater => {}
-            }
+/// The draws of PS `speedSort` (selection sort, shuffling each group of equal
+/// keys): one per key after the first of each group. The shuffled order is
+/// never read, and a draw advances the PRNG the same whatever its range.
+fn speed_sort_keys(hs: &[Key], rng: &mut Gen5Rng, label: &'static str) {
+    for i in 1..hs.len() {
+        if hs[..i].contains(&hs[i]) {
+            rng.label(label).next();
         }
-        for (i, &index) in next.iter().enumerate() {
-            if index != sorted + i {
-                hs.swap(sorted + i, index);
-            }
-        }
-        if next.len() > 1 {
-            let end = sorted + next.len();
-            let mut i = sorted;
-            while i < end - 1 {
-                let j = rng.label(label).random_range(i, end);
-                hs.swap(i, j);
-                i += 1;
-            }
-        }
-        sorted += next.len();
     }
 }

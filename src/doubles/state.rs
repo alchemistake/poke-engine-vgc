@@ -28,9 +28,7 @@ pub struct ActiveSlot {
     /// `forecast.onWeatherChange`, which runs on a weather change or switch-in
     /// only, so a Soak / Magic Powder type sticks until the next change).
     pub forecast_weather: Option<Weather>,
-    pub volatile_statuses: VolatileStatusBitset,
-    pub volatile_status_durations: VolatileStatusDurations,
-    pub substitute_health: i16,
+    substitute_health: i16,
     pub attack_boost: i8,
     pub defense_boost: i8,
     pub special_attack_boost: i8,
@@ -50,9 +48,7 @@ pub struct ActiveSlot {
     pub slow_uturn_move: bool,
     pub baton_passing: bool,
     /// Electrify (single turn): the next move becomes Electric.
-    pub electrify: bool,
     /// Power Trick is active (Attack and Defense are swapped).
-    pub power_trick: bool,
     /// Attack and Defense are swapped now (Power Trick). A Mega Evolution
     /// recomputes them unswapped while the volatile stays.
     pub pt_swapped: bool,
@@ -84,7 +80,7 @@ pub struct ActiveSlot {
     /// `onTerrainChange`); `None` until the holder's item starts.
     pub seed_terrain: Option<crate::engine::state::Terrain>,
     /// Choice item `choicelock` volatile: the locked move.
-    pub choice_lock: Option<Choices>,
+    choice_lock: Option<Choices>,
     /// PS `moveThisTurnResult = null` (a NOT_FAIL hit: Protect), this / last turn.
     pub move_result_null: bool,
     pub move_null_last_turn: bool,
@@ -94,44 +90,38 @@ pub struct ActiveSlot {
     /// party member instead of switching (PS `revivalblessing` slot condition).
     pub reviving: bool,
     /// Flinched by the previous move's secondary effect; cannot act this turn.
-    pub flinched: bool,
     /// Used a move with the `recharge` flag (Hyper Beam, Solar Beam, ...);
     /// must recharge this turn.
-    pub recharging: bool,
     /// Turn ends `recharging` has lived through (PS `mustrecharge` duration 2:
     /// it ends at the second residual even if the turn was never spent).
     pub recharge_age: u8,
     /// Two-turn move charging (Dig, Meteor Beam, ...): the move id being
     /// charged and how many charge turns remain before it fires. Mirrors
     /// pokemon-showdown's `twoturnmove` / per-move volatile pair.
-    pub charging: Option<(crate::choices::Choices, u8)>,
+    charging: Option<(crate::choices::Choices, u8)>,
     /// Signed PS target location chosen on the charge turn; the locked follow-up turn keeps it
     /// (PS `twoturnmove.onStart` stores `targetLoc` on the move volatile).
     pub charge_target_loc: i8,
     /// Salt Cure volatile: residual damage each turn (champions: 1/16 max
     /// HP, 1/8 for Water / Steel).
-    pub salt_cure: bool,
     /// Stockpile layers (0-3) and the Def / SpD stages they actually added
     /// (PS `stockpile` volatile; removed again when it ends).
-    pub stockpile: u8,
-    /// Confusion volatile: PS `volatiles.confusion.time` (0 = not confused).
-    pub confusion: u8,
+    stockpile: u8,
+    /// Confusion volatile: PS `volatiles.confusion().time` (0 = not confused).
+    confusion: u8,
     /// Hit by Roar / Whirlwind / Dragon Tail / Circle Throw this action
     /// (PS `forceSwitchFlag`): dragged out after the move.
     pub drag_out: bool,
     /// Focus Punch volatile (`focuspunch`, duration 1) and its `lostFocus`.
-    pub focus_punch: bool,
     pub lost_focus: bool,
     /// Beak Blast volatile (`beakblast`, set by its priority charge, removed
     /// after its own move): a contact hit on this slot burns the attacker.
-    pub beak_blast: bool,
     /// Shell Trap's `shelltrap` volatile (duration 1): 1 set, 2 `gotHit` by a
     /// foe's physical move. PS data/moves.ts shelltrap.condition.
     pub shell_trap: u8,
     /// `gastroacid` volatile (Gastro Acid landed on this slot): a second
     /// Gastro Acid fails (PS addVolatile on an existing volatile). Cleared on
     /// switch-out.
-    pub gastro_acid: bool,
     /// The ability the `gastroacid` volatile suppresses (the engine blanks the
     /// team member's ability to No Ability). PS `getAbility()` still returns
     /// it: Skill Swap / Role Play read and move it.
@@ -145,11 +135,11 @@ pub struct ActiveSlot {
     pub stockpile_def: i8,
     pub stockpile_spd: i8,
     /// Used Protect this turn; incoming attacks fail until end of turn.
-    pub protected: bool,
+    protected: bool,
     /// Helping Hand multiplier on this pokemon's next move's base power this
     /// turn (PS `helpinghand.condition.onBasePower`); 1.0 = none. Stacks by
     /// x1.5 per Helping Hand (onRestart). Cleared at end of turn.
-    pub helping_hand_mult: f32,
+    helping_hand_mult: f32,
     /// Raised at least one of its own stats this turn (PS
     /// `statsRaisedThisTurn`); gates Alluring Voice / Burning Jealousy
     /// secondaries. Reset at end of turn.
@@ -158,18 +148,17 @@ pub struct ActiveSlot {
     pub stats_lowered_this_turn: bool,
     /// Destiny Bond volatile: when the holder faints, the last attacker also
     /// faints (PS data/conditions.ts destinybond.onAfterFaint).
-    pub destinybond: bool,
     /// The last pokemon that dealt damage to this slot's occupant
     /// (side, team index), for Destiny Bond `onAfterFaint`.
     pub last_attacker: Option<(Side, crate::state::PokemonIndex)>,
     /// `partiallytrapped` volatile (Whirlpool, Fire Spin, ...): remaining
     /// duration, the binder (side, team index) and the damage divisor.
-    pub partial_trap: Option<PartialTrap>,
+    partial_trap: Option<PartialTrap>,
     /// `yawn` volatile: remaining duration (0 = none) and the user who
     /// applied it (for the sleep `trySetStatus` when it ends).
-    pub yawn: u8,
+    yawn: u8,
     /// `throatchop` volatile: remaining duration (sound moves blocked).
-    pub throat_chop: u8,
+    throat_chop: u8,
     /// Set while a move is run through `useMove` (Copycat): no PP, no BeforeMove.
     pub external_call: bool,
     /// The move being run was bounced (PS `move.hasBounced`): no second bounce.
@@ -179,23 +168,22 @@ pub struct ActiveSlot {
     pub snatched: bool,
     /// Beat Up: base power for the current hit / the remaining hits' base powers.
     pub bp_fixed: f32,
-    pub beat_up_queue: Vec<f32>,
+    pub beat_up_queue: crate::copyvec::CopyVec<u8, 6>,
     /// Supreme Overlord `fallen` count fixed at switch-in (max 5).
     pub fallen: u8,
     /// `taunt` volatile: remaining duration (0 = none).
-    pub taunt: u8,
+    taunt: u8,
     /// `magnetrise` volatile: remaining duration (0 = none). Makes the holder
     /// ungrounded (PS `isGrounded`) until it ends (PS data/moves.ts magnetrise).
-    pub magnet_rise: u8,
+    magnet_rise: u8,
     /// `telekinesis` volatile duration (3): floats; non-OHKO moves always hit.
-    pub telekinesis: u8,
+    telekinesis: u8,
     /// `rollout` volatile (Rollout / Ice Ball lock): (hitCount, contactHitCount,
     /// duration, the base-power multiplier of the current hit).
-    pub rollout: Option<(u8, u8, u8, u8)>,
+    rollout: Option<(u8, u8, u8, u8)>,
     /// The `rollout` volatile is Ice Ball's (`onLockMove: 'iceball'`), not Rollout's.
-    pub rollout_ice: bool,
+    rollout_ice: bool,
     /// `defensecurl` volatile (doubles Rollout / Ice Ball).
-    pub defense_curl: bool,
     /// Mimic replaced move slot `k` (Mimic's id and PP saved, restored when the
     /// pokemon leaves: PS `moveSlots` vs `baseMoveSlots`).
     pub mimic: Option<(u8, crate::choices::Choices, i8)>,
@@ -203,32 +191,26 @@ pub struct ActiveSlot {
     /// semi-invulnerable like the user.
     pub sky_lifted_by: Option<(Side, crate::state::PokemonIndex)>,
     /// Rage's `rage` volatile: +1 Atk when hit by a damaging move.
-    pub rage: bool,
     /// Magic Coat's single-turn volatile (reflects like Magic Bounce).
-    pub magic_coat: bool,
     /// Snatch's single-turn volatile: takes the next snatchable move used by
     /// any pokemon (PS data/moves.ts snatch.condition).
     pub snatch: bool,
     /// Grudge's volatile: fainting to a move zeroes that move's PP.
-    pub grudge: bool,
     /// Micle Berry's `micleberry` volatile duration (next accuracy x1.2).
-    pub micle: u8,
+    micle: u8,
     /// `embargo` volatile duration (5): the holder's item is ignored.
-    pub embargo: u8,
+    embargo: u8,
     /// `foresight` volatile (Foresight / Odor Sleuth).
-    pub foresight: bool,
     /// `miracleeye` volatile.
-    pub miracle_eye: bool,
     /// Protosynthesis / Quark Drive volatile: (best stat 0..4 = Atk, Def, SpA,
     /// SpD, Spe; from Booster Energy).
-    pub paradox: Option<(u8, bool)>,
+    paradox: Option<(u8, bool)>,
     /// The paradox volatile is Quark Drive's (else Protosynthesis's).
-    pub paradox_quark: bool,
+    paradox_quark: bool,
     /// `bide` volatile: (duration, total move damage taken, last damaging pokemon).
-    pub bide: Option<(u8, i16, Option<(Side, crate::state::PokemonIndex)>)>,
+    bide: Option<(u8, i16, Option<(Side, crate::state::PokemonIndex)>)>,
     /// `smackdown` volatile (no duration): the holder is grounded (PS
     /// `isGrounded`) until it switches out (PS data/moves.ts smackdown).
-    pub smackdown: bool,
     /// PS `activeTurns`: end-of-turn count since switch-in.
     pub active_turns: u8,
     /// PS `activeMoveActions`: move actions since switch-in, counted at the start
@@ -249,9 +231,8 @@ pub struct ActiveSlot {
     pub me_first_vol: bool,
     /// Illusion's disguise, fixed at switch-in (`onBeforeSwitchIn`): the last
     /// unfainted pokemon after the holder then. `Some(None)` = no disguise.
-    pub illusion_target: Option<Option<usize>>,
+    pub illusion_target: Option<Option<u8>>,
     /// `curse` volatile (Ghost Curse): loses 1/4 max HP each residual (order 12).
-    pub cursed: bool,
     /// `nightmare` volatile: a sleeping holder loses 1/4 max HP each residual
     /// (order 11); it ends when the holder's sleep ends.
     pub nightmare: bool,
@@ -283,66 +264,56 @@ pub struct ActiveSlot {
     /// field, while Pursuit (`onFoeBeforeSwitchOut`) hits it.
     pub being_called_back: bool,
     /// `followme` (1) / `ragepowder` (2) volatile (duration 1): redirects foes' moves.
-    pub follow_me: u8,
+    follow_me: u8,
     /// Which protect-like move set `protected`: 0 Protect/Detect, 1 King's
     /// Shield, 2 Spiky Shield, 3 Baneful Bunker, 4 Silk Trap, 5 Burning Bulwark.
-    pub protect_kind: u8,
+    protect_kind: u8,
     /// `perishsong` volatile: remaining duration (0 = none); faints at 0.
-    pub perish: u8,
-    /// PS ids of the volatiles in insertion order (PS `pokemon.volatiles` key
-    /// order), kept by `sync_vol_order`. Orders the Residual handlers.
-    pub vol_order: Vec<&'static str>,
-    /// The volatile conditions (`events::vol_mask`) `vol_order` was last
-    /// synced with (`sync_vol_order`); `u64::MAX` forces a sync.
-    pub vol_synced: u128,
+    perish: u8,
+    /// The volatiles (`events::CONDS` indices) in insertion order (PS
+    /// `pokemon.volatiles` key order), kept by `sync_vol_order`. Orders the
+    /// Residual handlers.
+    pub vol_order: crate::copyvec::CopyVec<u8, 32>,
     /// `flashfire` volatile: Fire moves x1.5 (ModifyAtk / ModifySpA).
-    pub flash_fire: bool,
     /// `charge` volatile: the next Electric move has doubled power.
-    pub charge: bool,
     /// `noretreat` volatile (No Retreat already used).
-    pub no_retreat: bool,
     /// The `trapped` volatile No Retreat's `onStart` added itself (none when the
     /// user was already trapped: that link's `trapped` stays, and goes with it).
-    pub no_retreat_trap: bool,
+    no_retreat_trap: bool,
     /// Truant's `truant` volatile: the next move is skipped (`cant`).
-    pub truant: bool,
     /// `laserfocus` volatile duration (2 when used; the next move crits).
-    pub laser_focus: u8,
+    laser_focus: u8,
     /// `furycutter` volatile: (multiplier, duration).
-    pub fury_cutter: Option<(u8, u8)>,
+    fury_cutter: Option<(u8, u8)>,
     /// `focusenergy` volatile: +2 critical-hit stages.
-    pub focus_energy: bool,
     /// `attract` volatile: the infatuating pokemon (side, team index).
-    pub attract: Option<(Side, PokemonIndex)>,
+    attract: Option<(Side, PokemonIndex)>,
     /// `leechseed` volatile: the source's slot (side, slot) — PS
     /// `effectState.sourceSlot`, resolved with `getAtSlot` at residual time.
-    pub leech_seed: Option<(Side, usize)>,
+    leech_seed: Option<(Side, u8)>,
     /// `dragoncheer` volatile: `Some(hasDragonType)` fixed at start
     /// (crit ratio +2 if Dragon, else +1). PS data/moves.ts dragoncheer.
-    pub dragon_cheer: Option<bool>,
+    dragon_cheer: Option<bool>,
     /// PS `pokemon.lastMove`: the last move this pokemon used (Encore).
     pub last_move: Option<crate::choices::Choices>,
     /// `glaiverush` volatile: moves against it always hit and deal x2 damage
     /// until its holder next tries to move (PS data/moves.ts glaiverush).
-    pub glaive_rush: bool,
     /// Minimize volatile (PS `minimize`): see `mechanics::minimize_move`.
-    pub minimize: bool,
     /// `ingrain` volatile: heals 1/16 max HP each residual (order 7).
-    pub ingrain: bool,
     /// `healblock` volatile: remaining duration (0 = none).
-    pub heal_block: u8,
+    heal_block: u8,
     /// Trace `seek` (PS data/abilities.ts trace.effectState.seek): set by Trace's
     /// `onStart` (switch-in, Role Play / Skill Swap), cleared when a foe with No
     /// Ability is seen then; while set, every Update event retries the copy.
     pub trace_seek: bool,
     /// `syrupbomb` volatile: (source side, source team index, duration).
-    pub syrup_bomb: Option<(Side, PokemonIndex, u8)>,
+    syrup_bomb: Option<(Side, PokemonIndex, u8)>,
     /// `octolock` volatile: the binder (side, team index). No duration; it
     /// ends once the binder is no longer active.
-    pub octolock: Option<(Side, PokemonIndex)>,
+    octolock: Option<(Side, PokemonIndex)>,
     /// `trapped` volatile (Block, Mean Look, Spider Web, Jaw Lock): no switching;
     /// ends with the volatiles. PS data/conditions.ts trapped.
-    pub trapped: bool,
+    trapped: bool,
     /// The pokemon whose `trapped` link (`linkedPokemon`, PS `addVolatile`
     /// `linkedStatus` = 'trapper') holds this slot: released when it leaves the
     /// field (PS `removeLinkedVolatiles` on faint / `clearVolatile`).
@@ -361,12 +332,10 @@ pub struct ActiveSlot {
     /// turn's residual after the charged move fired.
     pub twoturn_fired: bool,
     /// `encore` volatile: the forced move and remaining duration.
-    pub encore: Option<(crate::choices::Choices, u8)>,
+    encore: Option<(crate::choices::Choices, u8)>,
     /// `torment` volatile (no duration): the last move is disabled while it lasts.
-    pub torment: bool,
     /// `imprison` volatile (no duration): the user's moves are blocked for the
     /// foes (not modelled yet). Set once; a second Imprison fails.
-    pub imprison: bool,
     /// Forest's Curse added Grass to a single-typed pokemon (PS `addedType`):
     /// the second type slot is restored on switch-out / faint.
     pub added_grass: bool,
@@ -378,13 +347,11 @@ pub struct ActiveSlot {
     pub roost_orig: Option<(PokemonType, PokemonType)>,
     /// The `roost` volatile itself (duration 1), also on a pokemon with no
     /// Flying type to filter (its residual handler still exists).
-    pub roost: bool,
     /// `aquaring` volatile: heals 1/16 max HP each residual (order 6).
-    pub aqua_ring: bool,
     /// `counter` / `mirrorcoat` volatiles (duration 1): the last foe slot that
     /// hit this pokemon with a physical / special move, and twice the damage.
-    pub counter_vol: Option<(Option<(Side, usize)>, i16)>,
-    pub mirror_coat_vol: Option<(Option<(Side, usize)>, i16)>,
+    counter_vol: Option<(Option<(Side, u8)>, i16)>,
+    mirror_coat_vol: Option<(Option<(Side, u8)>, i16)>,
     /// `pursuit` volatile (duration 1), added by Pursuit's `beforeTurnCallback`.
     pub pursuit_vol: bool,
     /// `spotlight` volatile (duration 1): foes' single-target moves are
@@ -395,16 +362,15 @@ pub struct ActiveSlot {
     pub move_result_this_turn: Option<bool>,
     pub move_result_last_turn: Option<bool>,
     /// `allyswitch` volatile: (counter, duration).
-    pub ally_switch: Option<(u16, u8)>,
+    ally_switch: Option<(u16, u8)>,
     /// `lockon` volatile on the user (PS data/moves.ts lockon): the locked foe
     /// (side, team index) and the remaining duration. Its moves always hit it.
-    pub lock_on: Option<(Side, PokemonIndex, u8)>,
+    lock_on: Option<(Side, PokemonIndex, u8)>,
     /// `uproar` volatile: remaining duration (0 = none). Locks the move.
-    pub uproar: u8,
+    uproar: u8,
     /// `stall` volatile (Protect / Detect / Endure counter): (counter, duration).
-    pub stall: Option<(u16, u8)>,
+    stall: Option<(u16, u8)>,
     /// `endure` volatile (duration 1): survive moves at 1 HP.
-    pub endure: bool,
     /// PS `lastMoveTargetLoc`: the target location of the last move (signed:
     /// foe slot + 1, own slot -(slot + 1)); a locked move reuses it.
     pub last_target_loc: i8,
@@ -413,16 +379,16 @@ pub struct ActiveSlot {
     pub last_move_used_type: Option<PokemonType>,
     /// `lockedmove` volatile (Outrage, Thrash, Petal Dance): (duration,
     /// trueDuration) from PS data/conditions.ts.
-    pub locked_move: Option<(u8, u8)>,
+    locked_move: Option<(u8, u8)>,
     /// The move that set `locked_move` (a copied Petal Dance locks its copier
     /// into Petal Dance). PS `getLockedMove` replaces the chosen move with it.
     pub locked_move_id: Option<Choices>,
     /// `disable` volatile: the disabled move and remaining duration.
-    pub disabled: Option<(Choices, u8)>,
+    disabled: Option<(Choices, u8)>,
     /// BeforeMove aborted the locked charge turn: PS `twoturnmove` is gone
     /// (`onMoveAborted`) but the move's own condition (Dive, ...) lasts to
     /// the end of the turn.
-    pub charge_aborted: bool,
+    charge_aborted: bool,
     pub yawn_source: Option<(Side, PokemonIndex)>,
     /// Libero / Protean already used this switch-in (PS `effectState.libero`);
     /// holds the original types, restored on switch-out.
@@ -431,6 +397,10 @@ pub struct ActiveSlot {
     /// already happened for its current ability. A new ability (Skill Swap,
     /// Trace, Role Play, ...) makes a fresh `effectState`, so it resets.
     pub protean_done: bool,
+    /// The volatile conditions that are up (bit i = `events::CONDS[i]`): the
+    /// on/off ones live only here; the valued ones keep their bit in sync
+    /// through their setters.
+    vols: u128,
 }
 
 /// PS `partiallytrapped` effectState (data/conditions.ts).
@@ -447,8 +417,6 @@ impl ActiveSlot {
         Self {
             pokemon_index: None,
             forecast_weather: None,
-            volatile_statuses: VolatileStatusBitset::default(),
-            volatile_status_durations: VolatileStatusDurations::default(),
             substitute_health: 0,
             attack_boost: 0,
             defense_boost: 0,
@@ -465,8 +433,6 @@ impl ActiveSlot {
             force_trapped: false,
             slow_uturn_move: false,
             baton_passing: false,
-            electrify: false,
-            power_trick: false,
             pt_swapped: false,
             hit_number: 1,
             shed_tailing: false,
@@ -486,19 +452,13 @@ impl ActiveSlot {
             move_null_last_turn: false,
             fling_item: Items::NONE,
             reviving: false,
-            flinched: false,
-            recharging: false,
             recharge_age: 0,
             charging: None,
             charge_target_loc: 0,
-            salt_cure: false,
             stockpile: 0,
             confusion: 0,
             drag_out: false,
-            focus_punch: false,
-            beak_blast: false,
             shell_trap: 0,
-            gastro_acid: false,
             gastro_ability: crate::engine::abilities::Abilities::NONE,
             chilly_reception: false,
             zen_mode: false,
@@ -509,7 +469,6 @@ impl ActiveSlot {
             helping_hand_mult: 1.0,
             stats_raised_this_turn: false,
             stats_lowered_this_turn: false,
-            destinybond: false,
             last_attacker: None,
             partial_trap: None,
             yawn: 0,
@@ -518,28 +477,21 @@ impl ActiveSlot {
             bounced: false,
             snatched: false,
             bp_fixed: 0.0,
-            beat_up_queue: Vec::new(),
+            beat_up_queue: crate::copyvec::CopyVec::new(),
             fallen: 0,
             taunt: 0,
             magnet_rise: 0,
             telekinesis: 0,
             rollout: None,
             rollout_ice: false,
-            defense_curl: false,
             mimic: None,
             sky_lifted_by: None,
-            rage: false,
-            magic_coat: false,
             snatch: false,
-            grudge: false,
             micle: 0,
             embargo: 0,
-            foresight: false,
-            miracle_eye: false,
             paradox: None,
             paradox_quark: false,
             bide: None,
-            smackdown: false,
             active_turns: 0,
             active_move_actions: 0,
             illusion_broken: false,
@@ -548,7 +500,6 @@ impl ActiveSlot {
             me_first: false,
             me_first_vol: false,
             illusion_target: None,
-            cursed: false,
             nightmare: false,
             tar_shot: false,
             power_shift: false,
@@ -562,23 +513,14 @@ impl ActiveSlot {
             follow_me: 0,
             protect_kind: 0,
             perish: 0,
-            vol_order: Vec::new(),
-            vol_synced: 0,
-            flash_fire: false,
-            charge: false,
-            no_retreat: false,
+            vol_order: crate::copyvec::CopyVec::new(),
             no_retreat_trap: false,
-            truant: false,
             laser_focus: 0,
             fury_cutter: None,
-            focus_energy: false,
             attract: None,
             leech_seed: None,
             dragon_cheer: None,
             last_move: None,
-            glaive_rush: false,
-            minimize: false,
-            ingrain: false,
             heal_block: 0,
             trace_seek: false,
             syrup_bomb: None,
@@ -591,13 +533,9 @@ impl ActiveSlot {
             ability_unstarted: false,
             twoturn_fired: false,
             encore: None,
-            torment: false,
-            imprison: false,
             added_grass: false,
             added_type: PokemonType::TYPELESS,
             roost_orig: None,
-            roost: false,
-            aqua_ring: false,
             counter_vol: None,
             mirror_coat_vol: None,
             pursuit_vol: false,
@@ -608,7 +546,6 @@ impl ActiveSlot {
             lock_on: None,
             uproar: 0,
             stall: None,
-            endure: false,
             last_target_loc: 0,
             last_move_used_type: None,
             locked_move: None,
@@ -618,6 +555,7 @@ impl ActiveSlot {
             yawn_source: None,
             type_change: None,
             protean_done: false,
+            vols: 0,
         }
     }
 
@@ -646,7 +584,7 @@ pub struct TeamBoosts {
 }
 
 /// What Transform overwrote (PS `transformInto`), and the species copied.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct TransformSave {
     pub id: PokemonName,
     pub moves: crate::state::PokemonMoves,
@@ -655,41 +593,19 @@ pub struct TransformSave {
     pub stats: [i16; 5],
     pub weight_kg: f32,
     /// The species name the pokemon now shows (the target's).
-    pub as_species: &'static str,
-}
-
-/// A slot's cached event-handler effect bits and the inputs outside the
-/// slot they depend on (status, ability, Future Sight / Wish).
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct FxCache {
-    pub status: crate::state::PokemonStatus,
-    pub ability: crate::engine::abilities::Abilities,
-    pub item: crate::engine::items::Items,
-    pub extra: u8,
-    pub fx: crate::doubles::events::FxMask,
+    pub as_species: SpeciesName,
 }
 
 #[derive(Debug, Clone)]
 pub struct DoublesSide {
     pub team: [Pokemon; 6],
     slots: [ActiveSlot; 2],
-    /// Per slot: the volatile conditions (`events::vol_mask`) as of the last
-    /// read; cleared by `active_mut` / `active_slot_mut`.
-    cond_cache: [std::cell::Cell<Option<u128>>; 2],
-    /// Per slot: the event-handler effect bits of the occupant
-    /// (`events::slot_fx`), valid while the key fields still match. Cleared
-    /// with `cond_cache`.
-    pub(crate) fx_cache: [std::cell::Cell<Option<FxCache>>; 2],
-    /// Bumped by every change to the slots or team members (`active_mut`,
-    /// `active_slot_mut`, `team_member_mut`, direct `team` writes): keys
-    /// `DoublesState::fx_union`.
-    pub(crate) ver: u32,
     pub side_conditions: SideConditions,
     /// Original species names (including formes) for each team slot, used for
     /// name-based target matching in the replay test.
-    pub species_names: [&'static str; 6],
-    /// Gender per team member: "M" / "F" / None (genderless). Used by Attract.
-    pub genders: [Option<&'static str>; 6],
+    pub species_names: [SpeciesName; 6],
+    /// Gender per team member (None = genderless). Used by Attract.
+    pub genders: [Option<Gender>; 6],
     /// Stat boosts per team member (see `TeamBoosts`).
     pub team_boosts: [TeamBoosts; 6],
     /// Toxic counter per team member (0 = not toxic; reset on switch-in).
@@ -704,7 +620,7 @@ pub struct DoublesSide {
     pub ability_order: [u32; 6],
     /// PS `side.pokemon` order (team indices). Switch-ins swap positions
     /// (PS `switchIn`); random drag-ins sample from positions 2.. of it.
-    pub ps_order: [usize; 6],
+    pub ps_order: [u8; 6],
     /// Team member that fainted in an active slot this turn and is still
     /// sitting there (PS keeps fainted actives in `side.active` until they
     /// are replaced; their volatiles are cleared on faint, but status /
@@ -716,10 +632,10 @@ pub struct DoublesSide {
     /// `futuremove` slot condition per position: (move, source side, source index, residuals seen).
     pub future_move: [Option<(Choices, Side, PokemonIndex, u8)>; 2],
     /// Side conditions in insertion order (PS object key order).
-    pub sc_order: Vec<&'static str>,
+    pub sc_order: crate::copyvec::CopyVec<u8, 16>,
     /// Supersweet Syrup already triggered (PS `syrupTriggered`, once per
     /// battle per pokemon).
-    pub syrup_triggered: [bool; 6],
+    pub syrup_triggered: Bits8,
     /// A Mega Evolution was used (PS: `canMegaEvo = false` for the whole side).
     pub mega_used: bool,
     /// PS `side.faintedThisTurn` / `faintedLastTurn` (Retaliate).
@@ -727,37 +643,38 @@ pub struct DoublesSide {
     pub fainted_last_turn: bool,
     /// PS `pokemon.swordBoost` / `shieldBoost`: Intrepid Sword / Dauntless Shield
     /// boost once per battle.
-    pub once_boosted: [bool; 6],
+    pub once_boosted: Bits8,
     /// PS `pokemon.lastItem` per team member (Recycle, Harvest).
     pub last_item: [Items; 6],
     /// PS `pokemon.ateBerry` per team member (Belch).
-    pub ate_berry: [bool; 6],
+    pub ate_berry: Bits8,
     /// Healing Wish / Lunar Dance slot conditions per active slot (PS
     /// `slotCondition: 'healingwish' | 'lunardance'`): they wait for the next
     /// pokemon switched into that slot.
-    pub healing_wish_slot: [bool; 2],
+    pub healing_wish_slot: Bits8,
     /// The slot's Healing Wish / Lunar Dance was visited by an Ally Switch
     /// `runEvent('Swap')` without being used: PS's `runEvent` set its
     /// `effectState.target` to that pokemon, so `fieldEvent('SwitchIn')` skips
     /// it from then on (only another Swap can still use it).
-    pub healing_wish_detached: [bool; 2],
+    pub healing_wish_detached: Bits8,
     /// Grass / Fire / Water Pledge side conditions (turns left, 0 = none).
     pub pledges: [i8; 3],
     /// PS `side.totalFainted`: every faint resolved, revived pokemon included.
     pub total_fainted: u8,
     /// Gluttony's `abilityState.gluttony` reset by Neutralizing Gas ending:
     /// the pinch-berry threshold stays 1/4 until the holder takes damage.
-    pub gluttony_off: [bool; 6],
+    pub gluttony_off: Bits8,
     /// The slot's `healing_wish_slot` condition is Lunar Dance (also restores PP).
-    pub lunar_dance_slot: [bool; 2],
+    pub lunar_dance_slot: Bits8,
     /// PS `moveSlot.used` per team member / move slot (set by `deductPP`).
-    pub moves_used: [[bool; 4]; 6],
+    pub moves_used: MoveBits,
     /// PS `pokemon.attackedBy` entries with damage (`getLastDamagedBy`), per
     /// team member: (attacker side, attacker slot, damage, turn).
     /// PS `attackedBy`: (attacker side, attacker slot at the hit, damage, turn,
     /// attacker team index). Pruned at end of turn unless the attacker is still
     /// on the field and alive (PS `endTurn`: `source.isActive`).
-    pub damaged_by: [Vec<(Side, usize, i16, u32, usize)>; 6],
+    /// Only each foe attacker's latest entry is kept (`record_damaged_by`).
+    pub damaged_by: [crate::copyvec::CopyVec<(Side, u8, i16, u16, u8), 6>; 6],
     /// Original (atk, def, spa, spd) of a team member whose `storedStats` were
     /// changed (Guard / Power Split); restored by `setSpecies` on switch-in.
     pub saved_stats: [Option<[i16; 4]>; 6],
@@ -766,7 +683,7 @@ pub struct DoublesSide {
     pub saved_speed: [Option<i16>; 6],
     /// A transformed team member's own species data, restored when it leaves
     /// the field (PS `transformed`, `clearVolatile` -> `setSpecies(baseSpecies)`).
-    pub transform_save: [Option<Box<TransformSave>>; 6],
+    pub transform_save: [Option<TransformSave>; 6],
 }
 
 impl DoublesSide {
@@ -779,16 +696,13 @@ impl DoublesSide {
     pub fn team_member_scratch_mut(&mut self, index: PokemonIndex) -> &mut Pokemon {
         &mut self.team[index as usize]
     }
-    /// Write PS `pokemon.speed` (`speed_cache`); a change bumps `ver`.
+    /// Write PS `pokemon.speed` (`speed_cache`).
     #[inline]
     pub fn set_speed_cache(&mut self, index: usize, speed: i16) {
-        if self.speed_cache[index] != speed {
-            self.speed_cache[index] = speed;
-            self.ver = self.ver.wrapping_add(1);
-        }
+        self.speed_cache[index] = speed;
     }
+    #[inline]
     pub fn team_member_mut(&mut self, index: PokemonIndex) -> &mut Pokemon {
-        self.ver = self.ver.wrapping_add(1);
         &mut self.team[index as usize]
     }
 
@@ -801,39 +715,19 @@ impl DoublesSide {
     /// The two on-field slots, for changes.
     #[inline]
     pub fn active_mut(&mut self) -> &mut [ActiveSlot; 2] {
-        self.cond_cache = Default::default();
-        self.fx_cache = Default::default();
-        self.ver = self.ver.wrapping_add(1);
         &mut self.slots
     }
 
-    /// One on-field slot, for changes (only its cache entry is cleared).
+    /// One on-field slot, for changes.
     #[inline]
     pub fn active_slot_mut(&mut self, slot: usize) -> &mut ActiveSlot {
-        self.cond_cache[slot].set(None);
-        self.fx_cache[slot].set(None);
-        self.ver = self.ver.wrapping_add(1);
         &mut self.slots[slot]
     }
 
-    /// One on-field slot, for changes to fields that `events::vol_mask` does
-    /// not read (its cached mask is kept). Debug builds check every cache hit,
-    /// so a volatile write through here fails the debug fuzz run.
+    /// One on-field slot, for changes (same as `active_slot_mut`).
     #[inline]
     pub fn slot_scratch_mut(&mut self, slot: usize) -> &mut ActiveSlot {
         &mut self.slots[slot]
-    }
-
-    /// `compute(slot)`, cached until the slot is next borrowed mutably.
-    #[inline]
-    pub fn cached_conds(&self, slot: usize, compute: impl Fn(&ActiveSlot) -> u128) -> u128 {
-        if let Some(v) = self.cond_cache[slot].get() {
-            debug_assert_eq!(v, compute(&self.slots[slot]), "stale cond_cache");
-            return v;
-        }
-        let v = compute(&self.slots[slot]);
-        self.cond_cache[slot].set(Some(v));
-        v
     }
 
     /// The Pokémon in an active slot, if any.
@@ -1022,7 +916,7 @@ pub struct MoveScratch {
     pub dance_move: std::cell::Cell<Option<Choices>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct DoublesState {
     /// Scratch flags of the running move (were thread-locals).
     pub tl: MoveScratch,
@@ -1030,11 +924,6 @@ pub struct DoublesState {
     /// has a `target`: PS sets it the first time one of their handlers runs
     /// in `runEvent`; until then they sort as a plain Condition (subOrder 2).
     pub pseudo_targeted: std::cell::Cell<u32>,
-    /// Union of the four slots' event-handler effect bits (`events`), keyed
-    /// by both sides' `ver` and the Future Sight / Wish bits.
-    pub(crate) fx_union: std::cell::Cell<Option<(u32, u32, u8, crate::doubles::events::FxMask)>>,
-    /// `sorted_actives`' last untied order, keyed by both sides' `ver`.
-    pub(crate) actives_order: std::cell::Cell<Option<((u32, u32), [(Side, u8); 4], u8)>>,
     /// PS `battle.lastMove`: the last move used by anyone (Copycat).
     pub last_move: Option<Choices>,
     /// Set when the current action's `onHit` ran a Copycat / Sleep Talk
@@ -1063,23 +952,23 @@ pub struct DoublesState {
     /// Pokemon that reached 0 HP during the current move's hit loop. PS only
     /// resolves faints after the loop, so its per-hit `eachEvent` still sorts
     /// them: (side, slot, team index).
-    pub unresolved_faints: Vec<(crate::doubles::state::Side, usize, PokemonIndex)>,
+    pub unresolved_faints: crate::copyvec::CopyVec<(crate::doubles::state::Side, u8, PokemonIndex), 4>,
     /// PS `checkWin` ended the battle (`this.ended`): later KOs in the same
     /// callback (Life Orb recoil after the last foe fainted) are never processed.
     pub battle_ended: bool,
     /// Boosts of a pokemon KO'd but not yet through `faintMessages`: PS keeps
     /// them until `clearVolatile` (a move whose user fell to Spiky Shield
     /// still uses its stages). The engine clears them at the KO.
-    pub fainted_boosts: Vec<(crate::doubles::state::Side, PokemonIndex, TeamBoosts)>,
+    pub fainted_boosts: crate::copyvec::CopyVec<(crate::doubles::state::Side, PokemonIndex, TeamBoosts), 8>,
     /// KO'd pokemon (still in `unresolved_faints`) whose Attract and Syrup
     /// Bomb volatiles still tie in `eachEvent('Update')`.
-    pub ko_update_ties: Vec<(crate::doubles::state::Side, usize, PokemonIndex)>,
+    pub ko_update_ties: crate::copyvec::CopyVec<(crate::doubles::state::Side, u8, PokemonIndex), 4>,
     /// Abilities blanked by Mold Breaker for the running move: (side, team
     /// index, real ability). PS `battle.suppressingAbility(target)`.
-    pub mold_saved: arrayvec::ArrayVec<(Side, PokemonIndex, Abilities), 3>,
+    pub mold_saved: crate::copyvec::CopyVec<(Side, PokemonIndex, Abilities), 3>,
     /// Abilities blanked by an active Neutralizing Gas holder: (side, team
     /// index, real ability). PS sim/pokemon.ts ignoringAbility.
-    pub gas_saved: arrayvec::ArrayVec<(Side, PokemonIndex, Abilities), 4>,
+    pub gas_saved: crate::copyvec::CopyVec<(Side, PokemonIndex, Abilities), 4>,
     /// The Neutralizing Gas holder whose `onEnd` is running (PS
     /// `abilityState.ending`): it no longer suppresses anything.
     pub gas_ending: Option<(Side, PokemonIndex)>,
@@ -1114,26 +1003,26 @@ pub struct DoublesState {
     /// The `disabled` volatile each pokemon had when it fainted. PS keeps the
     /// volatiles until `faintMessages`, so a DamagingHit handler that runs after
     /// a Destiny Bond KO of its attacker still sees the attacker's Disable.
-    pub faint_disabled: Vec<(Side, PokemonIndex, Option<(Choices, u8)>)>,
+    pub faint_disabled: crate::copyvec::CopyVec<(Side, PokemonIndex, Option<(Choices, u8)>), 16>,
     /// KO'd pokemon that were Embargoed: the volatile still holds until
     /// `faintMessages` (a Jaboca Berry on the KO hit stays unused).
-    pub faint_embargo: Vec<(Side, PokemonIndex)>,
+    pub faint_embargo: crate::copyvec::CopyVec<(Side, PokemonIndex), 16>,
     /// Attackers KO'd by a Destiny Bond `onAfterFaint` during the current move.
     /// PS only resolves their faint after the move, so until then they still
     /// have HP for the rest of the hit (e.g. a lock volatile's `addVolatile`).
     /// The attacker's lock (`locked_move`) at its KO, for the same reason.
-    pub db_alive_pending: Vec<(Side, PokemonIndex, Option<(u8, u8)>)>,
+    pub db_alive_pending: crate::copyvec::CopyVec<(Side, PokemonIndex, Option<(u8, u8)>), 16>,
     /// Grudge `onFaint` waits for `faintMessages`: (victim side, victim index,
     /// attacker side, attacker index, attacker's last move).
-    pub grudge_pending: Vec<(Side, PokemonIndex, Side, PokemonIndex, Choices)>,
+    pub grudge_pending: crate::copyvec::CopyVec<(Side, PokemonIndex, Side, PokemonIndex, Choices), 16>,
     /// Disguise holders whose hit was absorbed by a spread move. PS busts the
     /// forme in `onUpdate`, i.e. inside the next `eachEvent('Update')` after
     /// its speed sort (the sort still sees the stale speed).
-    pub pending_disguise: Vec<(crate::doubles::state::Side, usize)>,
+    pub pending_disguise: crate::copyvec::CopyVec<(crate::doubles::state::Side, u8), 4>,
     /// Sides of every fainted pokemon in `faint()` call order: with both sides
     /// wiped out at once, PS gives the win to the side of the last one
     /// (`checkWin(faintData)`, sim/battle.ts).
-    pub faint_log: Vec<Side>,
+    pub faint_log: crate::copyvec::CopyVec<Side, 32>,
     /// Index in `faint_log` of a Destiny Bond victim of the running action:
     /// PS queues that faint during `faintMessages`, after the hit's other
     /// faints, so it stays last (`checkWin` reads the last one).
@@ -1147,7 +1036,7 @@ pub struct DoublesState {
     pub pending_after_faint: Option<(Side, usize, PokemonIndex, Abilities)>,
     /// Encore `onStart` (champions): the target's queued move becomes this move
     /// (`queue.changeAction`), planned during the move and applied by the battle loop.
-    pub queue_change: Option<crate::doubles::battle::QueuePlan>,
+    pub queue_change: Option<Box<crate::doubles::battle::QueuePlan>>,
     /// Round `onTry` ran this action: the battle loop prioritizes the next
     /// queued Round with BP doubled (`queue.prioritizeAction`).
     pub queue_round: bool,
@@ -1169,16 +1058,16 @@ pub struct DoublesState {
     /// A move is executing (Destiny Bond only reacts to move damage).
     pub in_move: bool,
     /// Gravity `onFieldStart`: queued moves cancelled (`queue.cancelMove`).
-    pub queue_cancel: Vec<(Side, usize)>,
+    pub queue_cancel: crate::copyvec::CopyVec<(Side, u8), 4>,
     /// Wonder Room's `onModifyMove` has run since it started (PS fixes the
     /// handler's subOrder only once `state.target` is set).
     pub wonder_room_seen: bool,
     /// Pokemon whose Fling `fling` volatile drops the item at the next Update.
-    pub fling_pending: Vec<(Side, PokemonIndex)>,
+    pub fling_pending: crate::copyvec::CopyVec<(Side, PokemonIndex), 4>,
     /// Switch requests this turn made with no answer in the turn's choices:
     /// (side, slot, revive). A step-by-step controller (`run_fuzz_turn`) reads
     /// these to ask for the answer and re-run the turn.
-    pub unanswered_switches: Vec<(Side, usize, bool)>,
+    pub unanswered_switches: crate::copyvec::CopyVec<(Side, u8, bool), 4>,
     /// The state when the first unanswered switch request was made.
     pub request_state: Option<Box<DoublesState>>,
 }
@@ -1620,6 +1509,67 @@ thread_local! {
         std::cell::RefCell::new(Default::default());
 }
 
+/// A species / forme name as a 2-byte id into a process-wide, append-only
+/// name table (`SpeciesName::of` registers a name once; reads take no lock).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SpeciesName(u16);
+
+const MAX_SPECIES_NAMES: usize = 4096;
+static SPECIES_NAME_TABLE: [std::sync::OnceLock<&'static str>; MAX_SPECIES_NAMES] =
+    [const { std::sync::OnceLock::new() }; MAX_SPECIES_NAMES];
+static SPECIES_NAME_IDS: std::sync::Mutex<Option<rustc_hash::FxHashMap<&'static str, u16>>> =
+    std::sync::Mutex::new(None);
+
+impl SpeciesName {
+    /// The empty name (no team member).
+    pub const EMPTY: SpeciesName = SpeciesName(0);
+
+    /// The id of `name`, registering it on first use.
+    pub fn of(name: &str) -> SpeciesName {
+        if name.is_empty() {
+            return SpeciesName::EMPTY;
+        }
+        let mut ids = SPECIES_NAME_IDS.lock().unwrap_or_else(|e| e.into_inner());
+        let ids = ids.get_or_insert_with(Default::default);
+        if let Some(&i) = ids.get(name) {
+            return SpeciesName(i);
+        }
+        let i = ids.len() + 1;
+        assert!(i < MAX_SPECIES_NAMES, "more than {} species names", MAX_SPECIES_NAMES);
+        let s = intern(name);
+        let _ = SPECIES_NAME_TABLE[i].set(s);
+        ids.insert(s, i as u16);
+        SpeciesName(i as u16)
+    }
+
+    #[inline]
+    pub fn as_str(self) -> &'static str {
+        if self.0 == 0 {
+            return "";
+        }
+        SPECIES_NAME_TABLE[self.0 as usize].get().copied().unwrap_or("")
+    }
+
+    #[inline]
+    pub fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+}
+
+impl std::ops::Deref for SpeciesName {
+    type Target = str;
+    #[inline]
+    fn deref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl std::fmt::Display for SpeciesName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// A `&'static` copy of a name (species / forme names): each distinct name
 /// is leaked once, so states can hold names without cloning strings.
 pub fn intern(name: &str) -> &'static str {
@@ -1774,7 +1724,7 @@ fn build_pokemon(m: &TeamMember) -> Pokemon {
         mega_evolved: false,
         terastallized: false,
         tera_type: PokemonType::NORMAL,
-        attacked_by: Vec::new(),
+        attacked_by: crate::state::AttackedBy::default(),
         moves: crate::state::PokemonMoves { m0, m1, m2, m3 },
     }
 }
@@ -1823,12 +1773,9 @@ impl DoublesState {
         let mut side_one = DoublesSide {
             team: std::array::from_fn(|_| Pokemon::default()),
             slots: [ActiveSlot::empty(), ActiveSlot::empty()],
-            cond_cache: Default::default(),
-            fx_cache: Default::default(),
-            ver: 0,
             side_conditions: SideConditions::default(),
-            species_names: [""; 6],
-            genders: std::array::from_fn(|_| None),
+            species_names: [SpeciesName::EMPTY; 6],
+            genders: [None; 6],
             team_boosts: std::array::from_fn(|_| TeamBoosts::default()),
             toxic_stage: [0; 6],
             speed_cache: [0; 6],
@@ -1837,22 +1784,22 @@ impl DoublesState {
             fainted_in_slot: [None, None],
             wish: [None, None],
             future_move: [None, None],
-            sc_order: Vec::new(),
-            syrup_triggered: [false; 6],
+            sc_order: crate::copyvec::CopyVec::new(),
+            syrup_triggered: Bits8::default(),
             mega_used: false,
             fainted_this_turn: false,
             fainted_last_turn: false,
-            once_boosted: [false; 6],
+            once_boosted: Bits8::default(),
             last_item: [Items::NONE; 6],
-            ate_berry: [false; 6],
-            healing_wish_slot: [false; 2],
-            healing_wish_detached: [false; 2],
+            ate_berry: Bits8::default(),
+            healing_wish_slot: Bits8::default(),
+            healing_wish_detached: Bits8::default(),
             pledges: [0; 3],
             total_fainted: 0,
-            gluttony_off: [false; 6],
-            lunar_dance_slot: [false; 2],
-            moves_used: [[false; 4]; 6],
-            damaged_by: std::array::from_fn(|_| Vec::new()),
+            gluttony_off: Bits8::default(),
+            lunar_dance_slot: Bits8::default(),
+            moves_used: MoveBits::default(),
+            damaged_by: Default::default(),
             saved_stats: [None; 6],
             saved_speed: [None; 6],
             transform_save: Default::default(),
@@ -1860,12 +1807,9 @@ impl DoublesState {
         let mut side_two = DoublesSide {
             team: std::array::from_fn(|_| Pokemon::default()),
             slots: [ActiveSlot::empty(), ActiveSlot::empty()],
-            cond_cache: Default::default(),
-            fx_cache: Default::default(),
-            ver: 0,
             side_conditions: SideConditions::default(),
-            species_names: [""; 6],
-            genders: std::array::from_fn(|_| None),
+            species_names: [SpeciesName::EMPTY; 6],
+            genders: [None; 6],
             team_boosts: std::array::from_fn(|_| TeamBoosts::default()),
             toxic_stage: [0; 6],
             speed_cache: [0; 6],
@@ -1874,22 +1818,22 @@ impl DoublesState {
             fainted_in_slot: [None, None],
             wish: [None, None],
             future_move: [None, None],
-            sc_order: Vec::new(),
-            syrup_triggered: [false; 6],
+            sc_order: crate::copyvec::CopyVec::new(),
+            syrup_triggered: Bits8::default(),
             mega_used: false,
             fainted_this_turn: false,
             fainted_last_turn: false,
-            once_boosted: [false; 6],
+            once_boosted: Bits8::default(),
             last_item: [Items::NONE; 6],
-            ate_berry: [false; 6],
-            healing_wish_slot: [false; 2],
-            healing_wish_detached: [false; 2],
+            ate_berry: Bits8::default(),
+            healing_wish_slot: Bits8::default(),
+            healing_wish_detached: Bits8::default(),
             pledges: [0; 3],
             total_fainted: 0,
-            gluttony_off: [false; 6],
-            lunar_dance_slot: [false; 2],
-            moves_used: [[false; 4]; 6],
-            damaged_by: std::array::from_fn(|_| Vec::new()),
+            gluttony_off: Bits8::default(),
+            lunar_dance_slot: Bits8::default(),
+            moves_used: MoveBits::default(),
+            damaged_by: Default::default(),
             saved_stats: [None; 6],
             saved_speed: [None; 6],
             transform_save: Default::default(),
@@ -1898,20 +1842,18 @@ impl DoublesState {
             side_one.team[i] = build_pokemon(m);
             // PS `setSpecies`: speed = storedStats.spe.
             side_one.speed_cache[i] = side_one.team[i].speed;
-            side_one.species_names[i] = intern(&m.species);
-            side_one.genders[i] = m.gender.as_deref().map(intern);
+            side_one.species_names[i] = SpeciesName::of(&m.species);
+            side_one.genders[i] = Gender::parse(m.gender.as_deref());
         }
         for (i, m) in teams.b.iter().enumerate().take(6) {
             side_two.team[i] = build_pokemon(m);
             side_two.speed_cache[i] = side_two.team[i].speed;
-            side_two.species_names[i] = intern(&m.species);
-            side_two.genders[i] = m.gender.as_deref().map(intern);
+            side_two.species_names[i] = SpeciesName::of(&m.species);
+            side_two.genders[i] = Gender::parse(m.gender.as_deref());
         }
         let state = Self {
             tl: MoveScratch { pressure_extra: std::cell::Cell::new(-1), ..Default::default() },
             pseudo_targeted: std::cell::Cell::new(0),
-            fx_union: Default::default(),
-            actives_order: Default::default(),
             last_move: None,
             copy_called: false,
             queue_change: None,
@@ -1922,9 +1864,9 @@ impl DoublesState {
             queue_quash: None,
             queue_instruct: None,
             in_move: false,
-            queue_cancel: Vec::new(),
+            queue_cancel: crate::copyvec::CopyVec::new(),
             wonder_room_seen: false,
-            fling_pending: Vec::new(),
+            fling_pending: crate::copyvec::CopyVec::new(),
             side_one,
             side_two,
             weather: StateWeather {
@@ -1965,12 +1907,12 @@ impl DoublesState {
             },
             echoed_voice: None,
             turn: 1,
-            unresolved_faints: Vec::new(),
+            unresolved_faints: crate::copyvec::CopyVec::new(),
             battle_ended: false,
-            fainted_boosts: Vec::new(),
-            ko_update_ties: Vec::new(),
-            mold_saved: arrayvec::ArrayVec::new(),
-            gas_saved: arrayvec::ArrayVec::new(),
+            fainted_boosts: crate::copyvec::CopyVec::new(),
+            ko_update_ties: crate::copyvec::CopyVec::new(),
+            mold_saved: crate::copyvec::CopyVec::new(),
+            gas_saved: crate::copyvec::CopyVec::new(),
             gas_ending: None,
             record: true,
             record_events: false,
@@ -1982,16 +1924,16 @@ impl DoublesState {
             ion_deluge_target: false,
             last_success_move: None,
             ev_snap: None,
-            faint_disabled: Vec::new(),
-            faint_embargo: Vec::new(),
-            db_alive_pending: Vec::new(),
-            grudge_pending: Vec::new(),
-            pending_disguise: Vec::new(),
-            faint_log: Vec::new(),
+            faint_disabled: crate::copyvec::CopyVec::new(),
+            faint_embargo: crate::copyvec::CopyVec::new(),
+            db_alive_pending: crate::copyvec::CopyVec::new(),
+            grudge_pending: crate::copyvec::CopyVec::new(),
+            pending_disguise: crate::copyvec::CopyVec::new(),
+            faint_log: crate::copyvec::CopyVec::new(),
             db_faint_pos: None,
             effect_order: 0,
             pending_after_faint: None,
-            unanswered_switches: Vec::new(),
+            unanswered_switches: crate::copyvec::CopyVec::new(),
             request_state: None,
         };
         state
@@ -2440,6 +2382,18 @@ pub fn normalize_status(s: PokemonStatus) -> &'static str {
     }
 }
 
+/// The side-condition ids `side_condition_entries` lists; `sc_order` holds
+/// indices into this table.
+pub const SC_IDS: [&str; 16] = [
+    "reflect", "lightscreen", "auroraveil", "tailwind", "safeguard", "luckychant", "mist", "spikes",
+    "stealthrock", "stickyweb", "toxicspikes", "wideguard", "quickguard", "protect", "matblock", "craftyshield",
+];
+
+/// `SC_IDS` index of a side-condition id.
+pub fn sc_index(id: &str) -> u8 {
+    SC_IDS.iter().position(|&s| s == id).unwrap_or_else(|| panic!("unknown side condition {}", id)) as u8
+}
+
 /// The side conditions currently up (fixed order; see `sc_order`).
 /// `side_condition_entries` into a stack list (no allocation).
 pub fn side_condition_entries_into(sc: &SideConditions, v: &mut arrayvec::ArrayVec<SideConditionEntry, 24>) {
@@ -2528,7 +2482,7 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
                     }
                 };
                 FullSlot {
-                    species: s.transform_save[i].as_ref().map_or(s.species_names[i], |t| t.as_species),
+                    species: s.transform_save[i].as_ref().map_or(s.species_names[i], |t| t.as_species).as_str(),
                     forme: SPECIES_NAMES[p.id as usize],
                     hp: p.hp,
                     maxhp: p.maxhp,
@@ -2541,7 +2495,7 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
                     // Gastro Acid / Neutralizing Gas keep the ability id (the
                     // engine stores NONE).
                     ability: match active_slot {
-                        Some(sl) if s.active()[sl].gastro_acid && p.ability == Abilities::NONE => {
+                        Some(sl) if s.active()[sl].gastro_acid() && p.ability == Abilities::NONE => {
                             ABILITY_NAMES[s.active()[sl].gastro_ability as usize]
                         }
                         _ => match state.gas_saved.iter().find(|&&(gs, gi, _)| gs == sd && gi as usize == i) {
@@ -2566,12 +2520,12 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
                             let me = Some((sd, PokemonIndex::deserialize(&i.to_string())));
                             if [&state.side_one, &state.side_two]
                                 .iter()
-                                .any(|o| o.active().iter().any(|x| x.trapped && x.trapper == me && x.pokemon_index.is_some()))
+                                .any(|o| o.active().iter().any(|x| x.trapped() && x.trapper == me && x.pokemon_index.is_some()))
                             {
                                 v.push("trapper".to_string());
                             }
                             // A fired two-turn move's `twoturnmove` lasts until the residual.
-                            if a.twoturn_fired && a.charging.is_none() && !v.iter().any(|x| x == "twoturnmove") {
+                            if a.twoturn_fired && a.charging().is_none() && !v.iter().any(|x| x == "twoturnmove") {
                                 v.push("twoturnmove".to_string());
                             }
                             if a.zen_mode {
@@ -2591,7 +2545,7 @@ pub fn fuzz_snapshot(state: &DoublesState, move_order: Vec<OrderEntry>) -> FuzzT
             })
             .collect()
     };
-    let sc_entries = |sc: &SideConditions, order: &[&'static str], pledges: [i8; 3]| -> Vec<SideConditionEntry> {
+    let sc_entries = |sc: &SideConditions, order: &[u8], pledges: [i8; 3]| -> Vec<SideConditionEntry> {
         // The harness lists `sideConditions` sorted by id.
         let _ = order;
         let mut v = side_condition_entries(sc);
@@ -2734,10 +2688,11 @@ impl DoublesSide {
         if present.is_empty() && self.sc_order.is_empty() {
             return;
         }
-        self.sc_order.retain(|o| present.iter().any(|e| e.id == *o));
+        self.sc_order.retain(|&o| present.iter().any(|e| sc_index(e.id) == o));
         for e in present {
-            if !self.sc_order.contains(&e.id) {
-                self.sc_order.push(e.id);
+            let k = sc_index(e.id);
+            if !self.sc_order.contains(&k) {
+                self.sc_order.push(k);
             }
         }
     }
@@ -2869,3 +2824,1737 @@ pub fn fuzz_canonical_hash(t: &FuzzTurnState) -> String {
     }
     format!("{:016x}", h)
 }
+
+/// Volatile-condition accessors (`ActiveSlot::vols`).
+impl ActiveSlot {
+    /// The volatile conditions that are up (bit i = `events::CONDS[i]`).
+    #[inline]
+    pub fn vols(&self) -> u128 {
+        self.vols
+    }
+    #[inline]
+    pub fn truant(&self) -> bool {
+        self.vols >> 65 & 1 != 0
+    }
+    #[inline]
+    pub fn set_truant(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 65)) | ((v as u128) << 65);
+    }
+    #[inline]
+    pub fn update_truant(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.truant();
+        g(&mut v);
+        self.set_truant(v);
+    }
+    #[inline]
+    pub fn take_truant(&mut self) -> bool {
+        let v = self.truant();
+        self.set_truant(false);
+        v
+    }
+    #[inline]
+    pub fn defense_curl(&self) -> bool {
+        self.vols >> 70 & 1 != 0
+    }
+    #[inline]
+    pub fn set_defense_curl(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 70)) | ((v as u128) << 70);
+    }
+    #[inline]
+    pub fn update_defense_curl(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.defense_curl();
+        g(&mut v);
+        self.set_defense_curl(v);
+    }
+    #[inline]
+    pub fn take_defense_curl(&mut self) -> bool {
+        let v = self.defense_curl();
+        self.set_defense_curl(false);
+        v
+    }
+    #[inline]
+    pub fn rage(&self) -> bool {
+        self.vols >> 72 & 1 != 0
+    }
+    #[inline]
+    pub fn set_rage(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 72)) | ((v as u128) << 72);
+    }
+    #[inline]
+    pub fn update_rage(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.rage();
+        g(&mut v);
+        self.set_rage(v);
+    }
+    #[inline]
+    pub fn take_rage(&mut self) -> bool {
+        let v = self.rage();
+        self.set_rage(false);
+        v
+    }
+    #[inline]
+    pub fn magic_coat(&self) -> bool {
+        self.vols >> 75 & 1 != 0
+    }
+    #[inline]
+    pub fn set_magic_coat(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 75)) | ((v as u128) << 75);
+    }
+    #[inline]
+    pub fn update_magic_coat(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.magic_coat();
+        g(&mut v);
+        self.set_magic_coat(v);
+    }
+    #[inline]
+    pub fn take_magic_coat(&mut self) -> bool {
+        let v = self.magic_coat();
+        self.set_magic_coat(false);
+        v
+    }
+    #[inline]
+    pub fn grudge(&self) -> bool {
+        self.vols >> 76 & 1 != 0
+    }
+    #[inline]
+    pub fn set_grudge(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 76)) | ((v as u128) << 76);
+    }
+    #[inline]
+    pub fn update_grudge(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.grudge();
+        g(&mut v);
+        self.set_grudge(v);
+    }
+    #[inline]
+    pub fn take_grudge(&mut self) -> bool {
+        let v = self.grudge();
+        self.set_grudge(false);
+        v
+    }
+    #[inline]
+    pub fn foresight(&self) -> bool {
+        self.vols >> 79 & 1 != 0
+    }
+    #[inline]
+    pub fn set_foresight(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 79)) | ((v as u128) << 79);
+    }
+    #[inline]
+    pub fn update_foresight(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.foresight();
+        g(&mut v);
+        self.set_foresight(v);
+    }
+    #[inline]
+    pub fn take_foresight(&mut self) -> bool {
+        let v = self.foresight();
+        self.set_foresight(false);
+        v
+    }
+    #[inline]
+    pub fn miracle_eye(&self) -> bool {
+        self.vols >> 80 & 1 != 0
+    }
+    #[inline]
+    pub fn set_miracle_eye(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 80)) | ((v as u128) << 80);
+    }
+    #[inline]
+    pub fn update_miracle_eye(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.miracle_eye();
+        g(&mut v);
+        self.set_miracle_eye(v);
+    }
+    #[inline]
+    pub fn take_miracle_eye(&mut self) -> bool {
+        let v = self.miracle_eye();
+        self.set_miracle_eye(false);
+        v
+    }
+    #[inline]
+    pub fn flinched(&self) -> bool {
+        self.vols >> 1 & 1 != 0
+    }
+    #[inline]
+    pub fn set_flinched(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 1)) | ((v as u128) << 1);
+    }
+    #[inline]
+    pub fn update_flinched(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.flinched();
+        g(&mut v);
+        self.set_flinched(v);
+    }
+    #[inline]
+    pub fn take_flinched(&mut self) -> bool {
+        let v = self.flinched();
+        self.set_flinched(false);
+        v
+    }
+    #[inline]
+    pub fn recharging(&self) -> bool {
+        self.vols >> 2 & 1 != 0
+    }
+    #[inline]
+    pub fn set_recharging(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 2)) | ((v as u128) << 2);
+    }
+    #[inline]
+    pub fn update_recharging(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.recharging();
+        g(&mut v);
+        self.set_recharging(v);
+    }
+    #[inline]
+    pub fn take_recharging(&mut self) -> bool {
+        let v = self.recharging();
+        self.set_recharging(false);
+        v
+    }
+    #[inline]
+    pub fn endure(&self) -> bool {
+        self.vols >> 17 & 1 != 0
+    }
+    #[inline]
+    pub fn set_endure(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 17)) | ((v as u128) << 17);
+    }
+    #[inline]
+    pub fn update_endure(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.endure();
+        g(&mut v);
+        self.set_endure(v);
+    }
+    #[inline]
+    pub fn take_endure(&mut self) -> bool {
+        let v = self.endure();
+        self.set_endure(false);
+        v
+    }
+    #[inline]
+    pub fn salt_cure(&self) -> bool {
+        self.vols >> 19 & 1 != 0
+    }
+    #[inline]
+    pub fn set_salt_cure(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 19)) | ((v as u128) << 19);
+    }
+    #[inline]
+    pub fn update_salt_cure(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.salt_cure();
+        g(&mut v);
+        self.set_salt_cure(v);
+    }
+    #[inline]
+    pub fn take_salt_cure(&mut self) -> bool {
+        let v = self.salt_cure();
+        self.set_salt_cure(false);
+        v
+    }
+    #[inline]
+    pub fn focus_punch(&self) -> bool {
+        self.vols >> 21 & 1 != 0
+    }
+    #[inline]
+    pub fn set_focus_punch(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 21)) | ((v as u128) << 21);
+    }
+    #[inline]
+    pub fn update_focus_punch(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.focus_punch();
+        g(&mut v);
+        self.set_focus_punch(v);
+    }
+    #[inline]
+    pub fn take_focus_punch(&mut self) -> bool {
+        let v = self.focus_punch();
+        self.set_focus_punch(false);
+        v
+    }
+    #[inline]
+    pub fn beak_blast(&self) -> bool {
+        self.vols >> 22 & 1 != 0
+    }
+    #[inline]
+    pub fn set_beak_blast(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 22)) | ((v as u128) << 22);
+    }
+    #[inline]
+    pub fn update_beak_blast(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.beak_blast();
+        g(&mut v);
+        self.set_beak_blast(v);
+    }
+    #[inline]
+    pub fn take_beak_blast(&mut self) -> bool {
+        let v = self.beak_blast();
+        self.set_beak_blast(false);
+        v
+    }
+    #[inline]
+    pub fn gastro_acid(&self) -> bool {
+        self.vols >> 23 & 1 != 0
+    }
+    #[inline]
+    pub fn set_gastro_acid(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 23)) | ((v as u128) << 23);
+    }
+    #[inline]
+    pub fn update_gastro_acid(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.gastro_acid();
+        g(&mut v);
+        self.set_gastro_acid(v);
+    }
+    #[inline]
+    pub fn take_gastro_acid(&mut self) -> bool {
+        let v = self.gastro_acid();
+        self.set_gastro_acid(false);
+        v
+    }
+    #[inline]
+    pub fn destinybond(&self) -> bool {
+        self.vols >> 25 & 1 != 0
+    }
+    #[inline]
+    pub fn set_destinybond(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 25)) | ((v as u128) << 25);
+    }
+    #[inline]
+    pub fn update_destinybond(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.destinybond();
+        g(&mut v);
+        self.set_destinybond(v);
+    }
+    #[inline]
+    pub fn take_destinybond(&mut self) -> bool {
+        let v = self.destinybond();
+        self.set_destinybond(false);
+        v
+    }
+    #[inline]
+    pub fn smackdown(&self) -> bool {
+        self.vols >> 31 & 1 != 0
+    }
+    #[inline]
+    pub fn set_smackdown(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 31)) | ((v as u128) << 31);
+    }
+    #[inline]
+    pub fn update_smackdown(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.smackdown();
+        g(&mut v);
+        self.set_smackdown(v);
+    }
+    #[inline]
+    pub fn take_smackdown(&mut self) -> bool {
+        let v = self.smackdown();
+        self.set_smackdown(false);
+        v
+    }
+    #[inline]
+    pub fn cursed(&self) -> bool {
+        self.vols >> 32 & 1 != 0
+    }
+    #[inline]
+    pub fn set_cursed(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 32)) | ((v as u128) << 32);
+    }
+    #[inline]
+    pub fn update_cursed(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.cursed();
+        g(&mut v);
+        self.set_cursed(v);
+    }
+    #[inline]
+    pub fn take_cursed(&mut self) -> bool {
+        let v = self.cursed();
+        self.set_cursed(false);
+        v
+    }
+    #[inline]
+    pub fn flash_fire(&self) -> bool {
+        self.vols >> 35 & 1 != 0
+    }
+    #[inline]
+    pub fn set_flash_fire(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 35)) | ((v as u128) << 35);
+    }
+    #[inline]
+    pub fn update_flash_fire(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.flash_fire();
+        g(&mut v);
+        self.set_flash_fire(v);
+    }
+    #[inline]
+    pub fn take_flash_fire(&mut self) -> bool {
+        let v = self.flash_fire();
+        self.set_flash_fire(false);
+        v
+    }
+    #[inline]
+    pub fn charge(&self) -> bool {
+        self.vols >> 36 & 1 != 0
+    }
+    #[inline]
+    pub fn set_charge(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 36)) | ((v as u128) << 36);
+    }
+    #[inline]
+    pub fn update_charge(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.charge();
+        g(&mut v);
+        self.set_charge(v);
+    }
+    #[inline]
+    pub fn take_charge(&mut self) -> bool {
+        let v = self.charge();
+        self.set_charge(false);
+        v
+    }
+    #[inline]
+    pub fn no_retreat(&self) -> bool {
+        self.vols >> 37 & 1 != 0
+    }
+    #[inline]
+    pub fn set_no_retreat(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 37)) | ((v as u128) << 37);
+    }
+    #[inline]
+    pub fn update_no_retreat(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.no_retreat();
+        g(&mut v);
+        self.set_no_retreat(v);
+    }
+    #[inline]
+    pub fn take_no_retreat(&mut self) -> bool {
+        let v = self.no_retreat();
+        self.set_no_retreat(false);
+        v
+    }
+    #[inline]
+    pub fn focus_energy(&self) -> bool {
+        self.vols >> 38 & 1 != 0
+    }
+    #[inline]
+    pub fn set_focus_energy(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 38)) | ((v as u128) << 38);
+    }
+    #[inline]
+    pub fn update_focus_energy(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.focus_energy();
+        g(&mut v);
+        self.set_focus_energy(v);
+    }
+    #[inline]
+    pub fn take_focus_energy(&mut self) -> bool {
+        let v = self.focus_energy();
+        self.set_focus_energy(false);
+        v
+    }
+    #[inline]
+    pub fn glaive_rush(&self) -> bool {
+        self.vols >> 42 & 1 != 0
+    }
+    #[inline]
+    pub fn set_glaive_rush(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 42)) | ((v as u128) << 42);
+    }
+    #[inline]
+    pub fn update_glaive_rush(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.glaive_rush();
+        g(&mut v);
+        self.set_glaive_rush(v);
+    }
+    #[inline]
+    pub fn take_glaive_rush(&mut self) -> bool {
+        let v = self.glaive_rush();
+        self.set_glaive_rush(false);
+        v
+    }
+    #[inline]
+    pub fn minimize(&self) -> bool {
+        self.vols >> 43 & 1 != 0
+    }
+    #[inline]
+    pub fn set_minimize(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 43)) | ((v as u128) << 43);
+    }
+    #[inline]
+    pub fn update_minimize(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.minimize();
+        g(&mut v);
+        self.set_minimize(v);
+    }
+    #[inline]
+    pub fn take_minimize(&mut self) -> bool {
+        let v = self.minimize();
+        self.set_minimize(false);
+        v
+    }
+    #[inline]
+    pub fn ingrain(&self) -> bool {
+        self.vols >> 44 & 1 != 0
+    }
+    #[inline]
+    pub fn set_ingrain(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 44)) | ((v as u128) << 44);
+    }
+    #[inline]
+    pub fn update_ingrain(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.ingrain();
+        g(&mut v);
+        self.set_ingrain(v);
+    }
+    #[inline]
+    pub fn take_ingrain(&mut self) -> bool {
+        let v = self.ingrain();
+        self.set_ingrain(false);
+        v
+    }
+    #[inline]
+    pub fn torment(&self) -> bool {
+        self.vols >> 50 & 1 != 0
+    }
+    #[inline]
+    pub fn set_torment(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 50)) | ((v as u128) << 50);
+    }
+    #[inline]
+    pub fn update_torment(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.torment();
+        g(&mut v);
+        self.set_torment(v);
+    }
+    #[inline]
+    pub fn take_torment(&mut self) -> bool {
+        let v = self.torment();
+        self.set_torment(false);
+        v
+    }
+    #[inline]
+    pub fn imprison(&self) -> bool {
+        self.vols >> 51 & 1 != 0
+    }
+    #[inline]
+    pub fn set_imprison(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 51)) | ((v as u128) << 51);
+    }
+    #[inline]
+    pub fn update_imprison(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.imprison();
+        g(&mut v);
+        self.set_imprison(v);
+    }
+    #[inline]
+    pub fn take_imprison(&mut self) -> bool {
+        let v = self.imprison();
+        self.set_imprison(false);
+        v
+    }
+    #[inline]
+    pub fn roost(&self) -> bool {
+        self.vols >> 52 & 1 != 0
+    }
+    #[inline]
+    pub fn set_roost(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 52)) | ((v as u128) << 52);
+    }
+    #[inline]
+    pub fn update_roost(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.roost();
+        g(&mut v);
+        self.set_roost(v);
+    }
+    #[inline]
+    pub fn take_roost(&mut self) -> bool {
+        let v = self.roost();
+        self.set_roost(false);
+        v
+    }
+    #[inline]
+    pub fn aqua_ring(&self) -> bool {
+        self.vols >> 53 & 1 != 0
+    }
+    #[inline]
+    pub fn set_aqua_ring(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 53)) | ((v as u128) << 53);
+    }
+    #[inline]
+    pub fn update_aqua_ring(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.aqua_ring();
+        g(&mut v);
+        self.set_aqua_ring(v);
+    }
+    #[inline]
+    pub fn take_aqua_ring(&mut self) -> bool {
+        let v = self.aqua_ring();
+        self.set_aqua_ring(false);
+        v
+    }
+    #[inline]
+    pub fn electrify(&self) -> bool {
+        self.vols >> 62 & 1 != 0
+    }
+    #[inline]
+    pub fn set_electrify(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 62)) | ((v as u128) << 62);
+    }
+    #[inline]
+    pub fn update_electrify(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.electrify();
+        g(&mut v);
+        self.set_electrify(v);
+    }
+    #[inline]
+    pub fn take_electrify(&mut self) -> bool {
+        let v = self.electrify();
+        self.set_electrify(false);
+        v
+    }
+    #[inline]
+    pub fn power_trick(&self) -> bool {
+        self.vols >> 63 & 1 != 0
+    }
+    #[inline]
+    pub fn set_power_trick(&mut self, v: bool) {
+        self.vols = (self.vols & !(1u128 << 63)) | ((v as u128) << 63);
+    }
+    #[inline]
+    pub fn update_power_trick(&mut self, g: impl FnOnce(&mut bool)) {
+        let mut v = self.power_trick();
+        g(&mut v);
+        self.set_power_trick(v);
+    }
+    #[inline]
+    pub fn take_power_trick(&mut self) -> bool {
+        let v = self.power_trick();
+        self.set_power_trick(false);
+        v
+    }
+    #[inline]
+    pub fn choice_lock(&self) -> Option<Choices> {
+        self.choice_lock
+    }
+    #[inline]
+    pub fn set_choice_lock(&mut self, v: Option<Choices>) {
+        self.choice_lock = v;
+        let v = self.choice_lock;
+        self.vols = (self.vols & !(1u128 << 64)) | (((v.is_some()) as u128) << 64);
+    }
+    #[inline]
+    pub fn update_choice_lock(&mut self, g: impl FnOnce(&mut Option<Choices>)) {
+        g(&mut self.choice_lock);
+        let v = self.choice_lock;
+        self.vols = (self.vols & !(1u128 << 64)) | (((v.is_some()) as u128) << 64);
+    }
+    #[inline]
+    pub fn take_choice_lock(&mut self) -> Option<Choices> {
+        let v = std::mem::take(&mut self.choice_lock);
+        let v = self.choice_lock;
+        self.vols = (self.vols & !(1u128 << 64)) | (((v.is_some()) as u128) << 64);
+        v
+    }
+    #[inline]
+    pub fn laser_focus(&self) -> u8 {
+        self.laser_focus
+    }
+    #[inline]
+    pub fn set_laser_focus(&mut self, v: u8) {
+        self.laser_focus = v;
+        let v = self.laser_focus;
+        self.vols = (self.vols & !(1u128 << 66)) | (((v > 0) as u128) << 66);
+    }
+    #[inline]
+    pub fn update_laser_focus(&mut self, g: impl FnOnce(&mut u8)) {
+        g(&mut self.laser_focus);
+        let v = self.laser_focus;
+        self.vols = (self.vols & !(1u128 << 66)) | (((v > 0) as u128) << 66);
+    }
+    #[inline]
+    pub fn take_laser_focus(&mut self) -> u8 {
+        let v = std::mem::take(&mut self.laser_focus);
+        let v = self.laser_focus;
+        self.vols = (self.vols & !(1u128 << 66)) | (((v > 0) as u128) << 66);
+        v
+    }
+    #[inline]
+    pub fn fury_cutter(&self) -> Option<(u8, u8)> {
+        self.fury_cutter
+    }
+    #[inline]
+    pub fn set_fury_cutter(&mut self, v: Option<(u8, u8)>) {
+        self.fury_cutter = v;
+        let v = self.fury_cutter;
+        self.vols = (self.vols & !(1u128 << 67)) | (((v.is_some()) as u128) << 67);
+    }
+    #[inline]
+    pub fn update_fury_cutter(&mut self, g: impl FnOnce(&mut Option<(u8, u8)>)) {
+        g(&mut self.fury_cutter);
+        let v = self.fury_cutter;
+        self.vols = (self.vols & !(1u128 << 67)) | (((v.is_some()) as u128) << 67);
+    }
+    #[inline]
+    pub fn take_fury_cutter(&mut self) -> Option<(u8, u8)> {
+        let v = std::mem::take(&mut self.fury_cutter);
+        let v = self.fury_cutter;
+        self.vols = (self.vols & !(1u128 << 67)) | (((v.is_some()) as u128) << 67);
+        v
+    }
+    #[inline]
+    pub fn telekinesis(&self) -> u8 {
+        self.telekinesis
+    }
+    #[inline]
+    pub fn set_telekinesis(&mut self, v: u8) {
+        self.telekinesis = v;
+        let v = self.telekinesis;
+        self.vols = (self.vols & !(1u128 << 68)) | (((v > 0) as u128) << 68);
+    }
+    #[inline]
+    pub fn update_telekinesis(&mut self, g: impl FnOnce(&mut u8)) {
+        g(&mut self.telekinesis);
+        let v = self.telekinesis;
+        self.vols = (self.vols & !(1u128 << 68)) | (((v > 0) as u128) << 68);
+    }
+    #[inline]
+    pub fn take_telekinesis(&mut self) -> u8 {
+        let v = std::mem::take(&mut self.telekinesis);
+        let v = self.telekinesis;
+        self.vols = (self.vols & !(1u128 << 68)) | (((v > 0) as u128) << 68);
+        v
+    }
+    #[inline]
+    pub fn bide(&self) -> Option<(u8, i16, Option<(Side, crate::state::PokemonIndex)>)> {
+        self.bide
+    }
+    #[inline]
+    pub fn set_bide(&mut self, v: Option<(u8, i16, Option<(Side, crate::state::PokemonIndex)>)>) {
+        self.bide = v;
+        let v = self.bide;
+        self.vols = (self.vols & !(1u128 << 71)) | (((v.is_some()) as u128) << 71);
+    }
+    #[inline]
+    pub fn update_bide(&mut self, g: impl FnOnce(&mut Option<(u8, i16, Option<(Side, crate::state::PokemonIndex)>)>)) {
+        g(&mut self.bide);
+        let v = self.bide;
+        self.vols = (self.vols & !(1u128 << 71)) | (((v.is_some()) as u128) << 71);
+    }
+    #[inline]
+    pub fn take_bide(&mut self) -> Option<(u8, i16, Option<(Side, crate::state::PokemonIndex)>)> {
+        let v = std::mem::take(&mut self.bide);
+        let v = self.bide;
+        self.vols = (self.vols & !(1u128 << 71)) | (((v.is_some()) as u128) << 71);
+        v
+    }
+    #[inline]
+    pub fn micle(&self) -> u8 {
+        self.micle
+    }
+    #[inline]
+    pub fn set_micle(&mut self, v: u8) {
+        self.micle = v;
+        let v = self.micle;
+        self.vols = (self.vols & !(1u128 << 77)) | (((v > 0) as u128) << 77);
+    }
+    #[inline]
+    pub fn update_micle(&mut self, g: impl FnOnce(&mut u8)) {
+        g(&mut self.micle);
+        let v = self.micle;
+        self.vols = (self.vols & !(1u128 << 77)) | (((v > 0) as u128) << 77);
+    }
+    #[inline]
+    pub fn take_micle(&mut self) -> u8 {
+        let v = std::mem::take(&mut self.micle);
+        let v = self.micle;
+        self.vols = (self.vols & !(1u128 << 77)) | (((v > 0) as u128) << 77);
+        v
+    }
+    #[inline]
+    pub fn embargo(&self) -> u8 {
+        self.embargo
+    }
+    #[inline]
+    pub fn set_embargo(&mut self, v: u8) {
+        self.embargo = v;
+        let v = self.embargo;
+        self.vols = (self.vols & !(1u128 << 78)) | (((v > 0) as u128) << 78);
+    }
+    #[inline]
+    pub fn update_embargo(&mut self, g: impl FnOnce(&mut u8)) {
+        g(&mut self.embargo);
+        let v = self.embargo;
+        self.vols = (self.vols & !(1u128 << 78)) | (((v > 0) as u128) << 78);
+    }
+    #[inline]
+    pub fn take_embargo(&mut self) -> u8 {
+        let v = std::mem::take(&mut self.embargo);
+        let v = self.embargo;
+        self.vols = (self.vols & !(1u128 << 78)) | (((v > 0) as u128) << 78);
+        v
+    }
+    #[inline]
+    pub fn confusion(&self) -> u8 {
+        self.confusion
+    }
+    #[inline]
+    pub fn set_confusion(&mut self, v: u8) {
+        self.confusion = v;
+        let v = self.confusion;
+        self.vols = (self.vols & !(1u128 << 0)) | (((v > 0) as u128) << 0);
+    }
+    #[inline]
+    pub fn update_confusion(&mut self, g: impl FnOnce(&mut u8)) {
+        g(&mut self.confusion);
+        let v = self.confusion;
+        self.vols = (self.vols & !(1u128 << 0)) | (((v > 0) as u128) << 0);
+    }
+    #[inline]
+    pub fn take_confusion(&mut self) -> u8 {
+        let v = std::mem::take(&mut self.confusion);
+        let v = self.confusion;
+        self.vols = (self.vols & !(1u128 << 0)) | (((v > 0) as u128) << 0);
+        v
+    }
+    #[inline]
+    pub fn substitute_health(&self) -> i16 {
+        self.substitute_health
+    }
+    #[inline]
+    pub fn set_substitute_health(&mut self, v: i16) {
+        self.substitute_health = v;
+        let v = self.substitute_health;
+        self.vols = (self.vols & !(1u128 << 18)) | (((v > 0) as u128) << 18);
+    }
+    #[inline]
+    pub fn update_substitute_health(&mut self, g: impl FnOnce(&mut i16)) {
+        g(&mut self.substitute_health);
+        let v = self.substitute_health;
+        self.vols = (self.vols & !(1u128 << 18)) | (((v > 0) as u128) << 18);
+    }
+    #[inline]
+    pub fn take_substitute_health(&mut self) -> i16 {
+        let v = std::mem::take(&mut self.substitute_health);
+        let v = self.substitute_health;
+        self.vols = (self.vols & !(1u128 << 18)) | (((v > 0) as u128) << 18);
+        v
+    }
+    #[inline]
+    pub fn stockpile(&self) -> u8 {
+        self.stockpile
+    }
+    #[inline]
+    pub fn set_stockpile(&mut self, v: u8) {
+        self.stockpile = v;
+        let v = self.stockpile;
+        self.vols = (self.vols & !(1u128 << 20)) | (((v > 0) as u128) << 20);
+    }
+    #[inline]
+    pub fn update_stockpile(&mut self, g: impl FnOnce(&mut u8)) {
+        g(&mut self.stockpile);
+        let v = self.stockpile;
+        self.vols = (self.vols & !(1u128 << 20)) | (((v > 0) as u128) << 20);
+    }
+    #[inline]
+    pub fn take_stockpile(&mut self) -> u8 {
+        let v = std::mem::take(&mut self.stockpile);
+        let v = self.stockpile;
+        self.vols = (self.vols & !(1u128 << 20)) | (((v > 0) as u128) << 20);
+        v
+    }
+    #[inline]
+    pub fn partial_trap(&self) -> Option<PartialTrap> {
+        self.partial_trap
+    }
+    #[inline]
+    pub fn set_partial_trap(&mut self, v: Option<PartialTrap>) {
+        self.partial_trap = v;
+        let v = self.partial_trap;
+        self.vols = (self.vols & !(1u128 << 26)) | (((v.is_some()) as u128) << 26);
+    }
+    #[inline]
+    pub fn update_partial_trap(&mut self, g: impl FnOnce(&mut Option<PartialTrap>)) {
+        g(&mut self.partial_trap);
+        let v = self.partial_trap;
+        self.vols = (self.vols & !(1u128 << 26)) | (((v.is_some()) as u128) << 26);
+    }
+    #[inline]
+    pub fn take_partial_trap(&mut self) -> Option<PartialTrap> {
+        let v = std::mem::take(&mut self.partial_trap);
+        let v = self.partial_trap;
+        self.vols = (self.vols & !(1u128 << 26)) | (((v.is_some()) as u128) << 26);
+        v
+    }
+    #[inline]
+    pub fn yawn(&self) -> u8 {
+        self.yawn
+    }
+    #[inline]
+    pub fn set_yawn(&mut self, v: u8) {
+        self.yawn = v;
+        let v = self.yawn;
+        self.vols = (self.vols & !(1u128 << 27)) | (((v > 0) as u128) << 27);
+    }
+    #[inline]
+    pub fn update_yawn(&mut self, g: impl FnOnce(&mut u8)) {
+        g(&mut self.yawn);
+        let v = self.yawn;
+        self.vols = (self.vols & !(1u128 << 27)) | (((v > 0) as u128) << 27);
+    }
+    #[inline]
+    pub fn take_yawn(&mut self) -> u8 {
+        let v = std::mem::take(&mut self.yawn);
+        let v = self.yawn;
+        self.vols = (self.vols & !(1u128 << 27)) | (((v > 0) as u128) << 27);
+        v
+    }
+    #[inline]
+    pub fn throat_chop(&self) -> u8 {
+        self.throat_chop
+    }
+    #[inline]
+    pub fn set_throat_chop(&mut self, v: u8) {
+        self.throat_chop = v;
+        let v = self.throat_chop;
+        self.vols = (self.vols & !(1u128 << 28)) | (((v > 0) as u128) << 28);
+    }
+    #[inline]
+    pub fn update_throat_chop(&mut self, g: impl FnOnce(&mut u8)) {
+        g(&mut self.throat_chop);
+        let v = self.throat_chop;
+        self.vols = (self.vols & !(1u128 << 28)) | (((v > 0) as u128) << 28);
+    }
+    #[inline]
+    pub fn take_throat_chop(&mut self) -> u8 {
+        let v = std::mem::take(&mut self.throat_chop);
+        let v = self.throat_chop;
+        self.vols = (self.vols & !(1u128 << 28)) | (((v > 0) as u128) << 28);
+        v
+    }
+    #[inline]
+    pub fn taunt(&self) -> u8 {
+        self.taunt
+    }
+    #[inline]
+    pub fn set_taunt(&mut self, v: u8) {
+        self.taunt = v;
+        let v = self.taunt;
+        self.vols = (self.vols & !(1u128 << 29)) | (((v > 0) as u128) << 29);
+    }
+    #[inline]
+    pub fn update_taunt(&mut self, g: impl FnOnce(&mut u8)) {
+        g(&mut self.taunt);
+        let v = self.taunt;
+        self.vols = (self.vols & !(1u128 << 29)) | (((v > 0) as u128) << 29);
+    }
+    #[inline]
+    pub fn take_taunt(&mut self) -> u8 {
+        let v = std::mem::take(&mut self.taunt);
+        let v = self.taunt;
+        self.vols = (self.vols & !(1u128 << 29)) | (((v > 0) as u128) << 29);
+        v
+    }
+    #[inline]
+    pub fn magnet_rise(&self) -> u8 {
+        self.magnet_rise
+    }
+    #[inline]
+    pub fn set_magnet_rise(&mut self, v: u8) {
+        self.magnet_rise = v;
+        let v = self.magnet_rise;
+        self.vols = (self.vols & !(1u128 << 30)) | (((v > 0) as u128) << 30);
+    }
+    #[inline]
+    pub fn update_magnet_rise(&mut self, g: impl FnOnce(&mut u8)) {
+        g(&mut self.magnet_rise);
+        let v = self.magnet_rise;
+        self.vols = (self.vols & !(1u128 << 30)) | (((v > 0) as u128) << 30);
+    }
+    #[inline]
+    pub fn take_magnet_rise(&mut self) -> u8 {
+        let v = std::mem::take(&mut self.magnet_rise);
+        let v = self.magnet_rise;
+        self.vols = (self.vols & !(1u128 << 30)) | (((v > 0) as u128) << 30);
+        v
+    }
+    #[inline]
+    pub fn follow_me(&self) -> u8 {
+        self.follow_me
+    }
+    #[inline]
+    pub fn set_follow_me(&mut self, v: u8) {
+        self.follow_me = v;
+        let v = self.follow_me;
+        self.vols = (self.vols & !(1u128 << 33)) | (((v > 0) as u128) << 33);
+    }
+    #[inline]
+    pub fn update_follow_me(&mut self, g: impl FnOnce(&mut u8)) {
+        g(&mut self.follow_me);
+        let v = self.follow_me;
+        self.vols = (self.vols & !(1u128 << 33)) | (((v > 0) as u128) << 33);
+    }
+    #[inline]
+    pub fn take_follow_me(&mut self) -> u8 {
+        let v = std::mem::take(&mut self.follow_me);
+        let v = self.follow_me;
+        self.vols = (self.vols & !(1u128 << 33)) | (((v > 0) as u128) << 33);
+        v
+    }
+    #[inline]
+    pub fn perish(&self) -> u8 {
+        self.perish
+    }
+    #[inline]
+    pub fn set_perish(&mut self, v: u8) {
+        self.perish = v;
+        let v = self.perish;
+        self.vols = (self.vols & !(1u128 << 34)) | (((v > 0) as u128) << 34);
+    }
+    #[inline]
+    pub fn update_perish(&mut self, g: impl FnOnce(&mut u8)) {
+        g(&mut self.perish);
+        let v = self.perish;
+        self.vols = (self.vols & !(1u128 << 34)) | (((v > 0) as u128) << 34);
+    }
+    #[inline]
+    pub fn take_perish(&mut self) -> u8 {
+        let v = std::mem::take(&mut self.perish);
+        let v = self.perish;
+        self.vols = (self.vols & !(1u128 << 34)) | (((v > 0) as u128) << 34);
+        v
+    }
+    #[inline]
+    pub fn attract(&self) -> Option<(Side, PokemonIndex)> {
+        self.attract
+    }
+    #[inline]
+    pub fn set_attract(&mut self, v: Option<(Side, PokemonIndex)>) {
+        self.attract = v;
+        let v = self.attract;
+        self.vols = (self.vols & !(1u128 << 39)) | (((v.is_some()) as u128) << 39);
+    }
+    #[inline]
+    pub fn update_attract(&mut self, g: impl FnOnce(&mut Option<(Side, PokemonIndex)>)) {
+        g(&mut self.attract);
+        let v = self.attract;
+        self.vols = (self.vols & !(1u128 << 39)) | (((v.is_some()) as u128) << 39);
+    }
+    #[inline]
+    pub fn take_attract(&mut self) -> Option<(Side, PokemonIndex)> {
+        let v = std::mem::take(&mut self.attract);
+        let v = self.attract;
+        self.vols = (self.vols & !(1u128 << 39)) | (((v.is_some()) as u128) << 39);
+        v
+    }
+    #[inline]
+    pub fn leech_seed(&self) -> Option<(Side, u8)> {
+        self.leech_seed
+    }
+    #[inline]
+    pub fn set_leech_seed(&mut self, v: Option<(Side, u8)>) {
+        self.leech_seed = v;
+        let v = self.leech_seed;
+        self.vols = (self.vols & !(1u128 << 40)) | (((v.is_some()) as u128) << 40);
+    }
+    #[inline]
+    pub fn update_leech_seed(&mut self, g: impl FnOnce(&mut Option<(Side, u8)>)) {
+        g(&mut self.leech_seed);
+        let v = self.leech_seed;
+        self.vols = (self.vols & !(1u128 << 40)) | (((v.is_some()) as u128) << 40);
+    }
+    #[inline]
+    pub fn take_leech_seed(&mut self) -> Option<(Side, u8)> {
+        let v = std::mem::take(&mut self.leech_seed);
+        let v = self.leech_seed;
+        self.vols = (self.vols & !(1u128 << 40)) | (((v.is_some()) as u128) << 40);
+        v
+    }
+    #[inline]
+    pub fn dragon_cheer(&self) -> Option<bool> {
+        self.dragon_cheer
+    }
+    #[inline]
+    pub fn set_dragon_cheer(&mut self, v: Option<bool>) {
+        self.dragon_cheer = v;
+        let v = self.dragon_cheer;
+        self.vols = (self.vols & !(1u128 << 41)) | (((v.is_some()) as u128) << 41);
+    }
+    #[inline]
+    pub fn update_dragon_cheer(&mut self, g: impl FnOnce(&mut Option<bool>)) {
+        g(&mut self.dragon_cheer);
+        let v = self.dragon_cheer;
+        self.vols = (self.vols & !(1u128 << 41)) | (((v.is_some()) as u128) << 41);
+    }
+    #[inline]
+    pub fn take_dragon_cheer(&mut self) -> Option<bool> {
+        let v = std::mem::take(&mut self.dragon_cheer);
+        let v = self.dragon_cheer;
+        self.vols = (self.vols & !(1u128 << 41)) | (((v.is_some()) as u128) << 41);
+        v
+    }
+    #[inline]
+    pub fn heal_block(&self) -> u8 {
+        self.heal_block
+    }
+    #[inline]
+    pub fn set_heal_block(&mut self, v: u8) {
+        self.heal_block = v;
+        let v = self.heal_block;
+        self.vols = (self.vols & !(1u128 << 45)) | (((v > 0) as u128) << 45);
+    }
+    #[inline]
+    pub fn update_heal_block(&mut self, g: impl FnOnce(&mut u8)) {
+        g(&mut self.heal_block);
+        let v = self.heal_block;
+        self.vols = (self.vols & !(1u128 << 45)) | (((v > 0) as u128) << 45);
+    }
+    #[inline]
+    pub fn take_heal_block(&mut self) -> u8 {
+        let v = std::mem::take(&mut self.heal_block);
+        let v = self.heal_block;
+        self.vols = (self.vols & !(1u128 << 45)) | (((v > 0) as u128) << 45);
+        v
+    }
+    #[inline]
+    pub fn syrup_bomb(&self) -> Option<(Side, PokemonIndex, u8)> {
+        self.syrup_bomb
+    }
+    #[inline]
+    pub fn set_syrup_bomb(&mut self, v: Option<(Side, PokemonIndex, u8)>) {
+        self.syrup_bomb = v;
+        let v = self.syrup_bomb;
+        self.vols = (self.vols & !(1u128 << 46)) | (((v.is_some()) as u128) << 46);
+    }
+    #[inline]
+    pub fn update_syrup_bomb(&mut self, g: impl FnOnce(&mut Option<(Side, PokemonIndex, u8)>)) {
+        g(&mut self.syrup_bomb);
+        let v = self.syrup_bomb;
+        self.vols = (self.vols & !(1u128 << 46)) | (((v.is_some()) as u128) << 46);
+    }
+    #[inline]
+    pub fn take_syrup_bomb(&mut self) -> Option<(Side, PokemonIndex, u8)> {
+        let v = std::mem::take(&mut self.syrup_bomb);
+        let v = self.syrup_bomb;
+        self.vols = (self.vols & !(1u128 << 46)) | (((v.is_some()) as u128) << 46);
+        v
+    }
+    #[inline]
+    pub fn octolock(&self) -> Option<(Side, PokemonIndex)> {
+        self.octolock
+    }
+    #[inline]
+    pub fn set_octolock(&mut self, v: Option<(Side, PokemonIndex)>) {
+        self.octolock = v;
+        let v = self.octolock;
+        self.vols = (self.vols & !(1u128 << 47)) | (((v.is_some()) as u128) << 47);
+    }
+    #[inline]
+    pub fn update_octolock(&mut self, g: impl FnOnce(&mut Option<(Side, PokemonIndex)>)) {
+        g(&mut self.octolock);
+        let v = self.octolock;
+        self.vols = (self.vols & !(1u128 << 47)) | (((v.is_some()) as u128) << 47);
+    }
+    #[inline]
+    pub fn take_octolock(&mut self) -> Option<(Side, PokemonIndex)> {
+        let v = std::mem::take(&mut self.octolock);
+        let v = self.octolock;
+        self.vols = (self.vols & !(1u128 << 47)) | (((v.is_some()) as u128) << 47);
+        v
+    }
+    #[inline]
+    pub fn encore(&self) -> Option<(crate::choices::Choices, u8)> {
+        self.encore
+    }
+    #[inline]
+    pub fn set_encore(&mut self, v: Option<(crate::choices::Choices, u8)>) {
+        self.encore = v;
+        let v = self.encore;
+        self.vols = (self.vols & !(1u128 << 49)) | (((v.is_some()) as u128) << 49);
+    }
+    #[inline]
+    pub fn update_encore(&mut self, g: impl FnOnce(&mut Option<(crate::choices::Choices, u8)>)) {
+        g(&mut self.encore);
+        let v = self.encore;
+        self.vols = (self.vols & !(1u128 << 49)) | (((v.is_some()) as u128) << 49);
+    }
+    #[inline]
+    pub fn take_encore(&mut self) -> Option<(crate::choices::Choices, u8)> {
+        let v = std::mem::take(&mut self.encore);
+        let v = self.encore;
+        self.vols = (self.vols & !(1u128 << 49)) | (((v.is_some()) as u128) << 49);
+        v
+    }
+    #[inline]
+    pub fn counter_vol(&self) -> Option<(Option<(Side, u8)>, i16)> {
+        self.counter_vol
+    }
+    #[inline]
+    pub fn set_counter_vol(&mut self, v: Option<(Option<(Side, u8)>, i16)>) {
+        self.counter_vol = v;
+        let v = self.counter_vol;
+        self.vols = (self.vols & !(1u128 << 54)) | (((v.is_some()) as u128) << 54);
+    }
+    #[inline]
+    pub fn update_counter_vol(&mut self, g: impl FnOnce(&mut Option<(Option<(Side, u8)>, i16)>)) {
+        g(&mut self.counter_vol);
+        let v = self.counter_vol;
+        self.vols = (self.vols & !(1u128 << 54)) | (((v.is_some()) as u128) << 54);
+    }
+    #[inline]
+    pub fn take_counter_vol(&mut self) -> Option<(Option<(Side, u8)>, i16)> {
+        let v = std::mem::take(&mut self.counter_vol);
+        let v = self.counter_vol;
+        self.vols = (self.vols & !(1u128 << 54)) | (((v.is_some()) as u128) << 54);
+        v
+    }
+    #[inline]
+    pub fn mirror_coat_vol(&self) -> Option<(Option<(Side, u8)>, i16)> {
+        self.mirror_coat_vol
+    }
+    #[inline]
+    pub fn set_mirror_coat_vol(&mut self, v: Option<(Option<(Side, u8)>, i16)>) {
+        self.mirror_coat_vol = v;
+        let v = self.mirror_coat_vol;
+        self.vols = (self.vols & !(1u128 << 55)) | (((v.is_some()) as u128) << 55);
+    }
+    #[inline]
+    pub fn update_mirror_coat_vol(&mut self, g: impl FnOnce(&mut Option<(Option<(Side, u8)>, i16)>)) {
+        g(&mut self.mirror_coat_vol);
+        let v = self.mirror_coat_vol;
+        self.vols = (self.vols & !(1u128 << 55)) | (((v.is_some()) as u128) << 55);
+    }
+    #[inline]
+    pub fn take_mirror_coat_vol(&mut self) -> Option<(Option<(Side, u8)>, i16)> {
+        let v = std::mem::take(&mut self.mirror_coat_vol);
+        let v = self.mirror_coat_vol;
+        self.vols = (self.vols & !(1u128 << 55)) | (((v.is_some()) as u128) << 55);
+        v
+    }
+    #[inline]
+    pub fn ally_switch(&self) -> Option<(u16, u8)> {
+        self.ally_switch
+    }
+    #[inline]
+    pub fn set_ally_switch(&mut self, v: Option<(u16, u8)>) {
+        self.ally_switch = v;
+        let v = self.ally_switch;
+        self.vols = (self.vols & !(1u128 << 56)) | (((v.is_some()) as u128) << 56);
+    }
+    #[inline]
+    pub fn update_ally_switch(&mut self, g: impl FnOnce(&mut Option<(u16, u8)>)) {
+        g(&mut self.ally_switch);
+        let v = self.ally_switch;
+        self.vols = (self.vols & !(1u128 << 56)) | (((v.is_some()) as u128) << 56);
+    }
+    #[inline]
+    pub fn take_ally_switch(&mut self) -> Option<(u16, u8)> {
+        let v = std::mem::take(&mut self.ally_switch);
+        let v = self.ally_switch;
+        self.vols = (self.vols & !(1u128 << 56)) | (((v.is_some()) as u128) << 56);
+        v
+    }
+    #[inline]
+    pub fn lock_on(&self) -> Option<(Side, PokemonIndex, u8)> {
+        self.lock_on
+    }
+    #[inline]
+    pub fn set_lock_on(&mut self, v: Option<(Side, PokemonIndex, u8)>) {
+        self.lock_on = v;
+        let v = self.lock_on;
+        self.vols = (self.vols & !(1u128 << 57)) | (((v.is_some()) as u128) << 57);
+    }
+    #[inline]
+    pub fn update_lock_on(&mut self, g: impl FnOnce(&mut Option<(Side, PokemonIndex, u8)>)) {
+        g(&mut self.lock_on);
+        let v = self.lock_on;
+        self.vols = (self.vols & !(1u128 << 57)) | (((v.is_some()) as u128) << 57);
+    }
+    #[inline]
+    pub fn take_lock_on(&mut self) -> Option<(Side, PokemonIndex, u8)> {
+        let v = std::mem::take(&mut self.lock_on);
+        let v = self.lock_on;
+        self.vols = (self.vols & !(1u128 << 57)) | (((v.is_some()) as u128) << 57);
+        v
+    }
+    #[inline]
+    pub fn uproar(&self) -> u8 {
+        self.uproar
+    }
+    #[inline]
+    pub fn set_uproar(&mut self, v: u8) {
+        self.uproar = v;
+        let v = self.uproar;
+        self.vols = (self.vols & !(1u128 << 58)) | (((v > 0) as u128) << 58);
+    }
+    #[inline]
+    pub fn update_uproar(&mut self, g: impl FnOnce(&mut u8)) {
+        g(&mut self.uproar);
+        let v = self.uproar;
+        self.vols = (self.vols & !(1u128 << 58)) | (((v > 0) as u128) << 58);
+    }
+    #[inline]
+    pub fn take_uproar(&mut self) -> u8 {
+        let v = std::mem::take(&mut self.uproar);
+        let v = self.uproar;
+        self.vols = (self.vols & !(1u128 << 58)) | (((v > 0) as u128) << 58);
+        v
+    }
+    #[inline]
+    pub fn stall(&self) -> Option<(u16, u8)> {
+        self.stall
+    }
+    #[inline]
+    pub fn set_stall(&mut self, v: Option<(u16, u8)>) {
+        self.stall = v;
+        let v = self.stall;
+        self.vols = (self.vols & !(1u128 << 59)) | (((v.is_some()) as u128) << 59);
+    }
+    #[inline]
+    pub fn update_stall(&mut self, g: impl FnOnce(&mut Option<(u16, u8)>)) {
+        g(&mut self.stall);
+        let v = self.stall;
+        self.vols = (self.vols & !(1u128 << 59)) | (((v.is_some()) as u128) << 59);
+    }
+    #[inline]
+    pub fn take_stall(&mut self) -> Option<(u16, u8)> {
+        let v = std::mem::take(&mut self.stall);
+        let v = self.stall;
+        self.vols = (self.vols & !(1u128 << 59)) | (((v.is_some()) as u128) << 59);
+        v
+    }
+    #[inline]
+    pub fn locked_move(&self) -> Option<(u8, u8)> {
+        self.locked_move
+    }
+    #[inline]
+    pub fn set_locked_move(&mut self, v: Option<(u8, u8)>) {
+        self.locked_move = v;
+        let v = self.locked_move;
+        self.vols = (self.vols & !(1u128 << 60)) | (((v.is_some()) as u128) << 60);
+    }
+    #[inline]
+    pub fn update_locked_move(&mut self, g: impl FnOnce(&mut Option<(u8, u8)>)) {
+        g(&mut self.locked_move);
+        let v = self.locked_move;
+        self.vols = (self.vols & !(1u128 << 60)) | (((v.is_some()) as u128) << 60);
+    }
+    #[inline]
+    pub fn take_locked_move(&mut self) -> Option<(u8, u8)> {
+        let v = std::mem::take(&mut self.locked_move);
+        let v = self.locked_move;
+        self.vols = (self.vols & !(1u128 << 60)) | (((v.is_some()) as u128) << 60);
+        v
+    }
+    #[inline]
+    pub fn disabled(&self) -> Option<(Choices, u8)> {
+        self.disabled
+    }
+    #[inline]
+    pub fn set_disabled(&mut self, v: Option<(Choices, u8)>) {
+        self.disabled = v;
+        let v = self.disabled;
+        self.vols = (self.vols & !(1u128 << 61)) | (((v.is_some()) as u128) << 61);
+    }
+    #[inline]
+    pub fn update_disabled(&mut self, g: impl FnOnce(&mut Option<(Choices, u8)>)) {
+        g(&mut self.disabled);
+        let v = self.disabled;
+        self.vols = (self.vols & !(1u128 << 61)) | (((v.is_some()) as u128) << 61);
+    }
+    #[inline]
+    pub fn take_disabled(&mut self) -> Option<(Choices, u8)> {
+        let v = std::mem::take(&mut self.disabled);
+        let v = self.disabled;
+        self.vols = (self.vols & !(1u128 << 61)) | (((v.is_some()) as u128) << 61);
+        v
+    }
+    #[inline]
+    pub fn helping_hand_mult(&self) -> f32 {
+        self.helping_hand_mult
+    }
+    #[inline]
+    pub fn set_helping_hand_mult(&mut self, v: f32) {
+        self.helping_hand_mult = v;
+        let v = self.helping_hand_mult;
+        self.vols = (self.vols & !(1u128 << 24)) | (((v > 1.0) as u128) << 24);
+    }
+    #[inline]
+    pub fn update_helping_hand_mult(&mut self, g: impl FnOnce(&mut f32)) {
+        g(&mut self.helping_hand_mult);
+        let v = self.helping_hand_mult;
+        self.vols = (self.vols & !(1u128 << 24)) | (((v > 1.0) as u128) << 24);
+    }
+    #[inline]
+    pub fn take_helping_hand_mult(&mut self) -> f32 {
+        let v = std::mem::take(&mut self.helping_hand_mult);
+        let v = self.helping_hand_mult;
+        self.vols = (self.vols & !(1u128 << 24)) | (((v > 1.0) as u128) << 24);
+        v
+    }
+    #[inline]
+    pub fn rollout(&self) -> Option<(u8, u8, u8, u8)> {
+        self.rollout
+    }
+    #[inline]
+    pub fn set_rollout(&mut self, v: Option<(u8, u8, u8, u8)>) {
+        self.rollout = v;
+        self.sync_rollout();
+    }
+    #[inline]
+    pub fn update_rollout(&mut self, g: impl FnOnce(&mut Option<(u8, u8, u8, u8)>)) {
+        g(&mut self.rollout);
+        self.sync_rollout();
+    }
+    #[inline]
+    pub fn take_rollout(&mut self) -> Option<(u8, u8, u8, u8)> {
+        let v = std::mem::take(&mut self.rollout);
+        self.sync_rollout();
+        v
+    }
+    #[inline]
+    pub fn rollout_ice(&self) -> bool {
+        self.rollout_ice
+    }
+    #[inline]
+    pub fn set_rollout_ice(&mut self, v: bool) {
+        self.rollout_ice = v;
+        self.sync_rollout();
+    }
+    #[inline]
+    pub fn update_rollout_ice(&mut self, g: impl FnOnce(&mut bool)) {
+        g(&mut self.rollout_ice);
+        self.sync_rollout();
+    }
+    #[inline]
+    pub fn take_rollout_ice(&mut self) -> bool {
+        let v = std::mem::take(&mut self.rollout_ice);
+        self.sync_rollout();
+        v
+    }
+    #[inline]
+    pub fn paradox(&self) -> Option<(u8, bool)> {
+        self.paradox
+    }
+    #[inline]
+    pub fn set_paradox(&mut self, v: Option<(u8, bool)>) {
+        self.paradox = v;
+        self.sync_paradox();
+    }
+    #[inline]
+    pub fn update_paradox(&mut self, g: impl FnOnce(&mut Option<(u8, bool)>)) {
+        g(&mut self.paradox);
+        self.sync_paradox();
+    }
+    #[inline]
+    pub fn take_paradox(&mut self) -> Option<(u8, bool)> {
+        let v = std::mem::take(&mut self.paradox);
+        self.sync_paradox();
+        v
+    }
+    #[inline]
+    pub fn paradox_quark(&self) -> bool {
+        self.paradox_quark
+    }
+    #[inline]
+    pub fn set_paradox_quark(&mut self, v: bool) {
+        self.paradox_quark = v;
+        self.sync_paradox();
+    }
+    #[inline]
+    pub fn update_paradox_quark(&mut self, g: impl FnOnce(&mut bool)) {
+        g(&mut self.paradox_quark);
+        self.sync_paradox();
+    }
+    #[inline]
+    pub fn take_paradox_quark(&mut self) -> bool {
+        let v = std::mem::take(&mut self.paradox_quark);
+        self.sync_paradox();
+        v
+    }
+    #[inline]
+    pub fn charging(&self) -> Option<(crate::choices::Choices, u8)> {
+        self.charging
+    }
+    #[inline]
+    pub fn set_charging(&mut self, v: Option<(crate::choices::Choices, u8)>) {
+        self.charging = v;
+        self.sync_charging();
+    }
+    #[inline]
+    pub fn update_charging(&mut self, g: impl FnOnce(&mut Option<(crate::choices::Choices, u8)>)) {
+        g(&mut self.charging);
+        self.sync_charging();
+    }
+    #[inline]
+    pub fn take_charging(&mut self) -> Option<(crate::choices::Choices, u8)> {
+        let v = std::mem::take(&mut self.charging);
+        self.sync_charging();
+        v
+    }
+    #[inline]
+    pub fn charge_aborted(&self) -> bool {
+        self.charge_aborted
+    }
+    #[inline]
+    pub fn set_charge_aborted(&mut self, v: bool) {
+        self.charge_aborted = v;
+        self.sync_charging();
+    }
+    #[inline]
+    pub fn update_charge_aborted(&mut self, g: impl FnOnce(&mut bool)) {
+        g(&mut self.charge_aborted);
+        self.sync_charging();
+    }
+    #[inline]
+    pub fn take_charge_aborted(&mut self) -> bool {
+        let v = std::mem::take(&mut self.charge_aborted);
+        self.sync_charging();
+        v
+    }
+    #[inline]
+    pub fn protected(&self) -> bool {
+        self.protected
+    }
+    #[inline]
+    pub fn set_protected(&mut self, v: bool) {
+        self.protected = v;
+        self.sync_protect();
+    }
+    #[inline]
+    pub fn update_protected(&mut self, g: impl FnOnce(&mut bool)) {
+        g(&mut self.protected);
+        self.sync_protect();
+    }
+    #[inline]
+    pub fn take_protected(&mut self) -> bool {
+        let v = std::mem::take(&mut self.protected);
+        self.sync_protect();
+        v
+    }
+    #[inline]
+    pub fn protect_kind(&self) -> u8 {
+        self.protect_kind
+    }
+    #[inline]
+    pub fn set_protect_kind(&mut self, v: u8) {
+        self.protect_kind = v;
+        self.sync_protect();
+    }
+    #[inline]
+    pub fn update_protect_kind(&mut self, g: impl FnOnce(&mut u8)) {
+        g(&mut self.protect_kind);
+        self.sync_protect();
+    }
+    #[inline]
+    pub fn take_protect_kind(&mut self) -> u8 {
+        let v = std::mem::take(&mut self.protect_kind);
+        self.sync_protect();
+        v
+    }
+    #[inline]
+    pub fn trapped(&self) -> bool {
+        self.trapped
+    }
+    #[inline]
+    pub fn set_trapped(&mut self, v: bool) {
+        self.trapped = v;
+        self.sync_trap();
+    }
+    #[inline]
+    pub fn update_trapped(&mut self, g: impl FnOnce(&mut bool)) {
+        g(&mut self.trapped);
+        self.sync_trap();
+    }
+    #[inline]
+    pub fn take_trapped(&mut self) -> bool {
+        let v = std::mem::take(&mut self.trapped);
+        self.sync_trap();
+        v
+    }
+    #[inline]
+    pub fn no_retreat_trap(&self) -> bool {
+        self.no_retreat_trap
+    }
+    #[inline]
+    pub fn set_no_retreat_trap(&mut self, v: bool) {
+        self.no_retreat_trap = v;
+        self.sync_trap();
+    }
+    #[inline]
+    pub fn update_no_retreat_trap(&mut self, g: impl FnOnce(&mut bool)) {
+        g(&mut self.no_retreat_trap);
+        self.sync_trap();
+    }
+    #[inline]
+    pub fn take_no_retreat_trap(&mut self) -> bool {
+        let v = std::mem::take(&mut self.no_retreat_trap);
+        self.sync_trap();
+        v
+    }
+    fn sync_rollout(&mut self) {
+        let m = (1u128 << 69) | (1u128 << 81);
+        let b = match self.rollout { Some(_) if self.rollout_ice => 1u128 << 81, Some(_) => 1u128 << 69, None => 0 };
+        self.vols = (self.vols & !m) | b;
+    }
+    fn sync_paradox(&mut self) {
+        let m = (1u128 << 73) | (1u128 << 74);
+        let b = match self.paradox { Some(_) if self.paradox_quark => 1u128 << 74, Some(_) => 1u128 << 73, None => 0 };
+        self.vols = (self.vols & !m) | b;
+    }
+    fn sync_charging(&mut self) {
+        // Bit 3 = twoturnmove; 4..10 = the semi-invulnerable / Sky Drop moves.
+        let m = 0xFFu128 << 3;
+        let mut b = 0u128;
+        if let Some((mv, _)) = self.charging.filter(|_| !self.charge_aborted) {
+            b |= 1 << 3;
+            b |= match mv {
+                Choices::DIG => 1 << 4,
+                Choices::DIVE => 1 << 5,
+                Choices::FLY => 1 << 6,
+                Choices::BOUNCE => 1 << 7,
+                Choices::PHANTOMFORCE => 1 << 8,
+                Choices::SHADOWFORCE => 1 << 9,
+                Choices::SKYDROP => 1 << 10,
+                _ => 0,
+            };
+        }
+        self.vols = (self.vols & !m) | b;
+    }
+    fn sync_protect(&mut self) {
+        // protect_kind 0..=5 -> bits 11..=16, 6 -> bit 82.
+        let m = (0x3Fu128 << 11) | (1u128 << 82);
+        let b = match (self.protected, self.protect_kind) {
+            (false, _) => 0,
+            (true, k @ 0..=5) => 1u128 << (11 + k as u32),
+            (true, 6) => 1u128 << 82,
+            _ => 0,
+        };
+        self.vols = (self.vols & !m) | b;
+    }
+    fn sync_trap(&mut self) {
+        let b = (self.trapped || self.no_retreat_trap) as u128;
+        self.vols = (self.vols & !(1u128 << 48)) | (b << 48);
+    }
+}
+
+/// Up to 8 flags, one per team member or slot (bit i = entry i).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Bits8(u8);
+
+impl Bits8 {
+    #[inline]
+    pub fn get(self, i: usize) -> bool {
+        self.0 >> i & 1 != 0
+    }
+    #[inline]
+    pub fn set(&mut self, i: usize, v: bool) {
+        self.0 = (self.0 & !(1 << i)) | ((v as u8) << i);
+    }
+}
+
+/// PS `moveSlot.used` for 6 team members x 4 move slots (bit `member * 4 + slot`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MoveBits(u32);
+
+impl MoveBits {
+    #[inline]
+    pub fn get(self, member: usize, slot: usize) -> bool {
+        self.0 >> (member * 4 + slot) & 1 != 0
+    }
+    #[inline]
+    pub fn set(&mut self, member: usize, slot: usize, v: bool) {
+        let b = member * 4 + slot;
+        self.0 = (self.0 & !(1 << b)) | ((v as u32) << b);
+    }
+    /// Clear all four move slots of a team member.
+    #[inline]
+    pub fn clear(&mut self, member: usize) {
+        self.0 &= !(0xF << (member * 4));
+    }
+}
+
+/// A pokemon's gender (PS `M` / `F`; genderless is `None`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gender {
+    M,
+    F,
+}
+
+impl Gender {
+    /// The input's `"M"` / `"F"`; anything else is genderless.
+    pub fn parse(s: Option<&str>) -> Option<Gender> {
+        match s {
+            Some("M") => Some(Gender::M),
+            Some("F") => Some(Gender::F),
+            _ => None,
+        }
+    }
+    /// Both gendered and different (Attract, Captivate).
+    pub fn opposite(a: Option<Gender>, b: Option<Gender>) -> bool {
+        matches!((a, b), (Some(x), Some(y)) if x != y)
+    }
+}
+
+// A state copy is a `memcpy`: no field below the top level owns heap memory.
+const _: () = assert!(!std::mem::needs_drop::<ActiveSlot>());
+const _: () = assert!(!std::mem::needs_drop::<DoublesSide>());
+
+impl Clone for DoublesState {
+    /// A `memcpy` of the state, then real clones of the four fields that own
+    /// heap memory: the event log and its snapshot, the saved request state
+    /// (all empty outside event-recording / step-by-step runs) and a planned
+    /// Encore queue change (its `Choice` may own its secondaries).
+    fn clone(&self) -> Self {
+        let mut c = std::mem::MaybeUninit::<DoublesState>::uninit();
+        let p = c.as_mut_ptr();
+        // SAFETY: every other field is plain data (no drop glue: checked by
+        // `PLAIN_FIELDS`), so a bitwise copy is a valid clone of it; the four
+        // owning fields are overwritten (never dropped) with their own clones.
+        unsafe {
+            std::ptr::copy_nonoverlapping(self, p, 1);
+            std::ptr::addr_of_mut!((*p).events).write(self.events.clone());
+            std::ptr::addr_of_mut!((*p).ev_snap).write(self.ev_snap.clone());
+            std::ptr::addr_of_mut!((*p).request_state).write(self.request_state.clone());
+            std::ptr::addr_of_mut!((*p).queue_change).write(self.queue_change.clone());
+            c.assume_init()
+        }
+    }
+}
+
+/// The type of every `DoublesState` field except `events`, `ev_snap`,
+/// `request_state` and `queue_change` has no drop glue (`Clone` copies them
+/// bitwise). A new field that owns heap memory fails here: add it to `Clone`
+/// or make it plain data.
+const PLAIN_FIELDS: () = {
+    assert!(!std::mem::needs_drop::<DoublesSide>());
+    assert!(!std::mem::needs_drop::<MoveScratch>());
+    assert!(!std::mem::needs_drop::<Option<(Side, PokemonIndex)>>());
+    assert!(!std::mem::needs_drop::<Option<(Side, PokemonIndex, Choices)>>());
+    assert!(!std::mem::needs_drop::<Option<(Side, PokemonIndex, crate::choices::Choices)>>());
+    assert!(!std::mem::needs_drop::<Option<(Side, usize)>>());
+    assert!(!std::mem::needs_drop::<Option<(Side, usize, PokemonIndex, Abilities)>>());
+    assert!(!std::mem::needs_drop::<Option<(Side, usize, PokemonIndex, Choices, i8)>>());
+    assert!(!std::mem::needs_drop::<Option<(u8, i8)>>());
+    assert!(!std::mem::needs_drop::<Option<Choices>>());
+    assert!(!std::mem::needs_drop::<Option<usize>>());
+    assert!(!std::mem::needs_drop::<StateTerrain>());
+    assert!(!std::mem::needs_drop::<StateTrickRoom>());
+    assert!(!std::mem::needs_drop::<StateWeather>());
+    assert!(!std::mem::needs_drop::<bool>());
+    assert!(!std::mem::needs_drop::<crate::copyvec::CopyVec<(Side, PokemonIndex), 16>>());
+    assert!(!std::mem::needs_drop::<crate::copyvec::CopyVec<(Side, PokemonIndex), 8>>());
+    assert!(!std::mem::needs_drop::<crate::copyvec::CopyVec<(Side, PokemonIndex, Abilities), 3>>());
+    assert!(!std::mem::needs_drop::<crate::copyvec::CopyVec<(Side, PokemonIndex, Abilities), 4>>());
+    assert!(!std::mem::needs_drop::<crate::copyvec::CopyVec<(Side, PokemonIndex, Option<(Choices, u8)>), 16>>());
+    assert!(!std::mem::needs_drop::<crate::copyvec::CopyVec<(Side, PokemonIndex, Option<(u8, u8)>), 16>>());
+    assert!(!std::mem::needs_drop::<crate::copyvec::CopyVec<(Side, PokemonIndex, Side, PokemonIndex, Choices), 16>>());
+    assert!(!std::mem::needs_drop::<crate::copyvec::CopyVec<(Side, usize), 8>>());
+    assert!(!std::mem::needs_drop::<crate::copyvec::CopyVec<(Side, usize, bool), 8>>());
+    assert!(!std::mem::needs_drop::<crate::copyvec::CopyVec<(crate::doubles::state::Side, PokemonIndex, TeamBoosts), 8>>());
+    assert!(!std::mem::needs_drop::<crate::copyvec::CopyVec<(crate::doubles::state::Side, usize), 8>>());
+    assert!(!std::mem::needs_drop::<crate::copyvec::CopyVec<(crate::doubles::state::Side, usize, PokemonIndex), 8>>());
+    assert!(!std::mem::needs_drop::<crate::copyvec::CopyVec<Side, 32>>());
+    assert!(!std::mem::needs_drop::<std::cell::Cell<u32>>());
+    assert!(!std::mem::needs_drop::<u32>());
+};
+const _: () = PLAIN_FIELDS;

@@ -23,8 +23,8 @@ node fuzz/fuzz.js --seed <testerSeed> --count <numTests> [--mode random|champion
 
 | mode | teams | score file |
 |---|---|---|
-| `random` (default) | every species, move, ability and item, past gens included (`teams.js` WIDE_POOL) | `fuzz/SCORE` |
-| `champions` | only sets the format's validator accepts (Reg M-C legal species, moves, abilities, items) | `fuzz/SCORE_CHAMPIONS` |
+| `random` (`fuzz.js` default, secondary) | every species, move, ability and item, past gens included (`teams.js` WIDE_POOL) | `fuzz/SCORE_RANDOM` |
+| `champions` (main; `census.js` default) | only sets the format's validator accepts (Reg M-C legal species, moves, abilities, items) | `fuzz/SCORE` |
 
 Each mode has its own seed space, so seed N is a different battle in each
 mode. It also has its own PS cache (`fuzz/work/ps-cache`,

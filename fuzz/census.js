@@ -1,11 +1,14 @@
 // Census: list ALL failing seeds in [from, to), not only the first.
 // Runs fuzz.js --check-only workers on contiguous segments; restarts past each FAIL.
 // Usage: node fuzz/census.js FROM TO [JOBS]  (run from poke-engine/)
-//        FUZZ_MODE=champions node fuzz/census.js ...  (the champions mode)
+//        champions mode (the main one) by default;
+//        FUZZ_MODE=random node fuzz/census.js ...  (the random mode)
 //        FUZZ_ENGINE=fuzz/event_audit.js node fuzz/census.js ...  (engine wrapper)
 // Prints one failing seed per line. Diff two runs (before / after a fix) to
 // see every battle the fix repaired or broke, not only the first one.
 const { spawn } = require('child_process');
+// Workers inherit the mode through FUZZ_MODE.
+process.env.FUZZ_MODE = process.env.FUZZ_MODE || 'champions';
 const path = require('path');
 const [from, to] = [parseInt(process.argv[2], 10), parseInt(process.argv[3], 10)];
 const jobs = parseInt(process.argv[4] || '16', 10);

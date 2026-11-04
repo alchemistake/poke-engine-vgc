@@ -145,7 +145,7 @@ define_enum_with_from_str! {
 
 define_enum_with_from_str! {
     #[repr(u8)]
-    #[derive(Debug, PartialEq, Clone)]
+    #[derive(Debug, PartialEq, Clone, Copy)]
     PokemonNature {
         HARDY,
         LONELY,
@@ -537,7 +537,7 @@ impl Default for Side {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Move {
     pub id: Choices,
     pub disabled: bool,
@@ -578,7 +578,7 @@ impl Default for Move {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct DamageDealt {
     pub damage: i16,
     pub move_category: MoveCategory,
@@ -595,7 +595,7 @@ impl Default for DamageDealt {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct PokemonMoves {
     pub m0: Move,
     pub m1: Move,
@@ -603,7 +603,7 @@ pub struct PokemonMoves {
     pub m3: Move,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct SideConditions {
     pub aurora_veil: i8,
     pub crafty_shield: i8,
@@ -854,7 +854,7 @@ impl VolatileStatusDurations {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Pokemon {
     pub id: PokemonName,
     pub level: i8,
@@ -882,7 +882,7 @@ pub struct Pokemon {
     /// PS `pokemon.attackedBy`: `(source team index, turn)` for each move
     /// that dealt this pokemon > 0 damage. Avalanche's base power doubles
     /// when the target damaged the user this turn. Cleared on switch-in.
-    pub attacked_by: Vec<(u8, u32)>,
+    pub attacked_by: AttackedBy,
     pub moves: PokemonMoves,
 }
 
@@ -912,7 +912,7 @@ impl Default for Pokemon {
             mega_evolved: false,
             terastallized: false,
             tera_type: PokemonType::NORMAL,
-            attacked_by: Vec::new(),
+            attacked_by: AttackedBy::default(),
             moves: PokemonMoves {
                 m0: Default::default(),
                 m1: Default::default(),
@@ -1058,7 +1058,7 @@ impl Pokemon {
             mega_evolved: split[26].parse::<bool>().unwrap(),
             terastallized: split[27].parse::<bool>().unwrap(),
             tera_type: PokemonType::from_str(split[28]).unwrap(),
-            attacked_by: Vec::new(),
+            attacked_by: AttackedBy::default(),
         }
     }
 }
@@ -2441,5 +2441,44 @@ impl State {
         };
         state.set_conditional_mechanics();
         state
+    }
+}
+
+/// PS `pokemon.attackedBy`, reduced to what the engine reads: how many
+/// damaging moves hit since switch-in (Rage Fist's `timesAttacked`) and which
+/// attackers hit this turn (Avalanche / Revenge). An attacker is a key
+/// `side << 4 | team index`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AttackedBy {
+    count: u8,
+    /// `turn`'s attackers, bit `side * 6 + team index`.
+    mask: u16,
+    turn: u32,
+}
+
+impl AttackedBy {
+    #[inline]
+    fn bit(key: u8) -> u16 {
+        1 << ((key >> 4) * 6 + (key & 0xF))
+    }
+    /// One more damaging hit by `key` on `turn`.
+    pub fn push(&mut self, key: u8, turn: u32) {
+        self.count = self.count.saturating_add(1);
+        if self.turn != turn {
+            self.turn = turn;
+            self.mask = 0;
+        }
+        self.mask |= Self::bit(key);
+    }
+    /// Hits since switch-in.
+    pub fn len(&self) -> usize {
+        self.count as usize
+    }
+    /// Whether `key` hit this pokemon on `turn`.
+    pub fn hit_by(&self, key: u8, turn: u32) -> bool {
+        self.turn == turn && self.mask & Self::bit(key) != 0
+    }
+    pub fn clear(&mut self) {
+        *self = AttackedBy::default();
     }
 }

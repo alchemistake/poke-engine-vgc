@@ -483,7 +483,7 @@ fn pokemon_states(side: &DoublesSide, slots: Vec<FullSlot>) -> Vec<PyDoublesPoke
                     .map(|m| PyDoublesMoveState {
                         id: engine_name(m.id),
                         pp: m.pp,
-                        disabled: m.disabled,
+                        disabled: m.disabled(),
                     })
                     .collect(),
             }
@@ -822,11 +822,11 @@ pub struct PyDoublesMoveOption {
 impl From<MoveOption> for PyDoublesMoveOption {
     fn from(o: MoveOption) -> Self {
         PyDoublesMoveOption {
-            id: o.id,
+            id: o.id.to_string(),
             move_slot: o.move_slot,
             struggle: o.struggle,
             pp: o.pp,
-            disabled: o.disabled,
+            disabled: o.disabled(),
             targets: o.targets,
         }
     }
@@ -849,7 +849,7 @@ impl From<SlotOptions> for PyDoublesSlotOptions {
         PyDoublesSlotOptions {
             moves: o.moves.into_iter().map(|m| m.into()).collect(),
             locked: o.locked,
-            trapped: o.trapped,
+            trapped: o.trapped(),
             switches: o.switches,
         }
     }
@@ -858,7 +858,7 @@ impl From<SlotOptions> for PyDoublesSlotOptions {
 impl PyDoublesSlotOptions {
     fn actions(&self) -> Vec<PyDoublesAction> {
         let mut out = Vec::new();
-        for m in self.moves.iter().filter(|m| !m.disabled) {
+        for m in self.moves.iter().filter(|m| !m.disabled()) {
             for &target in &m.targets {
                 out.push(PyDoublesAction {
                     kind: "move".to_string(),
@@ -878,7 +878,7 @@ impl PyDoublesSlotOptions {
         match act.kind.as_str() {
             "switch" => self.switches.contains(&act.position),
             "move" => self.moves.iter().any(|m| {
-                !m.disabled
+                !m.disabled()
                     && m.move_slot == act.slot
                     && m.struggle == act.struggle
                     && (m.targets == [0] || m.targets.contains(&act.target))

@@ -14,7 +14,7 @@
 #   4. No build artifacts / fuzz output are staged.
 #   5. The champions build succeeds and `cargo test` is green.
 #   6. Score (consecutive passing battles from seed 0) did not drop, for each
-#      fuzzer mode: random -> fuzz/SCORE, champions -> fuzz/SCORE_CHAMPIONS.
+#      fuzzer mode: champions (main) -> fuzz/SCORE, random -> fuzz/SCORE_RANDOM.
 set -u
 cd "$(dirname "$0")/.."           # poke-engine/
 ROOT="$(pwd)"
@@ -34,7 +34,7 @@ fi
 # 2. Protected files. Compared against HEAD (staged + unstaged).
 PROTECTED=(
   fuzz/fuzz.js fuzz/fuzz_purpose.js fuzz/teams.js fuzz/ps_trace.js fuzz/ps_lookup.sh
-  fuzz/guard.sh fuzz/install-hooks.sh fuzz/SCORE fuzz/SCORE_CHAMPIONS
+  fuzz/guard.sh fuzz/install-hooks.sh fuzz/SCORE fuzz/SCORE_RANDOM
   src/doubles/species_types.rs src/doubles/species_weights.rs src/doubles/move_targets.rs
   src/doubles/event_handlers.rs fuzz/gen_event_handlers.js
   src/doubles/ability_flags.rs fuzz/gen_ability_flags.js
@@ -43,7 +43,7 @@ if [ "${ALLOW_HARNESS_EDIT:-0}" != "1" ]; then
   for f in "${PROTECTED[@]}"; do
     if git cat-file -e "HEAD:$f" 2>/dev/null && ! git diff --quiet HEAD -- "$f"; then
       # The score files may only go up through `guard.sh --update`.
-      if [ "$f" = "fuzz/SCORE" ] || [ "$f" = "fuzz/SCORE_CHAMPIONS" ]; then continue; fi
+      if [ "$f" = "fuzz/SCORE" ] || [ "$f" = "fuzz/SCORE_RANDOM" ]; then continue; fi
       fail "protected file changed: $f (harness / generated data). If the harness is wrong, notify the user and stop."
     fi
   done
@@ -92,8 +92,9 @@ fi
 
 # 6. Score, per fuzzer mode (one at a time: each sweep uses every core).
 TARGET=1000000
-for MODE in random champions; do
-  if [ "$MODE" = "random" ]; then FILE=fuzz/SCORE; MARG=""; else FILE=fuzz/SCORE_CHAMPIONS; MARG=" --mode $MODE"; fi
+for MODE in champions random; do
+  if [ "$MODE" = "champions" ]; then FILE=fuzz/SCORE; else FILE=fuzz/SCORE_RANDOM; fi
+  MARG=" --mode $MODE"
   OUT=$(node fuzz/fuzz.js --seed 0 --count $TARGET --mode $MODE 2>&1)
   if [ -z "$OUT" ]; then
     SCORE=$TARGET

@@ -21,9 +21,9 @@ All commands below run from `poke-engine/`.
 - `champions` — **the main fuzzer method.** Format-legal sets only (Reg M-C
   species, moves, abilities, items). Add `--mode champions` to every
   fuzz.js / ps_trace.js command (`FUZZ_MODE=champions` for census.js).
-  Baseline in `fuzz/SCORE_CHAMPIONS`.
+  Baseline in `fuzz/SCORE`.
 - `random` (the CLI default) — every species / move / ability / item, past
-  gens included. Secondary coverage. Baseline in `fuzz/SCORE`.
+  gens included. Secondary coverage. Baseline in `fuzz/SCORE_RANDOM`.
 
 Your job is to raise the **champions** score unless the user names the
 other mode. **Champions comes first:** when a fix for a past-gen move, item

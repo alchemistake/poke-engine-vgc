@@ -7,8 +7,8 @@
 use serde::Serialize;
 
 use crate::choices::{Choices, MoveCategory};
-use crate::doubles::battle::{has_gravity_flag, imprison_blocks, try_trap_calls};
-use crate::doubles::move_targets::{ps_move_target, Tgt};
+use crate::doubles::battle::{has_gravity_flag, imprison_blocks, move_target, try_trap_calls};
+use crate::doubles::move_targets::Tgt;
 use crate::doubles::state::{DoublesState, Side};
 use crate::engine::items::Items;
 use crate::state::{PokemonIndex, PokemonType};
@@ -17,7 +17,7 @@ use crate::state::{PokemonIndex, PokemonType};
 #[derive(Debug, Clone, Serialize)]
 pub struct MoveOption {
     /// PS move id ("recharge" and "struggle" included).
-    pub id: String,
+    pub id: &'static str,
     /// The move slot (0-3) to put in the `Move` action.
     pub move_slot: usize,
     /// The `struggle` flag of the `Move` action.
@@ -42,24 +42,34 @@ pub struct SlotOptions {
     pub switches: Vec<usize>,
 }
 
-fn ps_id(id: Choices) -> String {
-    id.to_string().to_lowercase()
+/// PS move id per move, indexed by `Choices` (built once).
+static PS_IDS: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
+    (0..=u16::MAX)
+        .map(Choices::from)
+        .enumerate()
+        .take_while(|&(i, m)| m as usize == i)
+        .map(|(_, m)| &*Box::leak(m.to_string().to_lowercase().into_boxed_str()))
+        .collect()
+});
+
+fn ps_id(id: Choices) -> &'static str {
+    PS_IDS[id as usize]
 }
 
 /// PS `getLockedMove` (`LockMove` event): the move a hard-locked pokemon must use.
 fn locked_move(state: &DoublesState, side: Side, slot: usize) -> Option<Choices> {
     let a = &state.side(side).active()[slot];
-    if a.recharging {
+    if a.recharging() {
         // PS `getMoves` returns the "recharge" pseudo-move.
         return Some(Choices::NONE);
     }
-    if let Some((mv, _)) = a.charging {
+    if let Some((mv, _)) = a.charging() {
         return Some(mv);
     }
-    if a.locked_move.is_some() {
+    if a.locked_move().is_some() {
         return a.locked_move_id.or(a.last_move);
     }
-    if a.uproar > 0 {
+    if a.uproar() > 0 {
         return Some(Choices::UPROAR);
     }
     None
@@ -71,22 +81,22 @@ fn move_disabled(state: &DoublesState, side: Side, slot: usize, idx: PokemonInde
     let p = state.side(side).team_member(idx);
     m.pp <= 0
         || m.disabled
-        || a.disabled.is_some_and(|(d, _)| d == m.id)
+        || a.disabled().is_some_and(|(d, _)| d == m.id)
         || imprison_blocks(state, side, m.id)
-        || (a.taunt > 0 && m.choice().category == MoveCategory::Status && m.id != Choices::MEFIRST)
+        || (a.taunt() > 0 && m.choice().category == MoveCategory::Status && m.id != Choices::MEFIRST)
         // PS data/mods/champions/moves.ts fakeout / firstimpression.
         || (matches!(m.id, Choices::FAKEOUT | Choices::FIRSTIMPRESSION) && a.active_move_actions > 0)
         || (state.gravity.active && has_gravity_flag(m.id))
-        || (a.heal_block > 0 && m.choice().flags.heal)
-        || (a.throat_chop > 0 && m.choice().flags.sound)
-        || (a.torment && a.last_move.is_some_and(|l| l == m.id && l != Choices::STRUGGLE))
+        || (a.heal_block() > 0 && m.choice().flags.heal)
+        || (a.throat_chop() > 0 && m.choice().flags.sound)
+        || (a.torment() && a.last_move.is_some_and(|l| l == m.id && l != Choices::STRUGGLE))
         // PS data/moves.ts encore `onDisableMove`: only the encored move.
-        || a.encore.is_some_and(|(e, _)| e != m.id)
+        || a.encore().is_some_and(|(e, _)| e != m.id)
         // PS data/items.ts choicescarf -> `choicelock` `onDisableMove`.
         || (p.item == Items::CHOICESCARF
-            && a.choice_lock.is_some_and(|l| l != m.id && p.moves.into_iter().any(|k| k.id == l)))
+            && a.choice_lock().is_some_and(|l| l != m.id && p.moves.into_iter().any(|k| k.id == l)))
         // PS data/moves.ts belch / stuffcheeks `onDisableMove`.
-        || (m.id == Choices::BELCH && !state.side(side).ate_berry[idx as usize])
+        || (m.id == Choices::BELCH && !state.side(side).ate_berry.get(idx as usize))
         || (m.id == Choices::STUFFCHEEKS && !crate::doubles::item_data::is_berry(p.item))
         // PS data/moves.ts gigatonhammer / bloodmoon `onDisableMove`.
         || (matches!(m.id, Choices::GIGATONHAMMER | Choices::BLOODMOON) && a.last_move == Some(m.id))
@@ -95,11 +105,11 @@ fn move_disabled(state: &DoublesState, side: Side, slot: usize, idx: PokemonInde
 /// PS target locations for a move used from `slot` (see `MoveOption::targets`).
 fn targets(state: &DoublesState, side: Side, slot: usize, id: Choices) -> Vec<i8> {
     let p = state.side(side).slot_pokemon(slot);
-    let mut tgt = Tgt::from_ps(ps_move_target(&ps_id(id)));
+    let mut tgt = move_target(id);
     // PS `getMoves` target overrides.
     match id {
         Choices::CURSE if !p.is_some_and(|p| p.has_type(&PokemonType::GHOST)) => tgt = Tgt::SelfTarget,
-        Choices::POLLENPUFF if state.side(side).active()[slot].heal_block > 0 => tgt = Tgt::AdjacentFoe,
+        Choices::POLLENPUFF if state.side(side).active()[slot].heal_block() > 0 => tgt = Tgt::AdjacentFoe,
         _ => {}
     }
     let own = -(slot as i8 + 1);
@@ -140,7 +150,7 @@ pub fn slot_options(state: &DoublesState, side: Side, slot: usize) -> Option<Slo
     let mut moves = Vec::new();
     match locked {
         Some(Choices::NONE) => moves.push(MoveOption {
-            id: "recharge".to_string(),
+            id: "recharge",
             move_slot: 0,
             struggle: false,
             pp: 0,
@@ -169,7 +179,7 @@ pub fn slot_options(state: &DoublesState, side: Side, slot: usize) -> Option<Slo
             }
             if moves.iter().all(|m| m.disabled) {
                 moves = vec![MoveOption {
-                    id: "struggle".to_string(),
+                    id: "struggle",
                     move_slot: 0,
                     struggle: true,
                     pp: 0,
@@ -187,7 +197,7 @@ pub fn slot_options(state: &DoublesState, side: Side, slot: usize) -> Option<Slo
     // is trapped anyway (`getMoveRequestData`).
     let a = &s.active()[slot];
     let ghost = p.has_type(&PokemonType::GHOST) || a.added_type == PokemonType::GHOST;
-    let trap_sources = try_trap_calls(state, side, slot) + a.no_retreat_trap as usize;
+    let trap_sources = try_trap_calls(state, side, slot) + a.no_retreat_trap() as usize;
     let trapped = locked.is_some()
         || (!ghost && trap_sources > 0 && p.ability != crate::engine::abilities::Abilities::RUNAWAY);
     let switches = if trapped {
